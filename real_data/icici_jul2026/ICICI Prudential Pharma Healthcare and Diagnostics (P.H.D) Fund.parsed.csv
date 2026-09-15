@@ -1,0 +1,36 @@
+isin,instrument_name,quantity,market_value_lakhs,pct_nav,industry,scheme_name,amc_name,report_month
+INE044A01036,Sun Pharmaceutical Industries Ltd.,4338091.0,86349.7,0.1269361243184,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE089A01031,Dr. Reddy's Laboratories Ltd.,5008009.0,57496.95,0.0845218917162,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE059A01026,Cipla Ltd.,3027146.0,44595.91,0.0655570543482,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE361B01024,Divi's Laboratories Ltd.,509075.0,41011.08,0.060287268506,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE634S01028,Mankind Pharma Ltd.,1507093.0,37219.17,0.0547130701108,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE540L01014,Alkem Laboratories Ltd.,604704.0,34779.55,0.0511267703598,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE376G01013,Biocon Ltd.,7943167.0,33814.06,0.0497074769671,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE03QK01018,Cohance Lifesciences Ltd.,6266692.0,26636.57,0.0391563949954,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE804L01022,Medplus Health Services Ltd,3665005.0,25836.45,0.037980199458,Retailing,PHARMA,ICICI Prudential AMC,2026-07
+INE398R01022,Syngene International Ltd.,5747880.0,22181.07,0.0326067034284,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07
+INE027H01010,MAX Healthcare Institute Ltd,1741433.0,19129.64,0.0281210283441,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07
+INE358A01014,Abbott India Ltd.,64361.0,17892.36,0.0263021971507,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE901L01018,Alembic Pharmaceuticals Ltd.,2077449.0,16558.31,0.0243411117428,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE0KBH01020,Blue Jet Healthcare Ltd.,2597952.0,16269.67,0.0239168040391,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE326A01037,Lupin Ltd.,626941.0,15140.63,0.0222570882346,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE182A01018,Pfizer Ltd.,277493.0,13385.98,0.0196777107668,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE594H01019,Thyrocare Technologies Ltd.,2286558.0,13239.17,0.0194618965554,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07
+INE09XN01023,Akums Drugs and Pharmaceuticals Ltd.,1953248.0,12859.21,0.0189033462675,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE203A01020,Astrazeneca Pharma India Ltd.,155814.0,12620.93,0.0185530689683,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE010601016,Entero Healthcare Solutions,940428.0,11697.98,0.0171963103931,Retailing,PHARMA,ICICI Prudential AMC,2026-07
+INE961O01016,Rainbow Childrens Medicare Ltd,673760.0,10277.54,0.0151082296189,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07
+INE112L01020,Metropolis Healthcare Ltd.,1741463.0,10143.15,0.0149106731046,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07
+INE03Q201024,Alivus Life Sciences Ltd.,779267.0,9039.5,0.0132882812074,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE456Z01021,Medi Assist Healthcare Services Ltd,2407739.0,8619.71,0.0126711798668,Insurance,PHARMA,ICICI Prudential AMC,2026-07
+INE475B01022,Hikal Ltd.,3641193.0,8058.32,0.0118459231394,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE686Y01026,Fine Organic Industries Ltd.,166162.0,8003.19,0.0117648807208,Chemicals & Petrochemicals,PHARMA,ICICI Prudential AMC,2026-07
+INE767A01016,Aarti Drugs Ltd.,1865432.0,7886.11,0.0115927703205,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE0UOS01011,Sanofi Consumer Healthcare India Ltd,164531.0,7586.85,0.0111528509628,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE406A01037,Aurobindo Pharma Ltd.,350617.0,5540.45,0.0081445940168,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE0H5O01029,Windlas Biotech Ltd.,598057.0,5129.53,0.0075405317884,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE0WO601020,Laxmi Dental Ltd.,2396119.0,5096.31,0.0074916975939,Healthcare Equipment & Supplies,PHARMA,ICICI Prudential AMC,2026-07
+INE258B01022,FDC Ltd.,1224920.0,5019.72,0.007379108462,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE459N01021,Manipal Health Enterprises Ltd.,846550.0,4994.65,0.0073422549624,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07
+INE873D01024,Indoco Remedies Ltd.,1662047.0,3648.03,0.0053626913538,Pharmaceuticals & Biotechnology,PHARMA,ICICI Prudential AMC,2026-07
+INE682M01020,Jupiter Life Line Hospitals Ltd,955290.0,3166.79,0.0046552570435,Healthcare Services,PHARMA,ICICI Prudential AMC,2026-07

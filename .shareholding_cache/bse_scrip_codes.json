@@ -1,0 +1,750 @@
+{
+  "INE002S01010": {
+    "bse_scrip_code": "539957"
+  },
+  "INE008A01015": {
+    "bse_scrip_code": "500116"
+  },
+  "INE00E101023": {
+    "bse_scrip_code": "543653"
+  },
+  "INE00FF01025": {
+    "bse_scrip_code": "543349"
+  },
+  "INE00LO01017": {
+    "bse_scrip_code": "543276"
+  },
+  "INE00WC01027": {
+    "bse_scrip_code": "542752"
+  },
+  "INE010J01012": {
+    "bse_scrip_code": "540595"
+  },
+  "INE011K01018": {
+    "bse_scrip_code": "543413"
+  },
+  "INE013P01021": {
+    "bse_scrip_code": "544292"
+  },
+  "INE017A01032": {
+    "bse_scrip_code": "500620"
+  },
+  "INE019C01026": {
+    "bse_scrip_code": "500184"
+  },
+  "INE01TY01017": {
+    "bse_scrip_code": "544583"
+  },
+  "INE020B01018": {
+    "bse_scrip_code": "532955"
+  },
+  "INE022Q01020": {
+    "bse_scrip_code": "540750"
+  },
+  "INE024L01027": {
+    "bse_scrip_code": "533282"
+  },
+  "INE028A01039": {
+    "bse_scrip_code": "532134"
+  },
+  "INE029A01011": {
+    "bse_scrip_code": "500547"
+  },
+  "INE02RE01045": {
+    "bse_scrip_code": "544226"
+  },
+  "INE036D01028": {
+    "bse_scrip_code": "590003"
+  },
+  "INE038A01020": {
+    "bse_scrip_code": "500440"
+  },
+  "INE039A01010": {
+    "bse_scrip_code": "500106"
+  },
+  "INE03JT01014": {
+    "bse_scrip_code": "544179"
+  },
+  "INE03QK01018": {
+    "bse_scrip_code": "543064"
+  },
+  "INE043W01024": {
+    "bse_scrip_code": "543350"
+  },
+  "INE047A01021": {
+    "bse_scrip_code": "500300"
+  },
+  "INE048G01026": {
+    "bse_scrip_code": "532504"
+  },
+  "INE049B01025": {
+    "bse_scrip_code": "532300"
+  },
+  "INE050A01025": {
+    "bse_scrip_code": "501425"
+  },
+  "INE055A01016": {
+    "bse_scrip_code": "500040"
+  },
+  "INE062A01020": {
+    "bse_scrip_code": "500112"
+  },
+  "INE064C01022": {
+    "bse_scrip_code": "521064"
+  },
+  "INE065X01017": {
+    "bse_scrip_code": "544172"
+  },
+  "INE066P01011": {
+    "bse_scrip_code": "539083"
+  },
+  "INE068V01023": {
+    "bse_scrip_code": "543245"
+  },
+  "INE073K01018": {
+    "bse_scrip_code": "543300"
+  },
+  "INE081A01020": {
+    "bse_scrip_code": "500470"
+  },
+  "INE084A01016": {
+    "bse_scrip_code": "532149"
+  },
+  "INE085A01013": {
+    "bse_scrip_code": "500085"
+  },
+  "INE088F01024": {
+    "bse_scrip_code": "543530"
+  },
+  "INE092A01019": {
+    "bse_scrip_code": "500770"
+  },
+  "INE094A01015": {
+    "bse_scrip_code": "500104"
+  },
+  "INE094J01016": {
+    "bse_scrip_code": "543238"
+  },
+  "INE095A01012": {
+    "bse_scrip_code": "532187"
+  },
+  "INE095N01031": {
+    "bse_scrip_code": "534309"
+  },
+  "INE0AQ201015": {
+    "bse_scrip_code": "544408"
+  },
+  "INE0BV301023": {
+    "bse_scrip_code": "543425"
+  },
+  "INE0BY001018": {
+    "bse_scrip_code": "543271"
+  },
+  "INE0CAZ01013": {
+    "bse_scrip_code": "544515"
+  },
+  "INE0DD101019": {
+    "bse_scrip_code": "543265"
+  },
+  "INE0DK501011": {
+    "bse_scrip_code": "543635"
+  },
+  "INE0DYJ01015": {
+    "bse_scrip_code": "543573"
+  },
+  "INE0FS801015": {
+    "bse_scrip_code": "543498"
+  },
+  "INE0I7C01011": {
+    "bse_scrip_code": "543398"
+  },
+  "INE0INX01018": {
+    "bse_scrip_code": "544407"
+  },
+  "INE0IX101010": {
+    "bse_scrip_code": "543428"
+  },
+  "INE0J5401028": {
+    "bse_scrip_code": "544014"
+  },
+  "INE0KBH01020": {
+    "bse_scrip_code": "544009"
+  },
+  "INE0LEZ01016": {
+    "bse_scrip_code": "544397"
+  },
+  "INE0LP301011": {
+    "bse_scrip_code": "544609"
+  },
+  "INE0LXG01040": {
+    "bse_scrip_code": "544225"
+  },
+  "INE0NNS01018": {
+    "bse_scrip_code": "543768"
+  },
+  "INE0NT901020": {
+    "bse_scrip_code": "543945"
+  },
+  "INE0Q9301021": {
+    "bse_scrip_code": "544311"
+  },
+  "INE0VDM01015": {
+    "bse_scrip_code": "544632"
+  },
+  "INE0W2G01015": {
+    "bse_scrip_code": "544282"
+  },
+  "INE0YD401026": {
+    "bse_scrip_code": "544537"
+  },
+  "INE100A01010": {
+    "bse_scrip_code": "500027"
+  },
+  "INE101D01020": {
+    "bse_scrip_code": "532482"
+  },
+  "INE101I01011": {
+    "bse_scrip_code": "544280"
+  },
+  "INE102B01014": {
+    "bse_scrip_code": "531358"
+  },
+  "INE103A01014": {
+    "bse_scrip_code": "500109"
+  },
+  "INE103V01028": {
+    "bse_scrip_code": "544443"
+  },
+  "INE109A01011": {
+    "bse_scrip_code": "523598"
+  },
+  "INE114A01011": {
+    "bse_scrip_code": "500113"
+  },
+  "INE115A01026": {
+    "bse_scrip_code": "500253"
+  },
+  "INE115Q01022": {
+    "bse_scrip_code": "544309"
+  },
+  "INE118D01016": {
+    "bse_scrip_code": "543334"
+  },
+  "INE119A01028": {
+    "bse_scrip_code": "500038"
+  },
+  "INE120A01034": {
+    "bse_scrip_code": "513375"
+  },
+  "INE123F01029": {
+    "bse_scrip_code": "513377"
+  },
+  "INE126A01031": {
+    "bse_scrip_code": "500125"
+  },
+  "INE128S01021": {
+    "bse_scrip_code": "543663"
+  },
+  "INE129A01019": {
+    "bse_scrip_code": "532155"
+  },
+  "INE131A01031": {
+    "bse_scrip_code": "532181"
+  },
+  "INE133A01011": {
+    "bse_scrip_code": "500710"
+  },
+  "INE134E01011": {
+    "bse_scrip_code": "532810"
+  },
+  "INE136B01020": {
+    "bse_scrip_code": "532175"
+  },
+  "INE138Y01010": {
+    "bse_scrip_code": "543720"
+  },
+  "INE142M01025": {
+    "bse_scrip_code": "544028"
+  },
+  "INE146L01010": {
+    "bse_scrip_code": "533293"
+  },
+  "INE148I01020": {
+    "bse_scrip_code": "535789"
+  },
+  "INE148O01028": {
+    "bse_scrip_code": "543529"
+  },
+  "INE149A01033": {
+    "bse_scrip_code": "504973"
+  },
+  "INE14LE01019": {
+    "bse_scrip_code": "544403"
+  },
+  "INE152M01016": {
+    "bse_scrip_code": "533655"
+  },
+  "INE153T01027": {
+    "bse_scrip_code": "540073"
+  },
+  "INE154A01025": {
+    "bse_scrip_code": "500875"
+  },
+  "INE155A01022": {
+    "bse_scrip_code": "500570"
+  },
+  "INE15B701018": {
+    "bse_scrip_code": "544606"
+  },
+  "INE160A01022": {
+    "bse_scrip_code": "532461"
+  },
+  "INE168A01041": {
+    "bse_scrip_code": "532209"
+  },
+  "INE168P01015": {
+    "bse_scrip_code": "544210"
+  },
+  "INE171A01029": {
+    "bse_scrip_code": "500469"
+  },
+  "INE172A01027": {
+    "bse_scrip_code": "500870"
+  },
+  "INE176A01028": {
+    "bse_scrip_code": "500043"
+  },
+  "INE177H01039": {
+    "bse_scrip_code": "532734"
+  },
+  "INE178A01016": {
+    "bse_scrip_code": "500110"
+  },
+  "INE180C01042": {
+    "bse_scrip_code": "531595"
+  },
+  "INE182A01018": {
+    "bse_scrip_code": "500680"
+  },
+  "INE188A01015": {
+    "bse_scrip_code": "590024"
+  },
+  "INE191B01025": {
+    "bse_scrip_code": "532144"
+  },
+  "INE191H01014": {
+    "bse_scrip_code": "532689"
+  },
+  "INE192B01031": {
+    "bse_scrip_code": "514162"
+  },
+  "INE19RI01016": {
+    "bse_scrip_code": "544612"
+  },
+  "INE1C6T01020": {
+    "bse_scrip_code": "544608"
+  },
+  "INE202B01038": {
+    "bse_scrip_code": "544597"
+  },
+  "INE203G01027": {
+    "bse_scrip_code": "532514"
+  },
+  "INE205A01025": {
+    "bse_scrip_code": "500295"
+  },
+  "INE205B01031": {
+    "bse_scrip_code": "505700"
+  },
+  "INE205C01021": {
+    "bse_scrip_code": "531768"
+  },
+  "INE208C01025": {
+    "bse_scrip_code": "500003"
+  },
+  "INE209L01016": {
+    "bse_scrip_code": "533272"
+  },
+  "INE213A01029": {
+    "bse_scrip_code": "500312"
+  },
+  "INE216P01012": {
+    "bse_scrip_code": "541988"
+  },
+  "INE217B01036": {
+    "bse_scrip_code": "500233"
+  },
+  "INE220B01022": {
+    "bse_scrip_code": "522287"
+  },
+  "INE227W01023": {
+    "bse_scrip_code": "543318"
+  },
+  "INE228A01035": {
+    "bse_scrip_code": "517146"
+  },
+  "INE230A01023": {
+    "bse_scrip_code": "500840"
+  },
+  "INE233B01017": {
+    "bse_scrip_code": "526612"
+  },
+  "INE235A01022": {
+    "bse_scrip_code": "500144"
+  },
+  "INE242A01010": {
+    "bse_scrip_code": "530965"
+  },
+  "INE242C01024": {
+    "bse_scrip_code": "515055"
+  },
+  "INE248A01017": {
+    "bse_scrip_code": "523610"
+  },
+  "INE251B01027": {
+    "bse_scrip_code": "533339"
+  },
+  "INE256A01028": {
+    "bse_scrip_code": "505537"
+  },
+  "INE258A01024": {
+    "bse_scrip_code": "500048"
+  },
+  "INE258G01013": {
+    "bse_scrip_code": "542920"
+  },
+  "INE260D01016": {
+    "bse_scrip_code": "532439"
+  },
+  "INE269A01021": {
+    "bse_scrip_code": "532221"
+  },
+  "INE274J01014": {
+    "bse_scrip_code": "533106"
+  },
+  "INE285A01027": {
+    "bse_scrip_code": "522074"
+  },
+  "INE285K01026": {
+    "bse_scrip_code": "542141"
+  },
+  "INE288B01029": {
+    "bse_scrip_code": "506401"
+  },
+  "INE290S01011": {
+    "bse_scrip_code": "543333"
+  },
+  "INE292B01021": {
+    "bse_scrip_code": "517271"
+  },
+  "INE297H01019": {
+    "bse_scrip_code": "532726"
+  },
+  "INE299U01018": {
+    "bse_scrip_code": "539876"
+  },
+  "INE306R01017": {
+    "bse_scrip_code": "538835"
+  },
+  "INE320J01015": {
+    "bse_scrip_code": "541556"
+  },
+  "INE321T01012": {
+    "bse_scrip_code": "544045"
+  },
+  "INE322A01010": {
+    "bse_scrip_code": "507815"
+  },
+  "INE324A01032": {
+    "bse_scrip_code": "500378"
+  },
+  "INE325A01013": {
+    "bse_scrip_code": "522113"
+  },
+  "INE331A01037": {
+    "bse_scrip_code": "500260"
+  },
+  "INE338H01029": {
+    "bse_scrip_code": "543960"
+  },
+  "INE342J01019": {
+    "bse_scrip_code": "533023"
+  },
+  "INE351F01018": {
+    "bse_scrip_code": "532627"
+  },
+  "INE367G01038": {
+    "bse_scrip_code": "532748"
+  },
+  "INE371A01025": {
+    "bse_scrip_code": "509488"
+  },
+  "INE371P01015": {
+    "bse_scrip_code": "540902"
+  },
+  "INE382Z01011": {
+    "bse_scrip_code": "542011"
+  },
+  "INE383A01012": {
+    "bse_scrip_code": "530005"
+  },
+  "INE385C01021": {
+    "bse_scrip_code": "504614"
+  },
+  "INE389H01022": {
+    "bse_scrip_code": "532714"
+  },
+  "INE398R01022": {
+    "bse_scrip_code": "539268"
+  },
+  "INE399G01023": {
+    "bse_scrip_code": "532527"
+  },
+  "INE404A01024": {
+    "bse_scrip_code": "543374"
+  },
+  "INE406M01024": {
+    "bse_scrip_code": "540596"
+  },
+  "INE410P01011": {
+    "bse_scrip_code": "539551"
+  },
+  "INE421D01022": {
+    "bse_scrip_code": "519600"
+  },
+  "INE423Y01016": {
+    "bse_scrip_code": "543959"
+  },
+  "INE424H01027": {
+    "bse_scrip_code": "532733"
+  },
+  "INE427F01016": {
+    "bse_scrip_code": "542399"
+  },
+  "INE439A01020": {
+    "bse_scrip_code": "515030"
+  },
+  "INE451A01017": {
+    "bse_scrip_code": "500033"
+  },
+  "INE457L01029": {
+    "bse_scrip_code": "533581"
+  },
+  "INE462A01022": {
+    "bse_scrip_code": "506285"
+  },
+  "INE463V01026": {
+    "bse_scrip_code": "543415"
+  },
+  "INE475E01026": {
+    "bse_scrip_code": "524742"
+  },
+  "INE476A01022": {
+    "bse_scrip_code": "532483"
+  },
+  "INE477A01020": {
+    "bse_scrip_code": "511196"
+  },
+  "INE481N01025": {
+    "bse_scrip_code": "543259"
+  },
+  "INE482A01020": {
+    "bse_scrip_code": "500878"
+  },
+  "INE483A01010": {
+    "bse_scrip_code": "532885"
+  },
+  "INE486A01021": {
+    "bse_scrip_code": "500084"
+  },
+  "INE491A01021": {
+    "bse_scrip_code": "532210"
+  },
+  "INE499A01024": {
+    "bse_scrip_code": "523367"
+  },
+  "INE501A01019": {
+    "bse_scrip_code": "500645"
+  },
+  "INE510A01028": {
+    "bse_scrip_code": "532178"
+  },
+  "INE511C01022": {
+    "bse_scrip_code": "524000"
+  },
+  "INE517B01013": {
+    "bse_scrip_code": "532371"
+  },
+  "INE520A01027": {
+    "bse_scrip_code": "504067"
+  },
+  "INE522D01027": {
+    "bse_scrip_code": "531213"
+  },
+  "INE522F01014": {
+    "bse_scrip_code": "533278"
+  },
+  "INE524A01029": {
+    "bse_scrip_code": "505714"
+  },
+  "INE530B01024": {
+    "bse_scrip_code": "532636"
+  },
+  "INE531E01026": {
+    "bse_scrip_code": "513599"
+  },
+  "INE531F01023": {
+    "bse_scrip_code": "543988"
+  },
+  "INE536H01010": {
+    "bse_scrip_code": "532756"
+  },
+  "INE545A01024": {
+    "bse_scrip_code": "509631"
+  },
+  "INE545U01014": {
+    "bse_scrip_code": "541153"
+  },
+  "INE548A01028": {
+    "bse_scrip_code": "500183"
+  },
+  "INE548C01032": {
+    "bse_scrip_code": "531162"
+  },
+  "INE552Z01027": {
+    "bse_scrip_code": "544203"
+  },
+  "INE562A01011": {
+    "bse_scrip_code": "532814"
+  },
+  "INE565A01014": {
+    "bse_scrip_code": "532388"
+  },
+  "INE570L01029": {
+    "bse_scrip_code": "544306"
+  },
+  "INE572E01012": {
+    "bse_scrip_code": "540173"
+  },
+  "INE573A01042": {
+    "bse_scrip_code": "530007"
+  },
+  "INE575P01011": {
+    "bse_scrip_code": "543412"
+  },
+  "INE584A01023": {
+    "bse_scrip_code": "526371"
+  },
+  "INE596F01018": {
+    "bse_scrip_code": "539006"
+  },
+  "INE596I01020": {
+    "bse_scrip_code": "543232"
+  },
+  "INE600L01024": {
+    "bse_scrip_code": "539524"
+  },
+  "INE602A01031": {
+    "bse_scrip_code": "506590"
+  },
+  "INE614G01033": {
+    "bse_scrip_code": "532939"
+  },
+  "INE615H01020": {
+    "bse_scrip_code": "532966"
+  },
+  "INE619B01017": {
+    "bse_scrip_code": "540900"
+  },
+  "INE622W01025": {
+    "bse_scrip_code": "544283"
+  },
+  "INE628A01036": {
+    "bse_scrip_code": "512070"
+  },
+  "INE647O01011": {
+    "bse_scrip_code": "535755"
+  },
+  "INE663A01033": {
+    "bse_scrip_code": "500405"
+  },
+  "INE665A01038": {
+    "bse_scrip_code": "503310"
+  },
+  "INE671H01015": {
+    "bse_scrip_code": "532784"
+  },
+  "INE673O01025": {
+    "bse_scrip_code": "544174"
+  },
+  "INE684F01012": {
+    "bse_scrip_code": "532809"
+  },
+  "INE686A01026": {
+    "bse_scrip_code": "509496"
+  },
+  "INE691A01018": {
+    "bse_scrip_code": "532505"
+  },
+  "INE692A01016": {
+    "bse_scrip_code": "532477"
+  },
+  "INE700A01033": {
+    "bse_scrip_code": "530019"
+  },
+  "INE716A01013": {
+    "bse_scrip_code": "500238"
+  },
+  "INE718I01012": {
+    "bse_scrip_code": "544480"
+  },
+  "INE725A01030": {
+    "bse_scrip_code": "513023"
+  },
+  "INE731H01025": {
+    "bse_scrip_code": "532762"
+  },
+  "INE732I01021": {
+    "bse_scrip_code": "543235"
+  },
+  "INE733E01010": {
+    "bse_scrip_code": "532555"
+  },
+  "INE736A01011": null,
+  "INE738I01010": {
+    "bse_scrip_code": "532927"
+  },
+  "INE741K01010": {
+    "bse_scrip_code": "541770"
+  },
+  "INE743M01012": {
+    "bse_scrip_code": "534076"
+  },
+  "INE752E01010": {
+    "bse_scrip_code": "532898"
+  },
+  "INE763I01026": {
+    "bse_scrip_code": "532928"
+  },
+  "INE768C01028": {
+    "bse_scrip_code": "531335"
+  },
+  "INE769A01020": {
+    "bse_scrip_code": "524208"
+  },
+  "INE777K01022": {
+    "bse_scrip_code": "543981"
+  },
+  "INE780C01023": {
+    "bse_scrip_code": "523405"
+  },
+  "INE791I01019": {
+    "bse_scrip_code": "532929"
+  },
+  "INE794A01010": {
+    "bse_scrip_code": "524558"
+  },
+  "INE806T01020": {
+    "bse_scrip_code": "543397"
+  }
+}

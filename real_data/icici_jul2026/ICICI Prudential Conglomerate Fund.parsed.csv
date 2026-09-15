@@ -1,0 +1,42 @@
+isin,instrument_name,quantity,market_value_lakhs,pct_nav,industry,scheme_name,amc_name,report_month
+INE101A01026,Mahindra & Mahindra Ltd.,203671.0,6921.76,0.0843252015971,Automobiles,CONGLO,ICICI Prudential AMC,2026-07
+INE067A01029,CG Power and Industrial Solutions Ltd.,704581.0,6083.35,0.074111167555,Electrical Equipment,CONGLO,ICICI Prudential AMC,2026-07
+INE481G01011,Ultratech Cement Ltd.,45000.0,5356.35,0.0652543996866,Cement & Cement Products,CONGLO,ICICI Prudential AMC,2026-07
+INE047A01021,Grasim Industries Ltd.,123544.0,3830.85,0.046669806312,Cement & Cement Products,CONGLO,ICICI Prudential AMC,2026-07
+INE494B01023,TVS Motor Company Ltd.,82924.0,3576.6,0.0435723740829,Automobiles,CONGLO,ICICI Prudential AMC,2026-07
+INE296A01032,Bajaj Finance Ltd.,300000.0,3423.6,0.0417084325645,Finance,CONGLO,ICICI Prudential AMC,2026-07
+INE121A01024,Cholamandalam Investment And Finance Company Ltd.,180000.0,3329.82,0.0405659460574,Finance,CONGLO,ICICI Prudential AMC,2026-07
+INE702C01027,APL Apollo Tubes Ltd.,177518.0,3229.94,0.0393491455419,Industrial Products,CONGLO,ICICI Prudential AMC,2026-07
+INE019A01038,JSW Steel Ltd.,243384.0,3090.98,0.0376562480688,Ferrous Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE169A01031,Coromandel International Ltd.,140678.0,2917.1,0.0355379333549,Fertilizers & Agrochemicals,CONGLO,ICICI Prudential AMC,2026-07
+INE226A01021,Voltas Ltd.,206520.0,2744.44,0.0334344814427,Consumer Durables,CONGLO,ICICI Prudential AMC,2026-07
+INE079A01024,Ambuja Cements Ltd.,630000.0,2722.86,0.0331715804103,Cement & Cement Products,CONGLO,ICICI Prudential AMC,2026-07
+INE775A01035,Samvardhana Motherson International Ltd.,1700000.0,2562.75,0.0312210204331,Auto Components,CONGLO,ICICI Prudential AMC,2026-07
+INE749A01030,Jindal Steel Ltd.,195526.0,2155.48,0.0262594030331,Ferrous Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE220G01021,Jindal Stainless Ltd.,289340.0,2126.07,0.0259011120523,Ferrous Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE880J01026,JSW Infrastructure Ltd,679460.0,2122.63,0.0258592038247,Transport Infrastructure,CONGLO,ICICI Prudential AMC,2026-07
+INE155A01022,Tata Motors Passenger Vehicles Ltd.,500000.0,1698.75,0.0206952330351,Automobiles,CONGLO,ICICI Prudential AMC,2026-07
+INE0DK501011,Piramal Pharma Ltd.,865000.0,1692.03,0.0206133657998,Pharmaceuticals & Biotechnology,CONGLO,ICICI Prudential AMC,2026-07
+INE1CDF01017,Vedanta Aluminium Metal Ltd.,368162.0,1672.19,0.0203716625336,Non - Ferrous Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE081A01020,Tata Steel Ltd.,850000.0,1612.37,0.0196428979478,Ferrous Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE397D01024,Bharti Airtel Ltd.,80000.0,1577.6,0.0192193081007,Telecom - Services,CONGLO,ICICI Prudential AMC,2026-07
+INE055A01016,Aditya Birla Real Estate Ltd.,103012.0,1460.81,0.0177964994084,Realty,CONGLO,ICICI Prudential AMC,2026-07
+INE1TAE01010,Tata Motors Ltd.,300000.0,1310.4,0.0159641108869,"Agricultural, Commercial & Construction Vehicles",CONGLO,ICICI Prudential AMC,2026-07
+INE095A01012,IndusInd Bank Ltd.,126796.0,1283.75,0.0156394439492,Banks,CONGLO,ICICI Prudential AMC,2026-07
+INE742F01042,Adani Ports and Special Economic Zone Ltd.,72583.0,1231.37,0.0150013180882,Transport Infrastructure,CONGLO,ICICI Prudential AMC,2026-07
+INE484J01027,Godrej Properties Ltd.,52947.0,1114.9,0.0135824078356,Realty,CONGLO,ICICI Prudential AMC,2026-07
+INE053A01029,The Indian Hotels Company Ltd.,150000.0,1107.83,0.0134962766818,Leisure Services,CONGLO,ICICI Prudential AMC,2026-07
+INE120A01034,Carborundum Universal Ltd.,89978.0,957.19,0.0116610861568,Industrial Products,CONGLO,ICICI Prudential AMC,2026-07
+INE205A01025,Vedanta Ltd.,350562.0,926.36,0.0112854958495,Diversified Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE647O01011,Aditya Birla Fashion and Retail Ltd.,1500000.0,903.6,0.0110082193204,Retailing,CONGLO,ICICI Prudential AMC,2026-07
+INE404A01024,Aditya Birla Sun Life AMC Ltd.,77441.0,783.55,0.0095456952728,Capital Markets,CONGLO,ICICI Prudential AMC,2026-07
+INE520A01027,Zensar Technologies Ltd.,151881.0,771.48,0.0093986509974,It - Software,CONGLO,ICICI Prudential AMC,2026-07
+INE769A01020,Aarti Industries Ltd.,142856.0,698.71,0.0085121214269,Chemicals & Petrochemicals,CONGLO,ICICI Prudential AMC,2026-07
+INE14LE01019,Aditya Birla Lifestyle Brands Ltd.,719927.0,681.55,0.0083030675938,Retailing,CONGLO,ICICI Prudential AMC,2026-07
+INE288B01029,Deepak Nitrite Ltd.,29196.0,485.3,0.0059122275743,Chemicals & Petrochemicals,CONGLO,ICICI Prudential AMC,2026-07
+INE280A01028,Titan Company Ltd.,6217.0,303.09,0.0036924316,Consumer Durables,CONGLO,ICICI Prudential AMC,2026-07
+INE09N301011,Gujarat Fluorochemicals Ltd.,4459.0,194.72,0.0023722006043,Chemicals & Petrochemicals,CONGLO,ICICI Prudential AMC,2026-07
+INE389H01022,KEC International Ltd.,34492.0,161.75,0.001970539481,Construction,CONGLO,ICICI Prudential AMC,2026-07
+INE501A01019,Deepak Fertilizers and Petrochemicals Corporation Ltd.,9793.0,152.07,0.0018526116777,Chemicals & Petrochemicals,CONGLO,ICICI Prudential AMC,2026-07
+INE1CLE01013,Vedanta Iron And Steel Ltd.,350562.0,113.16,0.0013785857661,Ferrous Metals,CONGLO,ICICI Prudential AMC,2026-07
+INE192A01025,Tata Consumer Products Ltd.,10000.0,108.31,0.0013195000382,Agricultural Food & Other Products,CONGLO,ICICI Prudential AMC,2026-07

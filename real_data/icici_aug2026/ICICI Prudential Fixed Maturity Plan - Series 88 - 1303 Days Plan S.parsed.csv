@@ -1,0 +1,6 @@
+isin,instrument_name,quantity,market_value_lakhs,pct_nav,industry,scheme_name,amc_name,report_month
+IN3120180127,State Government of Tamil Nadu,3500000.0,3505.77,0.5052876985977,SOV,F881303S,ICICI Prudential AMC,2026-08
+IN2220160062,State Government of Maharashtra,1025000.0,1025.74,0.1478402188277,SOV,F881303S,ICICI Prudential AMC,2026-08
+IN2220160070,State Government of Maharashtra,200000.0,200.27,0.0288649761388,SOV,F881303S,ICICI Prudential AMC,2026-08
+IN2120160048,State Government of Madhya Pradesh,137500.0,137.68,0.0198438603624,SOV,F881303S,ICICI Prudential AMC,2026-08
+IN2920160156,State Government of Rajasthan,100000.0,100.07,0.0144231195995,SOV,F881303S,ICICI Prudential AMC,2026-08

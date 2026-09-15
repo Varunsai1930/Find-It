@@ -1,0 +1,6 @@
+isin,instrument_name,quantity,market_value_lakhs,pct_nav,industry,scheme_name,amc_name,report_month
+INE002A01018,Reliance Industries Ltd.,120000.0,45230.5,8.21,Refineries,HDFC Top 100 Fund,HDFC AMC,2026-03
+INE040A01034,HDFC Bank Ltd.,300000.0,51200.0,9.3,Banks,HDFC Top 100 Fund,HDFC AMC,2026-03
+INE009A01021,Infosys Ltd.,85000.0,12750.75,2.31,IT - Software,HDFC Top 100 Fund,HDFC AMC,2026-03
+INE155A01022,Tata Motors Ltd.,200000.0,18400.0,5.1,Automobiles,HDFC Mid-Cap Opportunities Fund,HDFC AMC,2026-03
+INE262H01021,Persistent Systems Ltd.,40000.0,9800.0,2.72,IT - Software,HDFC Mid-Cap Opportunities Fund,HDFC AMC,2026-03
