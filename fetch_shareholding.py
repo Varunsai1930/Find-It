@@ -19,12 +19,12 @@ import json
 import re
 import sqlite3
 import time
+import warnings
 from dataclasses import dataclass, field
-from datetime import date
 from pathlib import Path
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 import pandas as pd
 import requests
 
@@ -235,7 +235,12 @@ def _row_percentage(row: Any) -> float | None:
 
 def parse_bse_shareholding(html: str) -> dict[str, float]:
     """Extract aggregate ownership percentages from one BSE Reg. 31 iXBRL filing."""
-    soup = BeautifulSoup(html, "html.parser")
+    # BSE serves some iXBRL filings with an XML declaration and others as HTML.
+    # The HTML parser handles both shapes, but BeautifulSoup warns for the XML
+    # declaration despite the markup being intentionally inline-XBRL HTML.
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(html, "html.parser")
     promoter_pct: float | None = None
     public_pct: float | None = None
     dii_pct = 0.0
@@ -306,8 +311,6 @@ def fetch_shareholding(
 
     scrip_cache_path = cache_dir / "bse_scrip_codes.json"
     scrip_cache = _read_json_cache(scrip_cache_path)
-    parsed_records: list[dict[str, Any]] = []
-
     for index, stock in equities.reset_index(drop=True).iterrows():
         isin = stock["isin"]
         stats.attempted += 1
@@ -340,24 +343,25 @@ def fetch_shareholding(
                     stats.already_cached_records += 1
                     continue
                 response = session.get(f"{BSE_SITE_URL}{filing['attachment']}")
-                parsed_records.append({
+                record = {
                     "isin": isin,
                     "quarter_end": filing["quarter_end"],
                     **parse_bse_shareholding(response.text),
                     "source": "bse_xbrl",
-                })
+                }
+                # The database is the cache keyed by (isin, quarter_end).
+                # Persist immediately so an interrupted run never repeats a
+                # successfully parsed filing on its next invocation.
+                stats.loaded_records += db.load_shareholding_records(
+                    conn, pd.DataFrame([record]),
+                )
+                existing_quarters.add(filing["quarter_end"])
         except (requests.RequestException, ShareholdingFetchError) as exc:
             stats.failed_isins.append(f"{isin}: {exc}")
 
         if (index + 1) % 25 == 0:
             print(f"Processed {index + 1}/{len(equities)} listed-equity ISINs")
 
-    stats.loaded_records = db.load_shareholding_records(
-        conn, pd.DataFrame(parsed_records, columns=[
-            "isin", "quarter_end", "promoter_pct", "fii_pct", "dii_pct",
-            "public_pct", "source",
-        ]),
-    )
     return stats
 
 
