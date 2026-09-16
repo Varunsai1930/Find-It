@@ -294,6 +294,7 @@ def fetch_shareholding(
     session: PoliteSession,
     cache_dir: Path,
     limit: int | None = None,
+    only_missing: bool = False,
 ) -> FetchStats:
     """Fetch and load quarterly records without refetching cached ISIN/quarters."""
     stats = FetchStats()
@@ -305,6 +306,16 @@ def fetch_shareholding(
     equities = holdings.merge(
         master, left_on="isin", right_on="ISIN NUMBER", how="inner",
     ).drop(columns="ISIN NUMBER")
+    if only_missing:
+        complete_isins = {
+            row[0] for row in conn.execute(
+                """SELECT isin
+                   FROM shareholding_quarterly
+                   GROUP BY isin
+                   HAVING COUNT(*) >= 2"""
+            )
+        }
+        equities = equities[~equities["isin"].isin(complete_isins)]
     if limit is not None:
         equities = equities.head(limit)
     stats.listed_equity_isins = len(equities)
@@ -393,6 +404,10 @@ def main() -> None:
         help="Only process the first N eligible MF-held equities (for a smoke test)",
     )
     parser.add_argument(
+        "--only-missing", action="store_true",
+        help="Skip ISINs that already have two or more cached quarterly filings",
+    )
+    parser.add_argument(
         "--report-month",
         help="Also print MF + FII/DII common signals for this MF report month",
     )
@@ -406,7 +421,8 @@ def main() -> None:
     conn = db.get_connection(str(db_path))
     cache_dir = db_path.parent / ".shareholding_cache"
     stats = fetch_shareholding(
-        conn, PoliteSession(args.delay), cache_dir, limit=args.limit,
+        conn, PoliteSession(args.delay), cache_dir,
+        limit=args.limit, only_missing=args.only_missing,
     )
     _print_stats(stats)
 

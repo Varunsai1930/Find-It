@@ -10,7 +10,12 @@ import sqlite3
 import pandas as pd
 
 
-def build_summary(conn: sqlite3.Connection, scheme_id: int, report_month: str) -> str:
+def build_summary(
+    conn: sqlite3.Connection,
+    scheme_id: int,
+    report_month: str,
+    instrument_type: str | None = "equity",
+) -> str:
     scheme = conn.execute(
         "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?", (scheme_id,)
     ).fetchone()
@@ -18,12 +23,17 @@ def build_summary(conn: sqlite3.Connection, scheme_id: int, report_month: str) -
         raise ValueError(f"No scheme with scheme_id={scheme_id}")
     amc_name, scheme_name = scheme
 
-    deltas = pd.read_sql_query(
+    sql = (
         "SELECT d.*, s.name AS stock_name FROM mf_holding_deltas d "
         "JOIN stocks s ON s.isin = d.isin "
-        "WHERE d.scheme_id = ? AND d.report_month = ?",
-        conn, params=(scheme_id, report_month),
+        "WHERE d.scheme_id = ? AND d.report_month = ?"
     )
+    params = [scheme_id, report_month]
+    if instrument_type is not None:
+        sql += " AND s.instrument_type = ?"
+        params.append(instrument_type)
+
+    deltas = pd.read_sql_query(sql, conn, params=params)
 
     if deltas.empty:
         return (

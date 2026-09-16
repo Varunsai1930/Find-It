@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS schemes (
 CREATE TABLE IF NOT EXISTS stocks (
     isin TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    industry TEXT
+    industry TEXT,
+    instrument_type TEXT
 );
 
 CREATE TABLE IF NOT EXISTS mf_holdings_monthly (
@@ -60,9 +61,81 @@ CREATE TABLE IF NOT EXISTS shareholding_quarterly (
 """
 
 
+def classify_isin(isin: str) -> str:
+    """Classifies an Indian ISIN into instrument type based on prefix and series code (chars 8-9).
+
+    - Chars 1-2: Country ('IN')
+    - Char 3: Issuer type ('E' = corporate, '0' = central govt, '9' = state govt, 'F' = mutual fund)
+    - Chars 8-9: Security series ('01' = equity, '02' = preference, '07'/'08' = NCD, '14'/'16' = CP/CD)
+    """
+    if not isinstance(isin, str) or len(isin) < 12:
+        return "other"
+    isin = isin.upper().strip()
+    if not isin.startswith("IN"):
+        return "foreign"
+    char3 = isin[2]
+    series = isin[7:9]
+    if char3 == "0":
+        return "tbill_or_gsec"
+    if char3 == "9":
+        return "sgsec"
+    if char3 == "F":
+        return "mf_units"
+    if char3 == "E":
+        if series == "01":
+            return "equity"
+        if series == "02":
+            return "preference"
+        if series in ("07", "08", "09", "10", "11", "12"):
+            return "ncd"
+        if series in ("14", "16"):
+            return "cp_or_cd"
+        return "debt_other"
+    return "other"
+
+
 def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+
+    # Ensure schema migrations are applied on existing DBs
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()]
+    if "instrument_type" not in cols:
+        conn.execute("ALTER TABLE stocks ADD COLUMN instrument_type TEXT")
+
+    # Backfill instrument_type if missing for any stocks
+    unclassified = conn.execute(
+        "SELECT isin FROM stocks WHERE instrument_type IS NULL"
+    ).fetchall()
+    if unclassified:
+        cur = conn.cursor()
+        for (isin,) in unclassified:
+            cur.execute(
+                "UPDATE stocks SET instrument_type = ? WHERE isin = ?",
+                (classify_isin(isin), isin),
+            )
+        conn.commit()
+
+    # Normalise fraction-scale pct_nav (where sum(pct_nav) <= 2.0) to percent scale (0..100)
+    fraction_schemes = conn.execute("""
+        SELECT scheme_id, report_month
+        FROM mf_holdings_monthly
+        GROUP BY scheme_id, report_month
+        HAVING SUM(pct_nav) <= 2.0
+    """).fetchall()
+    if fraction_schemes:
+        conn.execute("""
+            UPDATE mf_holdings_monthly
+            SET pct_nav = pct_nav * 100.0
+            WHERE (scheme_id, report_month) IN (
+                SELECT scheme_id, report_month
+                FROM mf_holdings_monthly
+                GROUP BY scheme_id, report_month
+                HAVING SUM(pct_nav) <= 2.0
+            )
+        """)
+        conn.commit()
+
     return conn
 
 
@@ -79,6 +152,13 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     if missing:
         raise ValueError(f"{csv_path} is missing expected columns: {missing}")
 
+    # Normalise pct_nav to percent scale (0..100) if file stores it as fraction (0..1)
+    df = df.copy()
+    for _, group_indices in df.groupby(["amc_name", "scheme_name", "report_month"]).groups.items():
+        nav_sum = df.loc[group_indices, "pct_nav"].sum()
+        if nav_sum <= 2.0:
+            df.loc[group_indices, "pct_nav"] = df.loc[group_indices, "pct_nav"] * 100.0
+
     cur = conn.cursor()
     for (amc, scheme), _ in df.groupby(["amc_name", "scheme_name"]):
         cur.execute(
@@ -93,8 +173,8 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
 
     for _, row in df.drop_duplicates("isin").iterrows():
         cur.execute(
-            "INSERT OR REPLACE INTO stocks (isin, name, industry) VALUES (?, ?, ?)",
-            (row["isin"], row["instrument_name"], row.get("industry")),
+            "INSERT OR REPLACE INTO stocks (isin, name, industry, instrument_type) VALUES (?, ?, ?, ?)",
+            (row["isin"], row["instrument_name"], row.get("industry"), classify_isin(row["isin"])),
         )
 
     loaded = 0

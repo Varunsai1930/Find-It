@@ -11,16 +11,25 @@ import sqlite3
 import pandas as pd
 
 
-def compute_consensus(conn: sqlite3.Connection, report_month: str) -> pd.DataFrame:
-    deltas = pd.read_sql_query(
+def compute_consensus(
+    conn: sqlite3.Connection,
+    report_month: str,
+    instrument_type: str | None = "equity",
+) -> pd.DataFrame:
+    sql = (
         "SELECT d.isin, s.name AS stock_name, d.action, d.value_change_lakhs, "
         "       sch.amc_name "
         "FROM mf_holding_deltas d "
         "JOIN stocks s ON s.isin = d.isin "
         "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-        "WHERE d.report_month = ?",
-        conn, params=(report_month,),
+        "WHERE d.report_month = ?"
     )
+    params = [report_month]
+    if instrument_type is not None:
+        sql += " AND s.instrument_type = ?"
+        params.append(instrument_type)
+
+    deltas = pd.read_sql_query(sql, conn, params=params)
 
     if deltas.empty:
         return pd.DataFrame(columns=[
