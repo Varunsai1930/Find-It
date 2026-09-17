@@ -11,7 +11,8 @@ from findit.narrate.template import render_summary
 
 # ---- helpers ---------------------------------------------------------------
 
-def _mem_conn(with_filing_type: bool = False, deltas_pk: bool = True) -> sqlite3.Connection:
+def _mem_conn(with_filing_type: bool = False, deltas_pk: bool = True,
+              with_price_effect: bool = True) -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.execute(
         "CREATE TABLE schemes (scheme_id INTEGER PRIMARY KEY, amc_name TEXT NOT NULL, scheme_name TEXT NOT NULL)"
@@ -19,15 +20,16 @@ def _mem_conn(with_filing_type: bool = False, deltas_pk: bool = True) -> sqlite3
     conn.execute(
         "CREATE TABLE stocks (isin TEXT PRIMARY KEY, name TEXT NOT NULL, industry TEXT, instrument_type TEXT)"
     )
-    pk = "PRIMARY KEY (scheme_id, isin, report_month)" if deltas_pk else ""
-    conn.execute(
-        f"""CREATE TABLE mf_holding_deltas (
-            scheme_id INTEGER NOT NULL, isin TEXT NOT NULL, report_month TEXT NOT NULL,
-            prev_month TEXT, qty_change REAL, value_change_lakhs REAL,
-            flow_lakhs REAL, pct_nav_change REAL, action TEXT NOT NULL
-            {',' + pk if pk else ''}
-        )"""
+    delta_cols = (
+        "scheme_id INTEGER NOT NULL, isin TEXT NOT NULL, report_month TEXT NOT NULL,\n"
+        "            prev_month TEXT, qty_change REAL, value_change_lakhs REAL,\n"
+        "            flow_lakhs REAL, pct_nav_change REAL, action TEXT NOT NULL"
     )
+    if with_price_effect:
+        delta_cols += ", price_effect_lakhs REAL"
+    if deltas_pk:
+        delta_cols += ", PRIMARY KEY (scheme_id, isin, report_month)"
+    conn.execute(f"CREATE TABLE mf_holding_deltas (\n            {delta_cols}\n        )")
     if with_filing_type:
         conn.execute(
             """CREATE TABLE shareholding_quarterly (
@@ -64,6 +66,7 @@ def _add_scheme_stock_delta(
     action: str = "new",
     month: str = "2026-08",
     prev: str = "2026-07",
+    price=None,
 ):
     conn.execute(
         "INSERT OR IGNORE INTO schemes (scheme_id, amc_name, scheme_name) VALUES (?, ?, ?)",
@@ -75,13 +78,29 @@ def _add_scheme_stock_delta(
     )
     if flow is None:
         flow = val
-    conn.execute(
-        """INSERT OR REPLACE INTO mf_holding_deltas
-           (scheme_id, isin, report_month, prev_month, qty_change,
-            value_change_lakhs, flow_lakhs, pct_nav_change, action)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (scheme_id, isin, month, prev, qty, val, flow, pct, action),
+    if price is None:
+        # Identity: value_change == flow + price_effect (Worker A convention).
+        price = val - flow
+    has_price = any(
+        r[1] == "price_effect_lakhs"
+        for r in conn.execute("PRAGMA table_info(mf_holding_deltas)").fetchall()
     )
+    if has_price:
+        conn.execute(
+            """INSERT OR REPLACE INTO mf_holding_deltas
+               (scheme_id, isin, report_month, prev_month, qty_change,
+                value_change_lakhs, flow_lakhs, pct_nav_change, action, price_effect_lakhs)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (scheme_id, isin, month, prev, qty, val, flow, pct, action, price),
+        )
+    else:
+        conn.execute(
+            """INSERT OR REPLACE INTO mf_holding_deltas
+               (scheme_id, isin, report_month, prev_month, qty_change,
+                value_change_lakhs, flow_lakhs, pct_nav_change, action)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (scheme_id, isin, month, prev, qty, val, flow, pct, action),
+        )
     conn.commit()
 
 
@@ -107,7 +126,7 @@ def _consensus_row(isin="INE000A01001", net=2, name="Test Equity"):
     return pd.DataFrame([{
         "isin": isin, "stock_name": name,
         "amcs_buying": max(net, 0), "amcs_selling": 0,
-        "total_flow_lakhs": 100.0, "total_value_change_lakhs": 120.0,
+        "total_flow_lakhs": 100.0, "total_price_effect_lakhs": 20.0,
         "net_amc_count": net, "buying_ratio": 1.0,
     }])
 
@@ -117,8 +136,8 @@ def _consensus_row(isin="INE000A01001", net=2, name="Test Equity"):
 def test_buying_ratio_and_ranking():
     conn = _mem_conn()
     # AAA: net 2, flow 100. BBB: net 1 but huge flow. CCC: net 1 small flow.
-    _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity", 10, 100, 100, 0.5, "new")
-    _add_scheme_stock_delta(conn, 2, "SBI AMC", "Bluechip", "INEAAA01001", "AAA", "equity", 10, 100, 100, 0.5, "added")
+    _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity", 10, 100, 100, 0.5, "new", price=10.0)
+    _add_scheme_stock_delta(conn, 2, "SBI AMC", "Bluechip", "INEAAA01001", "AAA", "equity", 10, 100, 100, 0.5, "added", price=-4.0)
     # BBB: 2 buying, 1 selling
     _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEBBB01001", "BBB", "equity", 10, 5000, 5000, 0.5, "new")
     _add_scheme_stock_delta(conn, 2, "SBI AMC", "Bluechip", "INEBBB01001", "BBB", "equity", 10, 5000, 5000, 0.5, "added")
@@ -129,10 +148,14 @@ def test_buying_ratio_and_ranking():
     out = consensus_signals.compute_consensus(conn, "2026-08")
     assert "buying_ratio" in out.columns
     assert "total_flow_lakhs" in out.columns
+    assert "total_price_effect_lakhs" in out.columns
+    assert "total_value_change_lakhs" not in out.columns
     row = {r["isin"]: r for _, r in out.iterrows()}
     assert row["INEAAA01001"]["buying_ratio"] == 1.0
     assert abs(row["INEBBB01001"]["buying_ratio"] - 2 / 3) < 1e-9
     assert row["INEBBB01001"]["net_amc_count"] == 1
+    # Price effects aggregate per ISIN (10.0 + -4.0 = 6.0 for AAA).
+    assert abs(row["INEAAA01001"]["total_price_effect_lakhs"] - 6.0) < 1e-9
     # Rank: net first, then flow.
     order = out["isin"].tolist()
     assert order[0] == "INEAAA01001"  # net 2
@@ -323,8 +346,8 @@ def test_exits_capped_and_deduped():
         conn.execute(
             """INSERT INTO mf_holding_deltas
                (scheme_id, isin, report_month, prev_month, qty_change,
-                value_change_lakhs, flow_lakhs, pct_nav_change, action)
-               VALUES (1, ?, '2026-08', '2026-07', -100, ?, ?, -0.1, 'exited')""",
+                value_change_lakhs, flow_lakhs, pct_nav_change, action, price_effect_lakhs)
+               VALUES (1, ?, '2026-08', '2026-07', -100, ?, ?, -0.1, 'exited', 0.0)""",
             (f"INE00{i:04d}01001", val, val),
         )
     # Duplicate ISIN row (table has no PK here): same ISIN as ExitCo 0,
@@ -332,8 +355,8 @@ def test_exits_capped_and_deduped():
     conn.execute(
         """INSERT INTO mf_holding_deltas
            (scheme_id, isin, report_month, prev_month, qty_change,
-            value_change_lakhs, flow_lakhs, pct_nav_change, action)
-           VALUES (1, 'INE00000001001', '2026-08', '2026-07', -50, -50, -50, -0.05, 'exited')"""
+            value_change_lakhs, flow_lakhs, pct_nav_change, action, price_effect_lakhs)
+           VALUES (1, 'INE00000001001', '2026-08', '2026-07', -50, -50, -50, -0.05, 'exited', 0.0)"""
     )
     conn.commit()
     text = fallback_summary.build_summary(conn, 1, "2026-08")
@@ -353,6 +376,83 @@ def test_added_trimmed_rank_by_flow_fallback_value():
                             20, 100, 5000, 0.6, "added")
     text = fallback_summary.build_summary(conn, 1, "2026-08")
     assert "HighFlow" in text  # ranked by flow, not value
+    conn.close()
+
+
+# ---- price effect (Worker A column) ------------------------------------------
+
+def test_consensus_price_totals_and_no_value_total():
+    conn = _mem_conn()
+    _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity",
+                            10, 100, 70, 0.5, "added", price=30.0)
+    _add_scheme_stock_delta(conn, 2, "SBI AMC", "Bluechip", "INEAAA01001", "AAA", "equity",
+                            5, 50, 60, 0.3, "added", price=-10.0)
+    out = consensus_signals.compute_consensus(conn, "2026-08")
+    assert "total_price_effect_lakhs" in out.columns
+    assert "total_value_change_lakhs" not in out.columns
+    r = out.set_index("isin").loc["INEAAA01001"]
+    assert abs(r["total_price_effect_lakhs"] - 20.0) < 1e-9
+    assert abs(r["total_flow_lakhs"] - 130.0) < 1e-9
+    conn.close()
+
+
+def test_consensus_legacy_db_without_price_column():
+    conn = _mem_conn(with_price_effect=False)
+    _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity",
+                            10, 100, 100, 0.5, "new")
+    out = consensus_signals.compute_consensus(conn, "2026-08")
+    assert "total_price_effect_lakhs" in out.columns
+    assert "total_value_change_lakhs" not in out.columns
+    assert abs(out.iloc[0]["total_price_effect_lakhs"] - 0.0) < 1e-9
+    assert abs(out.iloc[0]["total_flow_lakhs"] - 100.0) < 1e-9
+    conn.close()
+
+
+def test_consensus_empty_frame_has_price_total():
+    conn = _mem_conn()
+    out = consensus_signals.compute_consensus(conn, "2026-08")
+    assert out.empty
+    assert "total_price_effect_lakhs" in out.columns
+    assert "total_value_change_lakhs" not in out.columns
+    conn.close()
+
+
+def test_sign_flip_flow_positive_value_negative():
+    # Golden-ish: bought shares (flow > 0) while the position value fell
+    # (value < 0) because the negative price effect overwhelmed the inflow.
+    conn = _mem_conn()
+    _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME", "INE000A01001", "FlipCo", "equity",
+                            18400, -870.40, 603.88, -0.03, "added")
+    out = consensus_signals.compute_consensus(conn, "2026-08")
+    r = out.iloc[0]
+    assert r["total_flow_lakhs"] > 0
+    assert abs(r["total_price_effect_lakhs"] - (-1474.28)) < 1e-6
+    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    assert "price effect" in text
+    assert "flow" in text and "value change" in text
+    assert "+₹-" not in text
+    conn.close()
+
+
+def test_added_detail_shows_price_effect_when_material():
+    conn = _mem_conn()
+    _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME", "INE000A01001", "AddCo", "equity",
+                            100, 50.0, 200.0, 0.10, "added", price=-150.0)
+    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    assert "price effect" in text
+    assert "flow" in text and "value change" in text
+    assert "+₹-" not in text
+    conn.close()
+
+
+def test_new_detail_stays_flow_plus_value():
+    conn = _mem_conn()
+    _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME", "INE000A01001", "NewCo", "equity",
+                            100, 500.0, 500.0, 0.5, "new")
+    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    # flow == value for new positions: no separate price-effect leg.
+    assert "price effect" not in text
+    assert "flow" in text and "value change" in text
     conn.close()
 
 

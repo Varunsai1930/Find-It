@@ -381,26 +381,49 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             quarantined_schemes = sorted(
                 {sid for (sid, m) in _quarantined_pairs(conn) if m == month}
             )
-            sql = (
-                "SELECT d.isin AS isin, s.name AS stock_name, s.industry AS industry, "
-                "s.instrument_type AS instrument_type, d.scheme_id AS scheme_id, "
-                "sch.amc_name AS amc_name, d.action AS action, "
-                "d.qty_change AS qty_change, d.value_change_lakhs AS value_change_lakhs, "
-                "d.flow_lakhs AS flow_lakhs "
-                "FROM mf_holding_deltas d "
-                "JOIN stocks s ON s.isin = d.isin "
-                "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-                "WHERE d.report_month = ?"
-            )
-            params: list[Any] = [month]
-            if equity_filter:
-                sql += " AND s.instrument_type = ?"
-                params.append("equity")
-            if quarantined_schemes:
-                placeholders = ",".join("?" for _ in quarantined_schemes)
-                sql += f" AND d.scheme_id NOT IN ({placeholders})"
-                params.extend(quarantined_schemes)
-            rows = conn.execute(sql, params).fetchall()
+            # price_effect_lakhs is added PRAGMA-guarded by Worker A; legacy
+            # DBs lack it, so detect upfront and fall back to a price-less
+            # SELECT rather than 500ing.
+            has_price = "price_effect_lakhs" in _table_columns(conn, "mf_holding_deltas")
+
+            def _consensus_sql(include_price: bool) -> tuple[str, list[Any]]:
+                price_select = (
+                    "d.price_effect_lakhs AS price_effect_lakhs, "
+                    if include_price
+                    else ""
+                )
+                sql = (
+                    "SELECT d.isin AS isin, s.name AS stock_name, s.industry AS industry, "
+                    "s.instrument_type AS instrument_type, d.scheme_id AS scheme_id, "
+                    "sch.amc_name AS amc_name, d.action AS action, "
+                    "d.qty_change AS qty_change, d.value_change_lakhs AS value_change_lakhs, "
+                    f"{price_select}"
+                    "d.flow_lakhs AS flow_lakhs "
+                    "FROM mf_holding_deltas d "
+                    "JOIN stocks s ON s.isin = d.isin "
+                    "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
+                    "WHERE d.report_month = ?"
+                )
+                params: list[Any] = [month]
+                if equity_filter:
+                    sql += " AND s.instrument_type = ?"
+                    params.append("equity")
+                if quarantined_schemes:
+                    placeholders = ",".join("?" for _ in quarantined_schemes)
+                    sql += f" AND d.scheme_id NOT IN ({placeholders})"
+                    params.extend(quarantined_schemes)
+                return sql, params
+
+            sql, params = _consensus_sql(has_price)
+            try:
+                rows = conn.execute(sql, params).fetchall()
+            except sqlite3.Error as exc:
+                if has_price and "price_effect" in str(exc).lower():
+                    has_price = False
+                    sql, params = _consensus_sql(False)
+                    rows = conn.execute(sql, params).fetchall()
+                else:
+                    raise
             if not rows:
                 return _sanitize(
                     {
@@ -430,7 +453,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                         "buy_amcs": set(),
                         "sell_amcs": set(),
                         "total_flow_lakhs": 0.0,
-                        "total_value_change_lakhs": 0.0,
+                        "total_price_effect_lakhs": 0.0,
                     },
                 )
                 action = str(r["action"])
@@ -439,27 +462,27 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 except (TypeError, ValueError):
                     flow = 0.0
                 try:
-                    val = (
-                        float(r["value_change_lakhs"])
-                        if r["value_change_lakhs"] is not None
+                    price = (
+                        float(r["price_effect_lakhs"])
+                        if (has_price and r["price_effect_lakhs"] is not None)
                         else 0.0
                     )
-                except (TypeError, ValueError):
-                    val = 0.0
+                except (TypeError, ValueError, IndexError, KeyError):
+                    price = 0.0
                 if not math.isfinite(flow):
                     flow = 0.0
-                if not math.isfinite(val):
-                    val = 0.0
+                if not math.isfinite(price):
+                    price = 0.0
                 if action in BUY_ACTIONS:
                     g["buy_schemes"].add(int(r["scheme_id"]))
                     g["buy_amcs"].add(str(r["amc_name"]))
                     g["total_flow_lakhs"] += flow
-                    g["total_value_change_lakhs"] += val
+                    g["total_price_effect_lakhs"] += price
                 elif action in SELL_ACTIONS:
                     g["sell_schemes"].add(int(r["scheme_id"]))
                     g["sell_amcs"].add(str(r["amc_name"]))
                     g["total_flow_lakhs"] += flow
-                    g["total_value_change_lakhs"] += val
+                    g["total_price_effect_lakhs"] += price
                 # 'unchanged' rows contribute no signal and are skipped.
             # Exclude no-signal names: only names with at least one buy or sell.
             ranked: list[dict[str, Any]] = []
@@ -486,7 +509,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                         "net_amc_count": ab - as_,
                         "buying_ratio": buying_ratio,
                         "total_flow_lakhs": g["total_flow_lakhs"],
-                        "total_value_change_lakhs": g["total_value_change_lakhs"],
+                        "total_price_effect_lakhs": g["total_price_effect_lakhs"],
                     }
                 )
             if not ranked:
@@ -727,18 +750,41 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             consensus_message = "No consensus data available yet."
             if latest_month is not None:
                 try:
-                    rows = conn.execute(
-                        """SELECT d.isin AS isin, s.name AS stock_name,
-                                  d.scheme_id AS scheme_id, sch.amc_name AS amc_name,
-                                  d.action AS action,
-                                  d.flow_lakhs AS flow_lakhs,
-                                  d.value_change_lakhs AS value_change_lakhs
-                           FROM mf_holding_deltas d
-                           JOIN stocks s ON s.isin = d.isin
-                           JOIN schemes sch ON sch.scheme_id = d.scheme_id
-                           WHERE d.report_month = ? AND s.instrument_type = 'equity'""",
-                        (latest_month,),
-                    ).fetchall()
+                    has_price = "price_effect_lakhs" in _table_columns(
+                        conn, "mf_holding_deltas"
+                    )
+                    price_select = (
+                        ", d.price_effect_lakhs AS price_effect_lakhs"
+                        if has_price
+                        else ""
+                    )
+                    dashboard_sql = (
+                        "SELECT d.isin AS isin, s.name AS stock_name, "
+                        "d.scheme_id AS scheme_id, sch.amc_name AS amc_name, "
+                        "d.action AS action, "
+                        f"d.flow_lakhs AS flow_lakhs{price_select}, "
+                        "d.value_change_lakhs AS value_change_lakhs "
+                        "FROM mf_holding_deltas d "
+                        "JOIN stocks s ON s.isin = d.isin "
+                        "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
+                        "WHERE d.report_month = ? AND s.instrument_type = 'equity'"
+                    )
+                    try:
+                        rows = conn.execute(
+                            dashboard_sql, (latest_month,)
+                        ).fetchall()
+                    except sqlite3.Error as exc:
+                        # Legacy DBs predate price_effect_lakhs: retry without it.
+                        if has_price and "price_effect" in str(exc).lower():
+                            has_price = False
+                            dashboard_sql = dashboard_sql.replace(
+                                ", d.price_effect_lakhs AS price_effect_lakhs", ""
+                            )
+                            rows = conn.execute(
+                                dashboard_sql, (latest_month,)
+                            ).fetchall()
+                        else:
+                            raise
                     agg: dict[str, dict[str, Any]] = {}
                     for r in rows:
                         isin = str(r["isin"])
@@ -752,6 +798,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                                 "buy_a": set(),
                                 "sell_a": set(),
                                 "flow": 0.0,
+                                "price": 0.0,
                             },
                         )
                         act = str(r["action"])
@@ -765,14 +812,26 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                             fl = 0.0
                         if not math.isfinite(fl):
                             fl = 0.0
+                        try:
+                            pr = (
+                                float(r["price_effect_lakhs"])
+                                if (has_price and r["price_effect_lakhs"] is not None)
+                                else 0.0
+                            )
+                        except (TypeError, ValueError, IndexError, KeyError):
+                            pr = 0.0
+                        if not math.isfinite(pr):
+                            pr = 0.0
                         if act in BUY_ACTIONS:
                             g["buy_s"].add(int(r["scheme_id"]))
                             g["buy_a"].add(str(r["amc_name"]))
                             g["flow"] += fl
+                            g["price"] += pr
                         elif act in SELL_ACTIONS:
                             g["sell_s"].add(int(r["scheme_id"]))
                             g["sell_a"].add(str(r["amc_name"]))
                             g["flow"] += fl
+                            g["price"] += pr
                     ranked_all = []
                     for g in agg.values():
                         nb, ns = len(g["buy_s"]), len(g["sell_s"])
@@ -792,6 +851,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                                 "net_scheme_count": nb - ns,
                                 "buying_ratio": (nb / denom) if denom else 0.0,
                                 "total_flow_lakhs": g["flow"],
+                                "total_price_effect_lakhs": g["price"],
                             }
                         )
                     ranked_all.sort(

@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS mf_holding_deltas (
     qty_change REAL,
     value_change_lakhs REAL,
     flow_lakhs REAL,
+    price_effect_lakhs REAL,
     pct_nav_change REAL,
     action TEXT NOT NULL,             -- new / added / trimmed / exited / unchanged
     PRIMARY KEY (scheme_id, isin, report_month)
@@ -207,6 +208,8 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
     delta_cols = [r[1] for r in conn.execute("PRAGMA table_info(mf_holding_deltas)").fetchall()]
     if "flow_lakhs" not in delta_cols:
         conn.execute("ALTER TABLE mf_holding_deltas ADD COLUMN flow_lakhs REAL")
+    if "price_effect_lakhs" not in delta_cols:
+        conn.execute("ALTER TABLE mf_holding_deltas ADD COLUMN price_effect_lakhs REAL")
 
     # Additive v2 migrations: new tables + new nullable columns only.
     conn.executescript(V2_SCHEMA)

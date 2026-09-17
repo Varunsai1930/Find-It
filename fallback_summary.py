@@ -30,6 +30,57 @@ def _flow_value_detail(row) -> str:
     return ""
 
 
+def _has_material_price_effect(row) -> bool:
+    """True when a price_effect_lakhs leg is present and worth narrating.
+
+    Legacy rows predate the column (or store NULL): never material then.
+    The threshold (|price| >= 0.05 Cr, i.e. 5 lakhs) keeps dust from
+    rendering as a spurious '(+₹0.0 Cr price effect)' leg.
+    """
+    if "price_effect_lakhs" not in row:
+        return False
+    try:
+        val = row["price_effect_lakhs"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    if not pd.notna(val):
+        return False
+    try:
+        cr = float(val) / 100.0
+    except (TypeError, ValueError):
+        return False
+    return abs(cr) >= 0.05
+
+
+def _flow_price_value_detail(row) -> str:
+    """'(+₹X Cr flow, -₹Y Cr price effect, -₹Z Cr value change)' when the
+    price leg is present and material; otherwise same as _flow_value_detail.
+
+    Used for added/trimmed tops where flow and value can diverge (sign
+    flips). New/exited rows keep the flow+value form since flow == value
+    there by convention (price effect is 0).
+    """
+    has_flow = "flow_lakhs" in row and pd.notna(row["flow_lakhs"])
+    has_val = "value_change_lakhs" in row and pd.notna(row["value_change_lakhs"])
+    if has_flow and has_val and _has_material_price_effect(row):
+        return (
+            f"({_fmt_cr(row['flow_lakhs'])} flow, "
+            f"{_fmt_cr(row['price_effect_lakhs'])} price effect, "
+            f"{_fmt_cr(row['value_change_lakhs'])} value change)"
+        )
+    return _flow_value_detail(row)
+
+
+def _headline_lakhs(row) -> float:
+    """Flow is the headline rupee figure; value change only as fallback."""
+    if "flow_lakhs" in row and pd.notna(row["flow_lakhs"]):
+        try:
+            return float(row["flow_lakhs"])
+        except (TypeError, ValueError):
+            pass
+    return float(row["value_change_lakhs"])
+
+
 def _sort_col(df: pd.DataFrame) -> str:
     if "flow_lakhs" in df.columns and df["flow_lakhs"].notna().any():
         return "flow_lakhs"
@@ -39,8 +90,11 @@ def _sort_col(df: pd.DataFrame) -> str:
 def _format_exits(exited: pd.DataFrame, prefix: str = "Fully exited") -> str:
     """Dedupe exits by ISIN, cap names at 5 + 'and N more'."""
     deduped = exited.drop_duplicates(subset=["isin"]) if "isin" in exited.columns else exited
-    if "value_change_lakhs" in deduped.columns:
-        deduped = deduped.sort_values("value_change_lakhs", ascending=True)
+    # Rank by flow (value-change fallback when flow is all-NaN), same as
+    # added/trimmed: the largest exit is the most negative flow.
+    sort_col = _sort_col(deduped) if not deduped.empty else "value_change_lakhs"
+    if sort_col in deduped.columns:
+        deduped = deduped.sort_values(sort_col, ascending=True)
     names = deduped["stock_name"].tolist()
     if len(names) > 5:
         display = ", ".join(names[:5]) + f", and {len(names) - 5} more"
@@ -52,7 +106,9 @@ def _format_exits(exited: pd.DataFrame, prefix: str = "Fully exited") -> str:
 def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
     new = deltas[deltas["action"] == "new"]
     if not new.empty:
-        new = new.sort_values("value_change_lakhs", ascending=False)
+        sort_col = _sort_col(new)
+        if sort_col in new.columns:
+            new = new.sort_values(sort_col, ascending=False)
     added = deltas[deltas["action"] == "added"]
     trimmed = deltas[deltas["action"] == "trimmed"]
     exited = deltas[deltas["action"] == "exited"]
@@ -60,16 +116,16 @@ def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
     if not new.empty:
         top = new.iloc[0]
         detail = _flow_value_detail(top)
-        # Keep the value-position + NAV% phrasing (BSE 0.66% case) and
-        # additionally show BOTH flow and value change.
+        # Keep the value-position + NAV% phrasing (BSE 0.66% case); the
+        # headline rupee figure is flow (== value for new positions).
         lines.append(
             f"- Opened {len(new)} new position(s). The largest new entry was "
-            f"{top['stock_name']}, a ₹{top['value_change_lakhs']/100:.1f} Cr position "
+            f"{top['stock_name']}, a ₹{_headline_lakhs(top)/100:.1f} Cr position "
             f"({top['pct_nav_change']:.2f}% of NAV) {detail}."
         )
     if not added.empty:
         top = added.sort_values(_sort_col(added), ascending=False).iloc[0]
-        flow_detail = _flow_value_detail(top)
+        flow_detail = _flow_price_value_detail(top)
         lines.append(
             f"- Added to {len(added)} existing position(s). The biggest addition was "
             f"{top['stock_name']}, up {top['qty_change']:,.0f} shares "
@@ -77,7 +133,7 @@ def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
         )
     if not trimmed.empty:
         top = trimmed.sort_values(_sort_col(trimmed), ascending=True).iloc[0]
-        flow_detail = _flow_value_detail(top)
+        flow_detail = _flow_price_value_detail(top)
         lines.append(
             f"- Trimmed {len(trimmed)} position(s). The largest cut was "
             f"{top['stock_name']}, down {abs(top['qty_change']):,.0f} shares "

@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS mf_holding_deltas (
     qty_change REAL,
     value_change_lakhs REAL,
     flow_lakhs REAL,
+    price_effect_lakhs REAL,
     pct_nav_change REAL,
     action TEXT NOT NULL,
     PRIMARY KEY (scheme_id, isin, report_month)
@@ -200,3 +201,4 @@ ALTER TABLE shareholding_quarterly ADD COLUMN filing_type TEXT;
 ALTER TABLE shareholding_quarterly ADD COLUMN validation_status TEXT;
 ALTER TABLE shareholding_quarterly ADD COLUMN source_url TEXT;
 ALTER TABLE shareholding_quarterly ADD COLUMN source_sha256 TEXT;
+ALTER TABLE mf_holding_deltas ADD COLUMN price_effect_lakhs REAL;

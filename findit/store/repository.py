@@ -153,6 +153,7 @@ def migrate(conn: sqlite3.Connection) -> None:
     # Legacy backfills preserved from db.py (idempotent PRAGMA-guarded).
     _ensure_column(conn, "stocks", "instrument_type", "instrument_type TEXT")
     _ensure_column(conn, "mf_holding_deltas", "flow_lakhs", "flow_lakhs REAL")
+    _ensure_column(conn, "mf_holding_deltas", "price_effect_lakhs", "price_effect_lakhs REAL")
     # v2 columns (also present as ALTERs in schema.sql; PRAGMA guard keeps
     # this idempotent even if the script path above is skipped/partial).
     _ensure_column(conn, "mf_holdings_monthly", "pct_nav_raw", "pct_nav_raw REAL")

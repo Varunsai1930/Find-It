@@ -14,30 +14,56 @@ from datetime import date
 import pandas as pd
 
 
+def _delta_columns(conn: sqlite3.Connection) -> set[str]:
+    """Column names of mf_holding_deltas (empty set when unreadable)."""
+    try:
+        return {str(r[1]) for r in conn.execute("PRAGMA table_info(mf_holding_deltas)").fetchall()}
+    except Exception:
+        return set()
+
+
 def compute_consensus(
     conn: sqlite3.Connection,
     report_month: str,
     instrument_type: str | None = "equity",
 ) -> pd.DataFrame:
-    sql = (
-        "SELECT d.isin, s.name AS stock_name, d.action, d.value_change_lakhs, "
-        "       d.flow_lakhs, sch.amc_name "
-        "FROM mf_holding_deltas d "
-        "JOIN stocks s ON s.isin = d.isin "
-        "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-        "WHERE d.report_month = ?"
-    )
+    # price_effect_lakhs is added PRAGMA-guarded by Worker A; legacy DBs
+    # lack it, so detect upfront and fall back to a price-less SELECT.
+    has_price = "price_effect_lakhs" in _delta_columns(conn)
+
+    def _build_sql(include_price: bool) -> str:
+        price_select = "d.price_effect_lakhs, " if include_price else ""
+        sql = (
+            "SELECT d.isin, s.name AS stock_name, d.action, d.value_change_lakhs, "
+            f"       d.flow_lakhs, {price_select}sch.amc_name "
+            "FROM mf_holding_deltas d "
+            "JOIN stocks s ON s.isin = d.isin "
+            "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
+            "WHERE d.report_month = ?"
+        )
+        if instrument_type is not None:
+            sql += " AND s.instrument_type = ?"
+        return sql
+
     params = [report_month]
     if instrument_type is not None:
-        sql += " AND s.instrument_type = ?"
         params.append(instrument_type)
 
-    deltas = pd.read_sql_query(sql, conn, params=params)
+    try:
+        deltas = pd.read_sql_query(_build_sql(has_price), conn, params=params)
+    except sqlite3.OperationalError as exc:
+        # Defensive retry for DBs whose PRAGMA advertised the column but
+        # whose table actually predates it (or vice versa).
+        if has_price and "price_effect" in str(exc).lower():
+            has_price = False
+            deltas = pd.read_sql_query(_build_sql(False), conn, params=params)
+        else:
+            raise
 
     if deltas.empty:
         return pd.DataFrame(columns=[
             "isin", "stock_name", "amcs_buying", "amcs_selling",
-            "total_flow_lakhs", "total_value_change_lakhs", "net_amc_count",
+            "total_flow_lakhs", "total_price_effect_lakhs", "net_amc_count",
             "buying_ratio",
         ])
 
@@ -46,23 +72,28 @@ def compute_consensus(
 
     buy_counts = buying.groupby("isin")["amc_name"].nunique().rename("amcs_buying")
     sell_counts = selling.groupby("isin")["amc_name"].nunique().rename("amcs_selling")
-    value_totals = deltas.groupby("isin")["value_change_lakhs"].sum().rename("total_value_change_lakhs")
     names = deltas.drop_duplicates("isin").set_index("isin")["stock_name"]
 
     series_to_concat = [names, buy_counts, sell_counts]
     if "flow_lakhs" in deltas.columns and deltas["flow_lakhs"].notna().any():
         flow_totals = deltas.groupby("isin")["flow_lakhs"].sum().rename("total_flow_lakhs")
         series_to_concat.append(flow_totals)
-    series_to_concat.append(value_totals)
+    if has_price and "price_effect_lakhs" in deltas.columns:
+        price_totals = (
+            deltas.groupby("isin")["price_effect_lakhs"].sum().rename("total_price_effect_lakhs")
+        )
+        series_to_concat.append(price_totals)
 
     out = pd.concat(series_to_concat, axis=1)
-    # Ensure total_flow_lakhs always exists so ranking is stable even when
-    # no flow data was recorded for this month.
+    # Ensure totals always exist so ranking is stable even when no flow or
+    # price-effect data was recorded for this month (legacy DBs).
     if "total_flow_lakhs" not in out.columns:
         out["total_flow_lakhs"] = 0.0
+    if "total_price_effect_lakhs" not in out.columns:
+        out["total_price_effect_lakhs"] = 0.0
     # fillna(0) would coerce stock_name NaNs to 0; fill numeric cols only,
     # then fill any missing names with empty string (should not happen).
-    for col in ["amcs_buying", "amcs_selling", "total_flow_lakhs", "total_value_change_lakhs"]:
+    for col in ["amcs_buying", "amcs_selling", "total_flow_lakhs", "total_price_effect_lakhs"]:
         if col in out.columns:
             out[col] = out[col].fillna(0)
     if "stock_name" in out.columns:

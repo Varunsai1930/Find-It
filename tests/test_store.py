@@ -44,6 +44,10 @@ def _holding_cols(conn):
     return {r[1] for r in conn.execute("PRAGMA table_info(mf_holdings_monthly)").fetchall()}
 
 
+def _delta_cols(conn):
+    return {r[1] for r in conn.execute("PRAGMA table_info(mf_holding_deltas)").fetchall()}
+
+
 def _sh_cols(conn):
     return {
         r[1] for r in conn.execute("PRAGMA table_info(shareholding_quarterly)").fetchall()
@@ -82,6 +86,8 @@ def test_migrate_idempotent(tmp_path):
     scols = _sh_cols(conn)
     for c in ("filing_type", "validation_status", "source_url", "source_sha256"):
         assert c in scols, f"shareholding missing {c}"
+    dcols = _delta_cols(conn)
+    assert "price_effect_lakhs" in dcols, "mf_holding_deltas missing price_effect_lakhs"
     conn.close()
 
 
