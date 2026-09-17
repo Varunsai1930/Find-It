@@ -14,18 +14,37 @@ from datetime import date
 import pandas as pd
 
 
-def _delta_columns(conn: sqlite3.Connection) -> set[str]:
-    """Column names of mf_holding_deltas (empty set when unreadable)."""
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Column names of a table (empty set when unreadable)."""
     try:
-        return {str(r[1]) for r in conn.execute("PRAGMA table_info(mf_holding_deltas)").fetchall()}
+        return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
     except Exception:
         return set()
+
+
+def _delta_columns(conn: sqlite3.Connection) -> set[str]:
+    """Column names of mf_holding_deltas (empty set when unreadable)."""
+    return _table_columns(conn, "mf_holding_deltas")
+
+
+def _quarantined_scheme_ids(conn: sqlite3.Connection, report_month: str) -> list[int]:
+    """Scheme IDs quarantined for report_month (empty when table missing)."""
+    try:
+        rows = conn.execute(
+            "SELECT scheme_id FROM scheme_month_status "
+            "WHERE report_month = ? AND status = 'quarantined'",
+            (report_month,),
+        ).fetchall()
+    except Exception:
+        return []
+    return [int(r[0]) for r in rows if r[0] is not None]
 
 
 def compute_consensus(
     conn: sqlite3.Connection,
     report_month: str,
     instrument_type: str | None = "equity",
+    active_equity_only: bool = True,
 ) -> pd.DataFrame:
     # price_effect_lakhs is added PRAGMA-guarded by Worker A; legacy DBs
     # lack it, so detect upfront and fall back to a price-less SELECT.
@@ -45,18 +64,34 @@ def compute_consensus(
             sql += " AND s.instrument_type = ?"
         return sql
 
-    params = [report_month]
+    params: list = [report_month]
     if instrument_type is not None:
         params.append(instrument_type)
 
+    # Passive/debt schemes never count toward market-wide conviction.
+    # Independent of, and additional to, the instrument_type filter.
+    # Guarded for legacy DBs whose schemes table predates the column.
+    has_active_col = "is_active_equity" in _table_columns(conn, "schemes")
+    extra_sql = ""
+    if active_equity_only and has_active_col:
+        extra_sql += " AND sch.is_active_equity = 1"
+    quarantined = _quarantined_scheme_ids(conn, report_month)
+    if quarantined:
+        placeholders = ",".join("?" for _ in quarantined)
+        extra_sql += f" AND d.scheme_id NOT IN ({placeholders})"
+        params.extend(quarantined)
+
+    def _build_sql_guarded(include_price: bool) -> str:
+        return _build_sql(include_price) + extra_sql
+
     try:
-        deltas = pd.read_sql_query(_build_sql(has_price), conn, params=params)
+        deltas = pd.read_sql_query(_build_sql_guarded(has_price), conn, params=params)
     except sqlite3.OperationalError as exc:
         # Defensive retry for DBs whose PRAGMA advertised the column but
         # whose table actually predates it (or vice versa).
         if has_price and "price_effect" in str(exc).lower():
             has_price = False
-            deltas = pd.read_sql_query(_build_sql(False), conn, params=params)
+            deltas = pd.read_sql_query(_build_sql_guarded(False), conn, params=params)
         else:
             raise
 

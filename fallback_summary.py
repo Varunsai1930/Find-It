@@ -156,6 +156,23 @@ def build_summary(
         raise ValueError(f"No scheme with scheme_id={scheme_id}")
     amc_name, scheme_name = scheme
 
+    # A quarantined month must never feed a fund's summary silently.
+    # Guarded for legacy DBs predating scheme_month_status.
+    try:
+        status_row = conn.execute(
+            "SELECT status, validation_report_json FROM scheme_month_status "
+            "WHERE scheme_id = ? AND report_month = ?",
+            (scheme_id, report_month),
+        ).fetchone()
+    except Exception:
+        status_row = None
+    if status_row is not None and status_row[0] == "quarantined":
+        return (
+            f"{scheme_name} ({amc_name}) — {report_month} data withheld: "
+            f"quarantined by the validation gate ({status_row[1] or 'no report'}). "
+            f"Not zero activity — the numbers did not pass checks."
+        )
+
     try:
         stock_cols = [r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()]
     except Exception:

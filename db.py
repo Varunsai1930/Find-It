@@ -196,6 +196,55 @@ def classify_isin(isin: str) -> str:
     return "other"
 
 
+# Stopgap heuristic for consensus eligibility, pending a real AMFI
+# scheme-master join (which would give stable IDs + SEBI categories).
+# Case-insensitive substring match on scheme_name; anything matching is
+# treated as passive/debt (0), everything else defaults to active (1).
+# Defaulting to 1 is deliberate: wrongly excluding a real active fund is
+# worse than wrongly including a passive one. Auditable via the backfill
+# print below and the per-run passive list in run_pipeline.py.
+PASSIVE_SCHEME_PATTERNS = (
+    "etf", "index", "nifty", "sensex", "bse", "fof", "sdl", "gsec",
+    "liquid", "overnight", "arbitrage", "debt", "bond", "money market",
+    "gilt", "target maturity", "savings",
+)
+
+
+def classify_scheme_active(scheme_name: str) -> int:
+    """1 if the scheme looks like an active fund, 0 if passive/debt-like."""
+    name = (scheme_name or "").lower()
+    for pat in PASSIVE_SCHEME_PATTERNS:
+        if pat in name:
+            return 0
+    return 1
+
+
+def backfill_is_active_equity(conn: sqlite3.Connection) -> list:
+    """Set is_active_equity where NULL via classify_scheme_active.
+
+    Returns [(scheme_id, amc_name, scheme_name)] newly flagged 0, so the
+    caller can print them (auditable, never a silent filter)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(schemes)").fetchall()]
+    if "is_active_equity" not in cols:
+        conn.execute("ALTER TABLE schemes ADD COLUMN is_active_equity INTEGER")
+    rows = conn.execute(
+        "SELECT scheme_id, amc_name, scheme_name FROM schemes "
+        "WHERE is_active_equity IS NULL"
+    ).fetchall()
+    flagged = []
+    cur = conn.cursor()
+    for scheme_id, amc_name, scheme_name in rows:
+        active = classify_scheme_active(scheme_name or "")
+        cur.execute(
+            "UPDATE schemes SET is_active_equity = ? WHERE scheme_id = ?",
+            (active, scheme_id),
+        )
+        if active == 0:
+            flagged.append((scheme_id, amc_name, scheme_name))
+    conn.commit()
+    return flagged
+
+
 def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
@@ -226,6 +275,12 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
         _existing = [r[1] for r in conn.execute(f"PRAGMA table_info({_table})").fetchall()]
         if _col not in _existing:
             conn.execute(f"ALTER TABLE {_table} ADD COLUMN {_ddl}")
+
+    # Backfill is_active_equity for schemes lacking it (pattern heuristic).
+    # Prints newly-flagged passive schemes so the filter stays auditable.
+    newly_passive = backfill_is_active_equity(conn)
+    for _sid, _amc, _scheme in newly_passive:
+        print(f"  [is_active_equity=0] {_amc} | {_scheme}")
 
     # Backfill instrument_type if missing for any stocks
     unclassified = conn.execute(
