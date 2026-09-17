@@ -2,12 +2,13 @@
 delta_calculator.py — computes month-over-month holding changes per
 (scheme, stock), and persists them to mf_holding_deltas.
 
-This is deliberately pure arithmetic on numbers already in the database —
-no AI involved. The AI narration layer (later) only ever narrates the
-output of this file; it never computes deltas itself. See build plan §7.
+Decomposes month-over-month holding changes into:
+- flow_lakhs = qty_change * implied_px_curr (actual capital deployed / withdrawn)
+- value_change_lakhs = market_value_curr - market_value_prev (flow + price effect)
 """
 import sqlite3
 import pandas as pd
+import numpy as np
 
 
 def _fetch_month(conn: sqlite3.Connection, report_month: str) -> pd.DataFrame:
@@ -20,61 +21,91 @@ def _fetch_month(conn: sqlite3.Connection, report_month: str) -> pd.DataFrame:
 
 def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -> pd.DataFrame:
     """Returns a DataFrame of deltas for every (scheme, isin) present in
-    either month. Does not write to the DB — see persist_deltas for that."""
-    prev = _fetch_month(conn, prev_month).set_index(["scheme_id", "isin"])
-    curr = _fetch_month(conn, curr_month).set_index(["scheme_id", "isin"])
+    either month, including flow_lakhs (trading flow) and value_change_lakhs."""
+    prev = _fetch_month(conn, prev_month)
+    curr = _fetch_month(conn, curr_month)
 
-    all_keys = prev.index.union(curr.index)
-    rows = []
-    for key in all_keys:
-        scheme_id, isin = key
-        p = prev.loc[key] if key in prev.index else None
-        c = curr.loc[key] if key in curr.index else None
+    if prev.empty and curr.empty:
+        return pd.DataFrame(columns=[
+            "scheme_id", "isin", "report_month", "prev_month",
+            "qty_change", "value_change_lakhs", "flow_lakhs",
+            "pct_nav_change", "action",
+        ])
 
-        if p is None and c is not None:
-            action = "new"
-            qty_change = c["quantity"]
-            value_change = c["market_value_lakhs"]
-            pct_nav_change = c["pct_nav"]
-        elif p is not None and c is None:
-            action = "exited"
-            qty_change = -p["quantity"]
-            value_change = -p["market_value_lakhs"]
-            pct_nav_change = -p["pct_nav"]
-        else:
-            qty_change = c["quantity"] - p["quantity"]
-            value_change = c["market_value_lakhs"] - p["market_value_lakhs"]
-            pct_nav_change = c["pct_nav"] - p["pct_nav"]
-            if qty_change > 0:
-                action = "added"
-            elif qty_change < 0:
-                action = "trimmed"
-            else:
-                action = "unchanged"
+    m = prev.merge(
+        curr, on=["scheme_id", "isin"], how="outer",
+        suffixes=("_prev", "_curr"), indicator=True,
+    )
 
-        rows.append({
-            "scheme_id": scheme_id, "isin": isin,
-            "report_month": curr_month, "prev_month": prev_month,
-            "qty_change": qty_change, "value_change_lakhs": value_change,
-            "pct_nav_change": pct_nav_change, "action": action,
-        })
+    m["quantity_prev"] = m["quantity_prev"].fillna(0.0)
+    m["quantity_curr"] = m["quantity_curr"].fillna(0.0)
+    m["market_value_lakhs_prev"] = m["market_value_lakhs_prev"].fillna(0.0)
+    m["market_value_lakhs_curr"] = m["market_value_lakhs_curr"].fillna(0.0)
+    m["pct_nav_prev"] = m["pct_nav_prev"].fillna(0.0)
+    m["pct_nav_curr"] = m["pct_nav_curr"].fillna(0.0)
 
-    return pd.DataFrame(rows)
+    m["qty_change"] = m["quantity_curr"] - m["quantity_prev"]
+    m["value_change_lakhs"] = m["market_value_lakhs_curr"] - m["market_value_lakhs_prev"]
+    m["pct_nav_change"] = m["pct_nav_curr"] - m["pct_nav_prev"]
+    m["report_month"] = curr_month
+    m["prev_month"] = prev_month
+
+    # Action classification
+    conditions = [
+        m["_merge"] == "right_only",
+        m["_merge"] == "left_only",
+        m["qty_change"] > 0,
+        m["qty_change"] < 0,
+    ]
+    choices = ["new", "exited", "added", "trimmed"]
+    m["action"] = np.select(conditions, choices, default="unchanged")
+
+    # flow_lakhs: qty_change * implied_px_curr (or full entry / exit values)
+    implied_px_curr = np.where(
+        m["quantity_curr"] > 0,
+        m["market_value_lakhs_curr"] / m["quantity_curr"],
+        0.0,
+    )
+    flow_both = m["qty_change"] * implied_px_curr
+    flow_conditions = [
+        m["_merge"] == "right_only",
+        m["_merge"] == "left_only",
+    ]
+    flow_choices = [
+        m["market_value_lakhs_curr"],
+        -m["market_value_lakhs_prev"],
+    ]
+    m["flow_lakhs"] = np.select(flow_conditions, flow_choices, default=flow_both)
+
+    cols = [
+        "scheme_id", "isin", "report_month", "prev_month",
+        "qty_change", "value_change_lakhs", "flow_lakhs",
+        "pct_nav_change", "action",
+    ]
+    return m[cols]
 
 
 def persist_deltas(conn: sqlite3.Connection, deltas: pd.DataFrame) -> int:
+    if deltas.empty:
+        return 0
     cur = conn.cursor()
-    for _, row in deltas.iterrows():
-        cur.execute(
-            """INSERT OR REPLACE INTO mf_holding_deltas
-               (scheme_id, isin, report_month, prev_month, qty_change,
-                value_change_lakhs, pct_nav_change, action)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                int(row["scheme_id"]), row["isin"], row["report_month"],
-                row["prev_month"], row["qty_change"], row["value_change_lakhs"],
-                row["pct_nav_change"], row["action"],
-            ),
+    has_flow = "flow_lakhs" in deltas.columns
+    rows = [
+        (
+            int(r.scheme_id), str(r.isin), str(r.report_month),
+            str(r.prev_month) if pd.notna(r.prev_month) else None,
+            float(r.qty_change), float(r.value_change_lakhs),
+            float(r.flow_lakhs) if has_flow and pd.notna(r.flow_lakhs) else None,
+            float(r.pct_nav_change), str(r.action),
         )
+        for r in deltas.itertuples(index=False)
+    ]
+    cur.executemany(
+        """INSERT OR REPLACE INTO mf_holding_deltas
+           (scheme_id, isin, report_month, prev_month, qty_change,
+            value_change_lakhs, flow_lakhs, pct_nav_change, action)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        rows,
+    )
     conn.commit()
     return len(deltas)

@@ -33,6 +33,7 @@ WHAT THIS DOES NOT DO YET:
 """
 
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -75,6 +76,18 @@ COLUMN_SYNONYMS = {
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
 
+# Generic ISIN shape (2-letter country + 10 alphanumerics). Indian holdings
+# match ^IN..., foreign holdings (e.g. US...) match the generic shape and are
+# KEPT as instruments for later classification (db.classify_isin -> foreign)
+# instead of being silently dropped. Only rows failing the generic shape
+# (subtotals, notes, garbage) are dropped — with a reported count.
+ISIN_GENERIC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
+
+# Per scheme-month NAV scale bands. Fraction sheets sum ~1.0, percent sheets
+# sum ~100. Anything else warns and keeps raw — never forced to 100.
+NAV_FRACTION_RANGE = (0.95, 1.05)
+NAV_PERCENT_RANGE = (95.0, 105.0)
+
 
 def normalize_col(col) -> str:
     return " ".join(str(col).strip().lower().split())
@@ -108,11 +121,34 @@ def match_columns(raw_columns) -> dict:
     return mapping
 
 
+def detect_nav_scale(total: float) -> str:
+    """Classify a scheme-month pct_nav sum into fraction/percent/unknown.
+
+    - 0.95..1.05  -> "fraction" (values must be x100 to reach percent scale)
+    - 95..105     -> "percent" (already canonical)
+    - else        -> "unknown" (caller warns and keeps raw, never forces 100)
+    """
+    try:
+        t = float(total)
+    except (TypeError, ValueError):
+        return "unknown"
+    # NaN never matches a band.
+    if t != t:
+        return "unknown"
+    if NAV_FRACTION_RANGE[0] <= t <= NAV_FRACTION_RANGE[1]:
+        return "fraction"
+    if NAV_PERCENT_RANGE[0] <= t <= NAV_PERCENT_RANGE[1]:
+        return "percent"
+    return "unknown"
+
+
 def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame:
     xls = pd.ExcelFile(path)
     all_rows = []
 
     for sheet_name in xls.sheet_names:
+        # SINGLE READ per sheet: headerless, then slice the header row
+        # in-memory. Never re-read the same sheet with header=<idx>.
         raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
 
         # AMFI sheets usually have a few title/metadata rows before the
@@ -134,7 +170,10 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             )
             continue
 
-        df = pd.read_excel(xls, sheet_name=sheet_name, header=header_row_idx)
+        header_vals = raw.iloc[header_row_idx].tolist()
+        df = raw.iloc[header_row_idx + 1:].copy()
+        df.columns = header_vals
+        df = df.reset_index(drop=True)
         df = df.dropna(how="all")
 
         try:
@@ -143,17 +182,38 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             print(f"  [FAIL] sheet '{sheet_name}': {e}", file=sys.stderr)
             raise
 
+        # Log the resolved canonical -> raw mapping for auditability.
+        print(f"  [columns] '{sheet_name}': {col_map}", file=sys.stderr)
+
         keep_cols = [c for c in REQUIRED if c in col_map] + (
             ["industry"] if "industry" in col_map else []
         )
         clean = df.rename(columns={v: k for k, v in col_map.items()})
         clean = clean[keep_cols]
 
-        # Drop subtotal/total/blank rows -- real holdings always have a
-        # well-formed ISIN (2 letters + 10 alphanumeric characters).
-        clean = clean[
-            clean["isin"].astype(str).str.match(r"^IN[A-Z0-9]{10}$", na=False)
-        ]
+        # ISIN hygiene: keep every row matching the generic ISIN shape
+        # (Indian IN... plus foreign US.../etc. for later classification).
+        # Drop + REPORT only rows failing the generic regex (subtotal/total/
+        # blank/note rows) instead of silently dropping them.
+        isin_norm = clean["isin"].astype(str).str.strip().str.upper()
+        valid_mask = isin_norm.str.match(ISIN_GENERIC_RE, na=False)
+        n_bad = int((~valid_mask).sum())
+        n_kept = int(valid_mask.sum())
+        if n_bad:
+            print(
+                f"  [isin] '{sheet_name}': {n_bad} row(s) failing ISIN regex "
+                f"dropped; kept {n_kept} row(s) with generic ISIN "
+                f"(incl. foreign for later classification).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"  [isin] '{sheet_name}': 0 rows failing ISIN regex; "
+                f"kept {n_kept}.",
+                file=sys.stderr,
+            )
+        clean = clean.loc[valid_mask].copy()
+        clean["isin"] = isin_norm.loc[valid_mask].values
 
         clean = clean.copy()
         clean["scheme_name"] = sheet_name.strip()
@@ -169,10 +229,39 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
     result["market_value_lakhs"] = pd.to_numeric(
         result["market_value_lakhs"], errors="coerce"
     )
-    result["pct_nav"] = pd.to_numeric(result["pct_nav"], errors="coerce")
+    # Retain the raw NAV weight and derive the canonical percent column via
+    # per scheme-month scale detection. Never force an ambiguous sum to 100.
+    result["pct_nav_raw"] = pd.to_numeric(result["pct_nav"], errors="coerce")
+    result["pct_nav"] = result["pct_nav_raw"]
+
+    for (amc, scheme, month), idx in result.groupby(
+        ["amc_name", "scheme_name", "report_month"]
+    ).groups.items():
+        total = float(result.loc[idx, "pct_nav_raw"].sum(skipna=True))
+        scale = detect_nav_scale(total)
+        if scale == "fraction":
+            result.loc[idx, "pct_nav"] = result.loc[idx, "pct_nav_raw"] * 100.0
+            print(
+                f"  [nav-scale] '{scheme}' [{month}]: sum {total:.4f} in "
+                f"0.95-1.05 -> fraction x100 to percent.",
+                file=sys.stderr,
+            )
+        elif scale == "percent":
+            print(
+                f"  [nav-scale] '{scheme}' [{month}]: sum {total:.2f} in "
+                f"95-105 -> percent, kept as-is.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"  [warn] '{scheme}' [{month}]: pct_nav sum {total:.4f} "
+                f"outside 0.95-1.05 and 95-105; keeping raw, never "
+                f"forcing to 100.",
+                file=sys.stderr,
+            )
 
     bad_rows = result[
-        result[["quantity", "market_value_lakhs", "pct_nav"]].isna().any(axis=1)
+        result[["quantity", "market_value_lakhs", "pct_nav_raw"]].isna().any(axis=1)
     ]
     if len(bad_rows):
         print(

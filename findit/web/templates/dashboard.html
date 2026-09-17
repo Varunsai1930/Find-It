@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FindIt holdings dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+<h1>FindIt holdings dashboard</h1>
+<p class="subtitle">Read-only view over precomputed monthly holdings. All figures below are monthly change (monthly-change) in holdings.</p>
+</header>
+
+<section id="coverage-banner" aria-label="Coverage and data quality">
+<h2>Coverage and data quality</h2>
+{% if months and months|length > 0 %}
+<p>
+Tracked months: {{ months|join(", ") }}.
+Latest month: <strong>{{ latest_month }}</strong>.
+{% for m in months %} {{ m }}: {{ scheme_counts[m] }} schemes;{% endfor %}
+Shareholding as-of: {{ latest_quarter if latest_quarter else "none yet" }}.
+</p>
+{% else %}
+<p>No coverage data available yet.</p>
+{% endif %}
+<p class="quality">
+Quality note: a missing shareholding filing is shown as <em>missing</em> and is never
+interpreted as <em>no increase</em>. A stock with no monthly change is not ranked as a buy.
+</p>
+<p class="quality">
+Shareholding filings are quarterly and may be <em>stale</em> relative to monthly MF holdings.
+As-of labels show the latest filed quarter for each stock.
+</p>
+<p class="quality">
+DII (MF+banks+insurance) is a conservative aggregate of mutual funds, banks, insurance
+companies and other financial institutions. FII and DII (MF+banks+insurance) levels are
+shown alongside each consensus row with their filing quarter.
+</p>
+<p class="quality">Wording note: this page reports monthly change in quantity, flow and value. It does not report performance attribution.</p>
+</section>
+
+<section id="consensus" aria-label="Consensus top">
+<h2>Consensus top ({{ latest_month if latest_month else "no month" }})</h2>
+<p class="hint">Equity-only by default. Sorted by net buying breadth. Monthly change basis.</p>
+{% if consensus_top and consensus_top|length > 0 %}
+<table id="consensus-table">
+<thead>
+<tr>
+<th>Stock</th>
+<th>ISIN</th>
+<th>Schemes buying</th>
+<th>Schemes selling</th>
+<th>Net</th>
+<th>Buying ratio</th>
+<th>Monthly change flow (Rs Lakh)</th>
+</tr>
+</thead>
+<tbody>
+{% for row in consensus_top %}
+<tr>
+<td>{{ row.stock_name }}</td>
+<td><a href="/api/stock/{{ row.isin }}">{{ row.isin }}</a></td>
+<td>{{ row.schemes_buying }} ({{ row.amcs_buying }} AMCs)</td>
+<td>{{ row.schemes_selling }} ({{ row.amcs_selling }} AMCs)</td>
+<td>{{ row.net_scheme_count }}</td>
+<td>{{ "%.2f"|format(row.buying_ratio) }}</td>
+<td>{{ "%.1f"|format(row.total_flow_lakhs) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>{{ consensus_message if consensus_message else "No consensus data available yet." }}</p>
+{% endif %}
+<div>
+<label for="month-select">Month</label>
+<select id="month-select">
+{% for m in months %}
+<option value="{{ m }}" {% if m == latest_month %}selected{% endif %}>{{ m }}</option>
+{% endfor %}
+</select>
+<label><input type="checkbox" id="equity-only" checked> equity only</label>
+<button type="button" id="reload-consensus">Reload consensus</button>
+</div>
+<div id="consensus-live" aria-live="polite"></div>
+</section>
+
+<section id="scheme-summary" aria-label="Scheme summary">
+<h2>Scheme summary</h2>
+<div>
+<label for="scheme-select">Scheme</label>
+<select id="scheme-select">
+{% if schemes and schemes|length > 0 %}
+{% for s in schemes %}
+<option value="{{ s.scheme_id }}">{{ s.amc_name }} — {{ s.scheme_name }}</option>
+{% endfor %}
+{% else %}
+<option value="">No schemes available</option>
+{% endif %}
+</select>
+<label for="summary-month">Month</label>
+<select id="summary-month">
+{% for m in months %}
+<option value="{{ m }}" {% if m == latest_month %}selected{% endif %}>{{ m }}</option>
+{% endfor %}
+</select>
+<button type="button" id="load-summary">Show summary</button>
+</div>
+<pre id="summary-box" aria-live="polite">Pick a scheme and month to view its precomputed monthly change summary.</pre>
+</section>
+
+<section id="stock-lookup" aria-label="Stock lookup">
+<h2>Stock lookup</h2>
+<div>
+<label for="isin-input">ISIN</label>
+<input id="isin-input" type="text" placeholder="e.g. INE002A01018" size="16">
+<button type="button" id="load-stock">Look up</button>
+</div>
+<div id="stock-box" aria-live="polite"></div>
+<p class="hint">Holdings show the monthly change per scheme; shareholding quarters show FII and DII (MF+banks+insurance) with stale as-of labels where filings lag.</p>
+</section>
+
+<script>
+(function () {
+  "use strict";
+  function fmt(n) {
+    if (n === null || n === undefined) return "missing";
+    if (typeof n === "number" && !isFinite(n)) return "missing";
+    return String(n);
+  }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  var monthSelect = document.getElementById("month-select");
+  var equityOnly = document.getElementById("equity-only");
+  var reloadBtn = document.getElementById("reload-consensus");
+  var live = document.getElementById("consensus-live");
+
+  async function reloadConsensus() {
+    if (!monthSelect || !monthSelect.value) {
+      live.textContent = "No consensus data available yet.";
+      return;
+    }
+    var month = monthSelect.value;
+    var eq = equityOnly && equityOnly.checked ? "1" : "0";
+    live.textContent = "Loading consensus for " + month + " ...";
+    try {
+      var res = await fetch("/api/consensus/" + encodeURIComponent(month) + "?equity_only=" + eq);
+      if (res.status === 404) {
+        live.textContent = "No holding-change data available for " + month + " yet.";
+        return;
+      }
+      if (!res.ok) {
+        live.textContent = "Could not load consensus (HTTP " + res.status + ").";
+        return;
+      }
+      var data = await res.json();
+      var rows = data.results || [];
+      if (!rows.length) {
+        live.textContent = data.message || "No MF buying or selling signals for this month under the current filter.";
+        return;
+      }
+      var table = document.createElement("table");
+      var thead = document.createElement("thead");
+      var headRow = document.createElement("tr");
+      ["Stock", "ISIN", "Net", "Buying ratio", "Monthly change flow", "Shareholding"].forEach(function (h) {
+        var th = document.createElement("th");
+        th.textContent = h;
+        headRow.appendChild(th);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+      var tbody = document.createElement("tbody");
+      rows.slice(0, 15).forEach(function (r) {
+        var sh = r.shareholding_status === "missing"
+          ? "shareholding missing (not zero)"
+          : (r.shareholding_status === "single_quarter"
+            ? "single quarter " + fmt(r.shareholding_quarter_end) + " (stale, no increase inferred)"
+            : "as-of " + fmt(r.shareholding_quarter_end) + " (stale quarterly filing)");
+        var tr = document.createElement("tr");
+        [r.stock_name, r.isin, r.net_scheme_count, r.buying_ratio, r.total_flow_lakhs, sh].forEach(function (v) {
+          var td = document.createElement("td");
+          td.textContent = fmt(v);
+          tr.appendChild(td);
+        });
+        tbody.appendChild(tr);
+      });
+      table.appendChild(tbody);
+      live.textContent = "";
+      live.appendChild(table);
+    } catch (e) {
+      live.textContent = "Could not load consensus.";
+    }
+  }
+  if (reloadBtn) reloadBtn.addEventListener("click", reloadConsensus);
+
+  var schemeSelect = document.getElementById("scheme-select");
+  var summaryMonth = document.getElementById("summary-month");
+  var loadSummary = document.getElementById("load-summary");
+  var summaryBox = document.getElementById("summary-box");
+  async function loadSummaryFn() {
+    if (!schemeSelect || !schemeSelect.value) {
+      summaryBox.textContent = "No schemes available.";
+      return;
+    }
+    var sid = schemeSelect.value;
+    var m = summaryMonth ? summaryMonth.value : "";
+    if (!m) {
+      summaryBox.textContent = "No holding-change data available for this selection yet.";
+      return;
+    }
+    summaryBox.textContent = "Loading summary ...";
+    try {
+      var res = await fetch("/api/summary/" + encodeURIComponent(sid) + "/" + encodeURIComponent(m));
+      if (res.status === 404) {
+        summaryBox.textContent = "No holding-change data available for this scheme and month yet.";
+        return;
+      }
+      if (!res.ok) {
+        summaryBox.textContent = "Could not load summary (HTTP " + res.status + ").";
+        return;
+      }
+      var data = await res.json();
+      summaryBox.textContent = data.summary || "No holding-change data available for this scheme and month yet.";
+    } catch (e) {
+      summaryBox.textContent = "Could not load summary.";
+    }
+  }
+  if (loadSummary) loadSummary.addEventListener("click", loadSummaryFn);
+
+  var isinInput = document.getElementById("isin-input");
+  var loadStock = document.getElementById("load-stock");
+  var stockBox = document.getElementById("stock-box");
+  async function loadStockFn() {
+    var isin = isinInput ? isinInput.value.trim().toUpperCase() : "";
+    if (!isin) {
+      stockBox.textContent = "Enter an ISIN to look up holdings and shareholding quarters.";
+      return;
+    }
+    stockBox.textContent = "Loading " + isin + " ...";
+    try {
+      var res = await fetch("/api/stock/" + encodeURIComponent(isin));
+      if (res.status === 404) {
+        stockBox.textContent = "Unknown ISIN: " + isin;
+        return;
+      }
+      if (!res.ok) {
+        stockBox.textContent = "Could not load stock (HTTP " + res.status + ").";
+        return;
+      }
+      var data = await res.json();
+      stockBox.textContent = "";
+      var title = document.createElement("p");
+      var strong = document.createElement("strong");
+      strong.textContent = data.name || isin;
+      title.appendChild(strong);
+      title.appendChild(document.createTextNode(
+        " (" + (data.isin || isin) + ") — monthly change holdings for " + (data.month || "")));
+      stockBox.appendChild(title);
+      if (data.holdings && data.holdings.length) {
+        var ul = document.createElement("ul");
+        data.holdings.slice(0, 10).forEach(function (row) {
+          var li = document.createElement("li");
+          li.textContent = (row.scheme_name || row.scheme_id) + ": qty " +
+            fmt(row.quantity) + ", monthly change " + fmt(row.qty_change);
+          ul.appendChild(li);
+        });
+        stockBox.appendChild(ul);
+      } else {
+        var none = document.createElement("p");
+        none.textContent = "No holdings found for this month.";
+        stockBox.appendChild(none);
+      }
+      if (data.shareholding && data.shareholding.length) {
+        var shp = document.createElement("p");
+        shp.textContent = "Shareholding quarters (FII and DII (MF+banks+insurance), stale quarterly):";
+        stockBox.appendChild(shp);
+        var sul = document.createElement("ul");
+        data.shareholding.slice(0, 4).forEach(function (q) {
+          var li = document.createElement("li");
+          li.textContent = fmt(q.quarter_end) + ": FII " + fmt(q.fii_pct) +
+            ", DII (MF+banks+insurance) " + fmt(q.dii_pct);
+          sul.appendChild(li);
+        });
+        stockBox.appendChild(sul);
+      } else {
+        var nom = document.createElement("p");
+        nom.textContent = "No shareholding filing available (missing filing, not zero).";
+        stockBox.appendChild(nom);
+      }
+    } catch (e) {
+      stockBox.textContent = "Could not load stock.";
+    }
+  }
+  if (loadStock) loadStock.addEventListener("click", loadStockFn);
+})();
+</script>
+</body>
+</html>

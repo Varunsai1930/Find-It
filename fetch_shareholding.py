@@ -14,6 +14,7 @@ left out rather than guessed into DII.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import io
 import json
 import re
@@ -62,6 +63,15 @@ FII_LABELS = {
 }
 PCT_TAG = "shareholdingasapercentageoftotalnumberofshares"
 
+# Negative scrip-code lookups are retried after 7 days; positive mappings
+# are kept forever. JSON cache stays backward-compatible: old `None`
+# negatives and old {"bse_scrip_code": ...} positives still read correctly.
+NEGATIVE_CACHE_TTL_SECONDS = 7 * 86400
+
+# Quarter-end month-days that count as quarterly Reg. 31 filings; anything
+# else is an interim filing. Both are kept — never filtered, never invented.
+QUARTERLY_MONTH_DAYS = {"03-31", "06-30", "09-30", "12-31"}
+
 
 class ShareholdingFetchError(RuntimeError):
     """A source response could not be safely interpreted as shareholding data."""
@@ -102,6 +112,70 @@ class PoliteSession:
 
 def _normalise(text: str) -> str:
     return " ".join(str(text).replace("\xa0", " ").lower().split())
+
+
+def _normalize_fii_label(label: str) -> str:
+    """Normalize an FII row label: strip parens/hyphens, collapse spaces."""
+    s = str(label).replace("\xa0", " ").lower()
+    for ch in ("(", ")", "-", "–", "—", "/", ","):
+        s = s.replace(ch, " ")
+    return " ".join(s.split())
+
+
+_FPI_CATEGORY_RE = re.compile(
+    r"foreign\s+portfolio\s+investor[s]?\b(?:\s*category\s*(i{1,3}|1|2|3))?"
+)
+_FII_LEGACY_RE = re.compile(r"foreign\s+institutional\s+investor[s]?\b")
+
+
+def _fii_category(normalized_label: str) -> str | None:
+    """Map a normalized FII label to i/ii/iii/aggregate/legacy, else None."""
+    if _FII_LEGACY_RE.search(normalized_label):
+        return "legacy"
+    m = _FPI_CATEGORY_RE.search(normalized_label)
+    if not m:
+        return None
+    cat = (m.group(1) or "").strip().lower()
+    if not cat:
+        return "aggregate"
+    if cat in ("1", "i"):
+        return "i"
+    if cat in ("2", "ii"):
+        return "ii"
+    if cat in ("3", "iii"):
+        return "iii"
+    return cat
+
+
+def classify_filing_type(quarter_end: str) -> str:
+    """Classify a filing quarter_end as quarterly vs interim.
+
+    Quarterly month-days are 03-31/06-30/09-30/12-31; anything else is
+    interim. Both kinds are kept by the fetcher — this only labels them.
+    """
+    md: str | None = None
+    try:
+        md = pd.Timestamp(quarter_end).strftime("%m-%d")
+    except Exception:
+        try:
+            md = str(quarter_end).strip()[5:10]
+        except Exception:
+            md = None
+    if md in QUARTERLY_MONTH_DAYS:
+        return "quarterly"
+    return "interim"
+
+
+def _persist_ixbrl_attachment(cache_dir: Path, content: bytes) -> str:
+    """Persist raw iXBRL bytes under attachments/<sha256>.ixbrl; return sha256."""
+    if isinstance(content, str):
+        content = content.encode("utf-8")
+    sha = hashlib.sha256(bytes(content)).hexdigest()
+    dest = Path(cache_dir) / "attachments" / f"{sha}.ixbrl"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not dest.exists():
+        dest.write_bytes(bytes(content))
+    return sha
 
 
 def _read_json_cache(path: Path) -> dict[str, Any]:
@@ -158,11 +232,35 @@ def get_nse_equity_master(
 def resolve_bse_scrip_code(
     session: PoliteSession, isin: str, cache: dict[str, Any],
 ) -> str | None:
-    """Resolve one known equity ISIN to a BSE scrip code and cache the result."""
+    """Resolve one known equity ISIN to a BSE scrip code and cache the result.
+
+    Positive entries are kept forever. Negative entries carry
+    cached_at+reason and are retried after 7 days. Old cache files
+    (None negatives, plain positives) remain readable.
+    """
     isin = isin.upper()
     if isin in cache:
         cached = cache[isin]
-        return cached.get("bse_scrip_code") if isinstance(cached, dict) else None
+        if isinstance(cached, dict):
+            code = cached.get("bse_scrip_code")
+            if code:
+                return code
+            # Negative dict: honour the 7-day TTL, else fall through to retry.
+            cached_at = cached.get("cached_at", cached.get("timestamp"))
+            if cached_at is not None:
+                try:
+                    age = time.time() - float(cached_at)
+                except (TypeError, ValueError):
+                    age = float("inf")
+                if age < NEGATIVE_CACHE_TTL_SECONDS:
+                    return None
+            # Expired (or timestamp-less negative dict) -> retry below.
+        elif cached is None:
+            # Backward-compatible old negative with no timestamp -> retry.
+            pass
+        else:
+            # Unexpected shape -> treat as a miss and retry.
+            pass
 
     response = session.get(
         f"{BSE_API_URL}/PeerSmartSearch/w",
@@ -175,7 +273,11 @@ def resolve_bse_scrip_code(
         flags=re.IGNORECASE | re.DOTALL,
     )
     if not match:
-        cache[isin] = None
+        cache[isin] = {
+            "bse_scrip_code": None,
+            "cached_at": time.time(),
+            "reason": "no_match",
+        }
         return None
 
     cache[isin] = {"bse_scrip_code": match.group("code")}
@@ -183,7 +285,11 @@ def resolve_bse_scrip_code(
 
 
 def get_bse_filings(session: PoliteSession, bse_scrip_code: str) -> list[dict[str, str]]:
-    """Get at most two newest usable iXBRL Reg. 31 filings for a BSE scrip."""
+    """Get at most two newest usable iXBRL Reg. 31 filings for a BSE scrip.
+
+    Each filing carries quarter_end, attachment and filing_type
+    (quarterly vs interim). Both types are kept in recency order.
+    """
     response = session.get(
         f"{BSE_API_URL}/Corp_Shareholding_ng/w",
         params={"scripcode": bse_scrip_code, "flag": "0", "indtype": ""},
@@ -213,7 +319,13 @@ def get_bse_filings(session: PoliteSession, bse_scrip_code: str) -> list[dict[st
             continue
         if quarter_end in seen_quarters:
             continue
-        usable.append({"quarter_end": quarter_end, "attachment": attachment})
+        usable.append(
+            {
+                "quarter_end": quarter_end,
+                "attachment": attachment,
+                "filing_type": classify_filing_type(quarter_end),
+            }
+        )
         seen_quarters.add(quarter_end)
         if len(usable) == 2:
             break
@@ -221,16 +333,37 @@ def get_bse_filings(session: PoliteSession, bse_scrip_code: str) -> list[dict[st
 
 
 def _row_percentage(row: Any) -> float | None:
+    """Pin the intended denominator for one iXBRL row.
+
+    Prefers tags containing 'totalnumberofshares' when present, otherwise
+    uses the remaining shareholding-as-percentage tags. Asserts at most one
+    distinct value among the chosen tags, else raises (ambiguous filing).
+    """
+    candidates: list[tuple[str, float]] = []
     for tag in row.find_all():
         tag_name = _normalise(tag.attrs.get("name", "")).replace(" ", "")
-        if tag_name.endswith(PCT_TAG):
-            try:
-                return float(tag.get_text(strip=True).replace(",", ""))
-            except ValueError as exc:
-                raise ShareholdingFetchError(
-                    f"Invalid percentage in BSE iXBRL row: {tag.get_text(strip=True)!r}"
-                ) from exc
-    return None
+        if "shareholdingasapercentage" not in tag_name:
+            continue
+        text = tag.get_text(strip=True).replace(",", "")
+        if text == "":
+            continue
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise ShareholdingFetchError(
+                f"Invalid percentage in BSE iXBRL row: {tag.get_text(strip=True)!r}"
+            ) from exc
+        candidates.append((tag_name, value))
+    if not candidates:
+        return None
+    preferred = [(n, v) for n, v in candidates if "totalnumberofshares" in n]
+    pool = preferred if preferred else candidates
+    distinct = sorted({v for _, v in pool})
+    if len(distinct) > 1:
+        raise ShareholdingFetchError(
+            f"Ambiguous percentage tags in BSE iXBRL row: {pool!r}"
+        )
+    return distinct[0]
 
 
 def parse_bse_shareholding(html: str) -> dict[str, float]:
@@ -244,9 +377,10 @@ def parse_bse_shareholding(html: str) -> dict[str, float]:
     promoter_pct: float | None = None
     public_pct: float | None = None
     dii_pct = 0.0
-    fii_pct = 0.0
     seen_dii: set[str] = set()
-    seen_fii: set[str] = set()
+    # FII categories tracked separately so an aggregate row plus its
+    # Category I/II/III sub-rows are never double-counted.
+    fii_by_category: dict[str, float] = {}
 
     for row in soup.find_all("tr"):
         labels = {
@@ -272,10 +406,27 @@ def parse_bse_shareholding(html: str) -> dict[str, float]:
             if label not in seen_dii:
                 dii_pct += percentage
                 seen_dii.add(label)
-        for label in labels & FII_LABELS:
-            if label not in seen_fii:
-                fii_pct += percentage
-                seen_fii.add(label)
+        row_cats: set[str] = set()
+        for label in labels:
+            cat = _fii_category(_normalize_fii_label(label))
+            if cat is not None:
+                row_cats.add(cat)
+        for cat in row_cats:
+            # Track seen categories: repeated rows for the same category
+            # never double-count.
+            if cat not in fii_by_category:
+                fii_by_category[cat] = percentage
+
+    sub_cats = [c for c in ("i", "ii", "iii") if c in fii_by_category]
+    if sub_cats:
+        # Sub-rows present: ignore any aggregate row to avoid double count.
+        fii_pct = round(sum(fii_by_category[c] for c in sub_cats), 4)
+    elif "aggregate" in fii_by_category:
+        fii_pct = round(fii_by_category["aggregate"], 4)
+    elif "legacy" in fii_by_category:
+        fii_pct = round(fii_by_category["legacy"], 4)
+    else:
+        fii_pct = 0.0
 
     if promoter_pct is None or public_pct is None:
         raise ShareholdingFetchError(
@@ -341,6 +492,8 @@ def fetch_shareholding(
                 # Keep the filed quarter.  The join needs two records and will
                 # naturally leave this stock without a delta until the next
                 # Reg. 31 filing arrives; it must not invent a zero quarter.
+                # Single-filing ISINs keep their one real filing (quarterly
+                # or interim) — never synthesize a second zero row.
                 stats.no_filings_isins.append(isin)
 
             existing_quarters = {
@@ -354,11 +507,24 @@ def fetch_shareholding(
                     stats.already_cached_records += 1
                     continue
                 response = session.get(f"{BSE_SITE_URL}{filing['attachment']}")
+                raw_bytes = getattr(response, "content", None)
+                if raw_bytes is None:
+                    raw_bytes = response.text.encode("utf-8")
+                if isinstance(raw_bytes, str):
+                    raw_bytes = raw_bytes.encode("utf-8")
+                # Persist raw iXBRL bytes before parsing and record sha256.
+                ixbrl_sha256 = _persist_ixbrl_attachment(cache_dir, bytes(raw_bytes))
+                parsed = parse_bse_shareholding(response.text)
                 record = {
                     "isin": isin,
                     "quarter_end": filing["quarter_end"],
-                    **parse_bse_shareholding(response.text),
+                    **parsed,
                     "source": "bse_xbrl",
+                    "filing_type": filing.get(
+                        "filing_type",
+                        classify_filing_type(filing["quarter_end"]),
+                    ),
+                    "ixbrl_sha256": ixbrl_sha256,
                 }
                 # The database is the cache keyed by (isin, quarter_end).
                 # Persist immediately so an interrupted run never repeats a

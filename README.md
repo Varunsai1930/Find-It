@@ -66,3 +66,17 @@ number wrong.
   `fund_summaries` table so it's never called live per user request.
 - **Phase 3:** dashboard UI (Top-5 cards, common holdings screener) — will
   need daily price data too, which nothing here ingests yet.
+
+## Operations (offline)
+
+```bash
+pip install -e ".[dev]"
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_tooling.py
+python3 -m findit.cli.rebuild --db tracker.db --db-copy /tmp/tracker.copy.db \
+  --prev 2026-03 --curr 2026-04
+python3 -m findit.cli.digest --db /tmp/tracker.copy.db --month 2026-04 --schemes 1 2
+```
+
+Rebuild copies the DB first and computes deltas via `delta_calculator` on the
+copy only; digest prints a preview from cached rule summaries (no sending,
+no credentials). Both are offline and never write `./tracker.db` or `real_data/`.
