@@ -7,7 +7,6 @@ holdings signals at request time.
 
 from __future__ import annotations
 
-import importlib.util
 import math
 import sqlite3
 from pathlib import Path
@@ -17,24 +16,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from findit.narrate.service import get_summary
+
 _WEB_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_FALLBACK_PATH = _REPO_ROOT / "fallback_summary.py"
-
-
-def _load_fallback_module():
-    spec = importlib.util.spec_from_file_location(
-        "findit_web_fallback_summary", _FALLBACK_PATH
-    )
-    if spec is None or spec.loader is None:  # pragma: no cover
-        raise RuntimeError("fallback summary module not found")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-_fallback_summary = _load_fallback_module()
-
 BUY_ACTIONS = ("new", "added")
 SELL_ACTIONS = ("trimmed", "exited")
 
@@ -595,10 +580,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     }
                 )
             try:
-                text = _fallback_summary.build_summary(conn, scheme_id, month)
+                summary_result = get_summary(conn, scheme_id, month)
+                text = summary_result["text"]
             except ValueError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
-            has_data = not str(text).startswith("No holding-change data available")
+            blocked = summary_result["reason"] in {"quarantined", "nonfinite_or_invalid_data"}
+            has_data = not blocked and not str(text).startswith("No holding-change data available")
             return _sanitize(
                 {
                     "scheme_id": int(scheme_id),
@@ -607,6 +594,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     "scheme_name": row["scheme_name"],
                     "summary": str(text),
                     "has_data": bool(has_data),
+                    "generated_by": summary_result["generated_by"],
+                    "model_version": summary_result["model_version"],
+                    "cached": summary_result["cached"],
+                    "summary_status": summary_result["reason"] or "available",
                 }
             )
         finally:

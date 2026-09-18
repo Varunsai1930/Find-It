@@ -1,26 +1,21 @@
-"""Preview-only monthly digest from cached rule summaries. No sending."""
+"""Preview-only digest from fresh persisted summaries or rule fallback. No sending."""
 from __future__ import annotations
 
 import argparse
 import sqlite3
 
-import fallback_summary
-
-# In-process cache of rule summaries per (connection, scheme, month).
-_SUMMARY_CACHE: dict[tuple[int, int, str], str] = {}
+from findit.narrate.service import get_summary
 
 
 def _cached_summary(conn: sqlite3.Connection, scheme_id: int, month: str) -> str:
-    key = (id(conn), int(scheme_id), str(month))
-    if key not in _SUMMARY_CACHE:
-        _SUMMARY_CACHE[key] = fallback_summary.build_summary(conn, int(scheme_id), month)
-    return _SUMMARY_CACHE[key]
+    # Freshness is checked on every read; this never calls the model or writes.
+    return get_summary(conn, int(scheme_id), month)["text"]
 
 
 def build_digest(conn: sqlite3.Connection, scheme_ids, month: str) -> str:
     """Build a deterministic preview digest for scheme_ids in month.
 
-    Uses cached rule summaries (fallback_summary); no LLM, no network,
+    Uses current persisted summaries or rule fallback; no LLM calls, no network,
     no sending. Output is sorted by scheme_id for determinism.
     """
     ids = sorted({int(s) for s in scheme_ids})

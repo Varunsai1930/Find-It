@@ -61,9 +61,9 @@ number wrong.
 - **Phase 1:** add FII/DII quarterly shareholding parsing (NSE/BSE), join
   it against `consensus_signals.py`'s output on ISIN for the full MF+FII
   overlap view.
-- **Phase 2:** wire GLM 5.3 into `fallback_summary.py`'s numbers — same
-  inputs, better prose, cached per (scheme, month) in a new
-  `fund_summaries` table so it's never called live per user request.
+- **Phase 2:** implemented as cached, constrained GLM narration over the
+  existing rule summary; see the Phase 2 instructions below. Live API use
+  requires `ZAI_API_KEY`.
 - **Phase 3:** dashboard UI (Top-5 cards, common holdings screener) — will
   need daily price data too, which nothing here ingests yet.
 
@@ -80,3 +80,61 @@ python3 -m findit.cli.digest --db /tmp/tracker.copy.db --month 2026-04 --schemes
 Rebuild copies the DB first and computes deltas via `delta_calculator` on the
 copy only; digest prints a preview from cached rule summaries (no sending,
 no credentials). Both are offline and never write `./tracker.db` or `real_data/`.
+
+## Phase 2 — cached AI-assisted summaries
+
+The summary API and monthly digest now read `fund_summaries` when its source
+hash is current. Otherwise they use the rule-based summary. Neither consumer
+calls an AI provider or writes to the database.
+
+The [implementation plan](docs/phase-2-plan.md) describes the design and scope.
+Python supplies all financial facts and sentence variants. GLM chooses wording
+and order through a strict JSON plan; it cannot insert prose, numbers, stock
+names, or recommendations. This is constrained AI editing, not free-form
+analysis. Each supplied fact must be retained exactly once.
+
+### Generate a batch
+
+Use an existing database populated by the monthly pipeline. For a safe local
+trial, copy the database first:
+
+```bash
+cp tracker.db /tmp/findit-narration.db
+
+# Read-only eligibility preview; no credentials, writes, or model calls.
+python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
+  --month 2026-08 --dry-run
+
+# Offline rule-based cache generation (the default).
+python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
+  --month 2026-08 --provider rules
+
+# Configure ZAI_API_KEY in your environment before this explicit network run.
+python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
+  --month 2026-08 --provider zai --model glm-5.3
+
+# Read the resulting summaries without network calls or message delivery.
+python3 -m findit.cli.digest --db /tmp/findit-narration.db --month 2026-08
+```
+
+`--schemes 1 2` restricts the batch; `--force` regenerates eligible summaries.
+Start with one scheme when checking a new API key. Existing matching source and
+model versions are skipped. The provider uses Z.ai's
+[official Chat Completions API](https://docs.z.ai/api-reference/llm/chat-completion),
+a 60-second request timeout, at most two retries for transient failures, and a
+bounded response budget. Credentials and raw provider errors are not logged.
+
+The batch writes only the summary table. It does not rerun validation or change
+holdings, deltas, flow calculations, or consensus. Current data must have an
+`ok` or `validated` status and usable equity deltas. Quarantined current or
+referenced previous months, non-finite inputs, and missing data cannot produce
+an AI summary. Existing unvalidated data continues to use the ordinary rule
+fallback. Run the normal ingestion/validation process to update its status.
+
+Cache freshness includes raw input rows, security/fund metadata, validation
+reports, trusted wording, and a narration policy version. A data change while
+an API request is running prevents that response from being saved. API errors
+and rejected model plans fall back to rules; a later AI batch can retry them.
+
+The real provider adapter is covered by mocked HTTP tests. A live GLM request
+was not run during implementation because `ZAI_API_KEY` was not configured.
