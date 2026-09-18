@@ -142,7 +142,37 @@ def detect_nav_scale(total: float) -> str:
     return "unknown"
 
 
+def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Series:
+    """Identify non-ISIN detail rows without counting printed totals twice.
+
+    Section labels/notes normally have no numeric holding cells. Summary
+    labels may have all three numeric cells, so explicitly exclude those.
+    A real omitted detail row must have a name and at least one numeric cell.
+    """
+    names = clean["instrument_name"].fillna("").astype(str).str.strip()
+    summaries = names.str.contains(
+        r"\b(?:sub\s*[- ]?total|total|net\s+assets?|net\s+asset\s+value)\b",
+        case=False, regex=True,
+    )
+    numeric = clean[["quantity", "market_value_lakhs", "pct_nav"]].apply(
+        pd.to_numeric, errors="coerce"
+    ).notna().any(axis=1)
+    # Disclosures often append derivative exposure tables and numeric
+    # footnotes after the portfolio grand total, reusing these column
+    # positions for contract counts or notionals rather than NAV weights.
+    # They must not be counted as additional omitted portfolio positions.
+    after_portfolio = names.str.match(r"grand\s*total\b", case=False).cummax()
+    return ~valid_mask & names.ne("") & ~summaries & numeric & ~after_portfolio
+
+
 def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame:
+    """Parse holdings and repeat exclusion provenance on each scheme's rows.
+
+    ``pct_nav_scale`` describes the source scale; ``pct_nav`` and
+    ``dropped_non_isin_pct_nav`` share the resulting canonical scale. An
+    unknown scale stays raw. A scheme with only omitted detail rows has one
+    blank-ISIN metadata row, which consumers must never insert as a holding.
+    """
     xls = pd.ExcelFile(path)
     all_rows = []
 
@@ -197,12 +227,18 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         # blank/note rows) instead of silently dropping them.
         isin_norm = clean["isin"].astype(str).str.strip().str.upper()
         valid_mask = isin_norm.str.match(ISIN_GENERIC_RE, na=False)
+        dropped_mask = dropped_holding_mask(clean, valid_mask)
+        dropped_count = int(dropped_mask.sum())
+        dropped_nav = pd.to_numeric(
+            clean.loc[dropped_mask, "pct_nav"], errors="coerce"
+        ).sum(min_count=1) if dropped_count else 0.0
         n_bad = int((~valid_mask).sum())
         n_kept = int(valid_mask.sum())
         if n_bad:
             print(
                 f"  [isin] '{sheet_name}': {n_bad} row(s) failing ISIN regex "
-                f"dropped; kept {n_kept} row(s) with generic ISIN "
+                f"dropped ({dropped_count} holding detail rows); "
+                f"kept {n_kept} row(s) with generic ISIN "
                 f"(incl. foreign for later classification).",
                 file=sys.stderr,
             )
@@ -214,6 +250,13 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             )
         clean = clean.loc[valid_mask].copy()
         clean["isin"] = isin_norm.loc[valid_mask].values
+
+        if clean.empty and dropped_count:
+            # CSV-compatible metadata carrier, never a holding. The loader
+            # registers this scheme/provenance, then skips the blank ISIN.
+            clean = pd.DataFrame([{column: None for column in keep_cols}])
+        clean["dropped_non_isin_count"] = dropped_count
+        clean["dropped_non_isin_pct_nav"] = dropped_nav
 
         clean = clean.copy()
         clean["scheme_name"] = sheet_name.strip()
@@ -237,10 +280,14 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
     for (amc, scheme, month), idx in result.groupby(
         ["amc_name", "scheme_name", "report_month"]
     ).groups.items():
-        total = float(result.loc[idx, "pct_nav_raw"].sum(skipna=True))
+        accepted_total = result.loc[idx, "pct_nav_raw"].sum(min_count=1)
+        omitted_total = result.loc[idx, "dropped_non_isin_pct_nav"].iloc[0]
+        total = float(pd.Series([accepted_total, omitted_total]).sum(min_count=1))
         scale = detect_nav_scale(total)
+        result.loc[idx, "pct_nav_scale"] = scale
         if scale == "fraction":
             result.loc[idx, "pct_nav"] = result.loc[idx, "pct_nav_raw"] * 100.0
+            result.loc[idx, "dropped_non_isin_pct_nav"] *= 100.0
             print(
                 f"  [nav-scale] '{scheme}' [{month}]: sum {total:.4f} in "
                 f"0.95-1.05 -> fraction x100 to percent.",
@@ -261,7 +308,8 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             )
 
     bad_rows = result[
-        result[["quantity", "market_value_lakhs", "pct_nav_raw"]].isna().any(axis=1)
+        result["isin"].notna()
+        & result[["quantity", "market_value_lakhs", "pct_nav_raw"]].isna().any(axis=1)
     ]
     if len(bad_rows):
         print(
@@ -285,7 +333,7 @@ def main():
     print(f"Parsing {args.file} ...")
     df = parse_workbook(args.file, args.amc, args.month)
     print(
-        f"Parsed {len(df)} holding rows across {df['scheme_name'].nunique()} "
+        f"Parsed {df['isin'].notna().sum()} holding rows across {df['scheme_name'].nunique()} "
         f"schemes."
     )
 

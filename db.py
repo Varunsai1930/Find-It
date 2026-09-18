@@ -300,7 +300,7 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
         SELECT scheme_id, report_month
         FROM mf_holdings_monthly
         GROUP BY scheme_id, report_month
-        HAVING SUM(pct_nav) <= 2.0
+        HAVING SUM(pct_nav) <= 2.0 AND COUNT(pct_nav_scale) = 0
     """).fetchall()
     if fraction_schemes:
         conn.execute("""
@@ -310,7 +310,7 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
                 SELECT scheme_id, report_month
                 FROM mf_holdings_monthly
                 GROUP BY scheme_id, report_month
-                HAVING SUM(pct_nav) <= 2.0
+                HAVING SUM(pct_nav) <= 2.0 AND COUNT(pct_nav_scale) = 0
             )
         """)
         conn.commit()
@@ -335,7 +335,13 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     df = df.copy()
     for _, group_indices in df.groupby(["amc_name", "scheme_name", "report_month"]).groups.items():
         nav_sum = df.loc[group_indices, "pct_nav"].sum()
-        if nav_sum <= 2.0:
+        # New parser output is already normalized, including low-equity
+        # snapshots with most NAV in dropped cash/TREPS rows.
+        has_parser_scale = (
+            "pct_nav_scale" in df
+            and df.loc[group_indices, "pct_nav_scale"].notna().all()
+        )
+        if not has_parser_scale and nav_sum <= 2.0:
             df.loc[group_indices, "pct_nav"] = df.loc[group_indices, "pct_nav"] * 100.0
 
     cur = conn.cursor()
@@ -349,6 +355,18 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     scheme_ids = dict(
         cur.execute("SELECT amc_name || '||' || scheme_name, scheme_id FROM schemes").fetchall()
     )
+
+    # A scheme containing only cash/non-ISIN holdings carries one metadata
+    # row. Register the scheme above, but never turn that row into a security.
+    if "dropped_non_isin_count" in df:
+        metadata_only = df["isin"].isna() | df["isin"].astype(str).str.strip().eq("")
+        for _, row in df.loc[metadata_only].iterrows():
+            sid = scheme_ids[f"{row['amc_name']}||{row['scheme_name']}"]
+            cur.execute(
+                "DELETE FROM mf_holdings_monthly WHERE scheme_id = ? AND report_month = ?",
+                (sid, row["report_month"]),
+            )
+        df = df.loc[~metadata_only].copy()
 
     for _, row in df.drop_duplicates("isin").iterrows():
         cur.execute(
@@ -364,11 +382,13 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
             raise RuntimeError(f"scheme_id missing for {key} — this shouldn't happen")
         cur.execute(
             """INSERT OR REPLACE INTO mf_holdings_monthly
-               (scheme_id, isin, report_month, quantity, market_value_lakhs, pct_nav)
-               VALUES (?, ?, ?, ?, ?, ?)""",
+               (scheme_id, isin, report_month, quantity, market_value_lakhs, pct_nav,
+                pct_nav_raw, pct_nav_scale)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 scheme_id, row["isin"], row["report_month"],
                 row["quantity"], row["market_value_lakhs"], row["pct_nav"],
+                row.get("pct_nav_raw"), row.get("pct_nav_scale"),
             ),
         )
         loaded += 1

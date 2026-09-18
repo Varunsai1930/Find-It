@@ -5,9 +5,9 @@ dict with at least {"code", "severity", "message"}. Severity is one of
 "warn" (does not fail the gate), "error" (fails -> quarantine), "info".
 
 Rules (per spec):
-- NAV sum 95-105 passes; outside warns (partial sheets exist -> warn not fail).
+- NAV sum 95-105 passes; outside warns; over 110 fails.
 - Implied-price CV across holders <1% passes; >=1% warns.
-- Qty ratio outside 0.5-2.0 without a corporate action -> quarantine (fail).
+- Qty ratio outside 0.5-2.0 warns; peer agreement flags corporate-action candidates.
 - Promoter+public (or total of provided buckets) within 2 of 100 passes else fails.
 """
 
@@ -18,6 +18,7 @@ from typing import Any, Iterable, Mapping, Optional
 
 NAV_MIN = 95.0
 NAV_MAX = 105.0
+NAV_QUARANTINE_MAX = 110.0
 PRICE_CV_WARN = 0.01
 QTY_RATIO_LO = 0.5
 QTY_RATIO_HI = 2.0
@@ -78,10 +79,10 @@ def _coerce_nav_sum(nav_sum: Any) -> Optional[float]:
 
 
 def validate_nav_sum(nav_sum: Any, *, label: str = "") -> dict:
-    """NAV sum 95-105 passes; outside warns (never fails).
+    """NAV sum 95-105 passes; outside warns, and over 110 quarantines.
 
     Accepts a float total, an iterable of pct_nav values, or a DataFrame
-    with a pct_nav column.
+    with a pct_nav column. Under-sums can reflect omitted non-ISIN assets.
     """
     total = _coerce_nav_sum(nav_sum)
     prefix = f"{label}: " if label else ""
@@ -98,17 +99,24 @@ def validate_nav_sum(nav_sum: Any, *, label: str = "") -> dict:
         }
     if NAV_MIN <= total <= NAV_MAX:
         return {"passed": True, "issues": []}
-    return {
-        "passed": True,
-        "issues": [
+    issues = [
+        _issue(
+            "nav_sum_out_of_band",
+            "warn",
+            f"{prefix}pct_nav sum {total:.2f} outside 95-105 (may be partial sheet)",
+            nav_sum=total,
+        )
+    ]
+    if total > NAV_QUARANTINE_MAX:
+        issues.append(
             _issue(
-                "nav_sum_out_of_band",
-                "warn",
-                f"{prefix}pct_nav sum {total:.2f} outside 95-105 (may be partial sheet)",
+                "nav_sum_quarantine",
+                "error",
+                f"{prefix}pct_nav sum {total:.2f} exceeds 110 (possible duplicate rows or scale error)",
                 nav_sum=total,
             )
-        ],
-    }
+        )
+    return {"passed": total <= NAV_QUARANTINE_MAX, "issues": issues}
 
 
 def _compute_cv(values: Iterable[float]) -> Optional[float]:
@@ -217,10 +225,13 @@ def validate_qty_ratio(
     *,
     isin: str = "",
     label: str = "",
+    peer_median_ratio: float | None = None,
 ) -> dict:
-    """Qty ratio outside 0.5-2.0 without corporate action -> quarantine (fail).
+    """Qty ratio outside 0.5-2.0 warns, without ever failing the gate.
 
     New/exited positions (either side <= 0 / missing) skip the ratio check.
+    A peer median within 5% of the row's ratio suggests a corporate action;
+    price confirmation and recording belong to the calling pipeline.
     """
     prefix = f"{label}: " if label else ""
     tag = f" {isin}" if isin else ""
@@ -229,12 +240,14 @@ def validate_qty_ratio(
         curr = float(qty_curr) if qty_curr is not None else None
     except (TypeError, ValueError):
         return {
-            "passed": False,
+            "passed": True,
             "issues": [
                 _issue(
                     "qty_ratio_unreadable",
-                    "error",
+                    "warn",
                     f"{prefix}unreadable quantities{tag}: prev={qty_prev!r} curr={qty_curr!r}",
+                    isin=isin,
+                    peer_median_ratio=peer_median_ratio,
                 )
             ],
         }
@@ -252,21 +265,39 @@ def validate_qty_ratio(
             "issues": [
                 _issue(
                     "qty_ratio_corporate_action",
-                    "info",
+                    "warn",
                     f"{prefix}qty ratio {ratio:.3f}{tag} outside 0.5-2.0 but corporate action present",
                     ratio=ratio,
+                    isin=isin,
+                    peer_median_ratio=peer_median_ratio,
                 )
             ],
             "ratio": ratio,
         }
+    peer_agreement = (
+        peer_median_ratio is not None
+        and math.isfinite(peer_median_ratio)
+        and math.isfinite(ratio)
+        and abs(peer_median_ratio - ratio) <= 0.05 * ratio
+    )
+    code = (
+        "qty_ratio_corporate_action_candidate"
+        if peer_agreement else "qty_ratio_out_of_band"
+    )
+    context = (
+        f"; peer median {peer_median_ratio:.3f} agrees (corporate-action candidate)"
+        if peer_agreement else "; may reflect ordinary trading"
+    )
     return {
-        "passed": False,
+        "passed": True,
         "issues": [
             _issue(
-                "qty_ratio_out_of_band",
-                "error",
-                f"{prefix}qty ratio {ratio:.3f}{tag} outside 0.5-2.0 without corporate action -> quarantine",
+                code,
+                "warn",
+                f"{prefix}qty ratio {ratio:.3f}{tag} outside 0.5-2.0{context}",
                 ratio=ratio,
+                isin=isin,
+                peer_median_ratio=peer_median_ratio,
             )
         ],
         "ratio": ratio,
@@ -411,12 +442,13 @@ def validate_holdings_month(
     df_current: Any,
     df_prev: Any = None,
     corporate_action_isins: Any = None,
+    peer_median_ratios: Mapping[str, float] | None = None,
 ) -> dict:
     """Combined gate for one scheme-month batch (pure).
 
-    - NAV sum warn-only.
+    - NAV sum warns outside 95-105, fails only above 110.
     - Per-ISIN implied-price CV warn-only (when >=2 holders in df_current).
-    - Per-ISIN qty ratio vs df_prev: error unless corporate action listed.
+    - Per-ISIN qty ratio vs df_prev: warn-only, with peer agreement context.
     """
     issues: list = []
     passed = True
@@ -425,7 +457,7 @@ def validate_holdings_month(
     try:
         nav_res = validate_nav_sum(df_current)
         issues.extend(nav_res["issues"])
-        # nav never fails
+        passed = nav_res["passed"]
     except Exception:
         pass
 
@@ -477,9 +509,8 @@ def validate_holdings_month(
                         float(cur.loc[isin]),
                         has_corporate_action=(str(isin) in ca),
                         isin=str(isin),
+                        peer_median_ratio=(peer_median_ratios or {}).get(str(isin)),
                     )
-                    if not r["passed"]:
-                        passed = False
                     issues.extend(r["issues"])
     except ImportError:
         pass

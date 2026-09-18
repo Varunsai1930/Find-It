@@ -20,6 +20,8 @@ underlying numbers (build plan §7), not to replace this file.
 import argparse
 import hashlib
 import json
+import math
+from statistics import median
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,17 +32,11 @@ import db
 import delta_calculator
 import consensus_signals
 import fallback_summary
+from findit.core.corporate_actions import detect_candidate
 from findit.store.validation_gate import (
     validate_holdings_month,
     validate_implied_price_cv,
 )
-
-# Hard NAV-sum bounds for the gate. validate_holdings_month's own NAV check
-# is warn-only (partial sheets are real), but a sum this far outside a sane
-# range means the numbers don't add up — quarantine, don't guess.
-NAV_QUARANTINE_MIN = 50.0
-NAV_QUARANTINE_MAX = 150.0
-
 
 def _file_sha256(path: Path) -> str:
     h = hashlib.sha256()
@@ -67,12 +63,87 @@ def _prev_month(conn, scheme_id: int, month: str):
     return row[0] if row and row[0] else None
 
 
-def run_validation_gate(conn, touched: dict) -> dict:
-    """Validate each touched (scheme_id, month); persist statuses.
+def _peer_ratios(conn, prev_month: str, month: str) -> dict:
+    """Quantity-ratio medians of the *other* schemes holding each ISIN.
 
-    touched: {(scheme_id, month): {"files": [...], "hashes": [...]}}.
-    Returns the run-report dict (also persisted to ingest_runs)."""
+    Build once per month pair, using matched, positive quantities only.
+    Single-holder stocks have no peer evidence.
+    """
+    pairs = pd.read_sql_query(
+        "SELECT c.scheme_id, c.isin, c.quantity / p.quantity AS ratio "
+        "FROM mf_holdings_monthly c JOIN mf_holdings_monthly p "
+        "ON p.scheme_id = c.scheme_id AND p.isin = c.isin "
+        "WHERE c.report_month = ? AND p.report_month = ? "
+        "AND c.quantity > 0 AND p.quantity > 0",
+        conn, params=(month, prev_month),
+    )
+    medians = {}
+    for isin, group in pairs.groupby("isin"):
+        holders = [(int(sid), float(ratio)) for sid, ratio in
+                   group[["scheme_id", "ratio"]].itertuples(index=False, name=None)
+                   if math.isfinite(ratio)]
+        if len(holders) < 2:
+            continue
+        for sid, _ in holders:
+            medians.setdefault(sid, {})[str(isin)] = median(
+                ratio for other_sid, ratio in holders if other_sid != sid
+            )
+    return medians
+
+
+def _record_candidates(conn, issues, prev_df, curr_df, month: str) -> list[dict]:
+    """Require both peer agreement and inverse price evidence; never confirm."""
+    if prev_df is None or prev_df.empty or curr_df.empty:
+        return []
+    prev = prev_df.set_index("isin")
+    curr = curr_df.set_index("isin")
+    candidates = []
+    for issue in issues:
+        if issue["code"] != "qty_ratio_corporate_action_candidate":
+            continue
+        isin = issue["isin"]
+        before, after = prev.loc[isin], curr.loc[isin]
+        try:
+            pq, pv, cq, cv = map(float, (
+                before["quantity"], before["market_value_lakhs"],
+                after["quantity"], after["market_value_lakhs"],
+            ))
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(value) and value > 0 for value in (pq, pv, cq, cv)):
+            continue
+        candidate = detect_candidate(pq, pv / pq, cq, cv / cq)
+        if candidate is None:
+            continue
+        # Preserve a prior reviewed/confirmed record and make reruns idempotent.
+        conn.execute(
+            "INSERT OR IGNORE INTO corporate_actions "
+            "(isin, effective_month, kind, ratio, detected_by, confirmed) "
+            "VALUES (?, ?, ?, ?, 'peer_ratio_agreement', 0)",
+            (isin, month, candidate["type"], candidate["target_qty_ratio"]),
+        )
+        stored = conn.execute(
+            "SELECT confirmed, detected_by FROM corporate_actions "
+            "WHERE isin = ? AND effective_month = ?", (isin, month),
+        ).fetchone()
+        if stored[0] == 0 and stored[1] == "peer_ratio_agreement":
+            candidates.append({
+                "isin": isin, "effective_month": month, **candidate,
+                "peer_median_ratio": issue.get("peer_median_ratio"),
+                "confirmed": 0, "detected_by": "peer_ratio_agreement",
+            })
+    return candidates
+
+
+def run_validation_gate(conn, touched: dict) -> dict:
+    """Validate touched scheme-months and persist reports, including provenance.
+
+    touched values contain files/hashes and optional dropped_non_isin_count
+    and dropped_non_isin_pct_nav. Legacy CSVs leave provenance unknown.
+    """
     outcomes = []
+    peer_cache = {}
+    candidates = {}
     for (scheme_id, month) in sorted(touched):
         info = conn.execute(
             "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?",
@@ -82,17 +153,21 @@ def run_validation_gate(conn, touched: dict) -> dict:
         curr_df = _holdings_df(conn, scheme_id, month)
         prev_month = _prev_month(conn, scheme_id, month)
         prev_df = _holdings_df(conn, scheme_id, prev_month) if prev_month else None
+        ca_rows = conn.execute(
+            "SELECT isin FROM corporate_actions "
+            "WHERE confirmed = 1 AND effective_month = ?", (month,),
+        ).fetchall()
+        ca_isins = {str(r[0]) for r in ca_rows}
+        peers = {}
+        if prev_month:
+            pair = (prev_month, month)
+            if pair not in peer_cache:
+                peer_cache[pair] = _peer_ratios(conn, prev_month, month)
+            peers = peer_cache[pair].get(scheme_id, {})
         try:
-            ca_rows = conn.execute(
-                "SELECT isin FROM corporate_actions "
-                "WHERE confirmed = 1 AND effective_month = ?",
-                (month,),
-            ).fetchall()
-            ca_isins = {str(r[0]) for r in ca_rows}
-        except Exception:
-            ca_isins = set()
-        try:
-            result = validate_holdings_month(curr_df, prev_df, ca_isins)
+            result = validate_holdings_month(
+                curr_df, prev_df, ca_isins, peer_median_ratios=peers,
+            )
             issues = list(result.get("issues", []))
             passed = bool(result.get("passed", True))
         except Exception as exc:
@@ -101,31 +176,20 @@ def run_validation_gate(conn, touched: dict) -> dict:
                 "message": f"validation gate raised {exc!r}",
             }]
             passed = False
-        # Hard NAV-sum gate: far outside sane range -> quarantine.
-        try:
-            nav_sum = float(
-                pd.to_numeric(curr_df["pct_nav"], errors="coerce").dropna().sum()
-            )
-        except Exception:
-            nav_sum = float("nan")
-        if nav_sum != nav_sum or not (
-            NAV_QUARANTINE_MIN <= nav_sum <= NAV_QUARANTINE_MAX
-        ):
-            issues.append({
-                "code": "nav_sum_quarantine", "severity": "error",
-                "message": (
-                    f"pct_nav sum {nav_sum:.2f} far outside sane range "
-                    f"[{NAV_QUARANTINE_MIN:.0f}, {NAV_QUARANTINE_MAX:.0f}]"
-                ),
-                "nav_sum": nav_sum,
-            })
-            passed = False
+        for candidate in _record_candidates(conn, issues, prev_df, curr_df, month):
+            candidates[(candidate["isin"], month)] = candidate
+        nav_sum = float(pd.to_numeric(curr_df["pct_nav"], errors="coerce").sum())
+        source = touched[(scheme_id, month)]
+        provenance = {
+            "dropped_non_isin_count": source.get("dropped_non_isin_count"),
+            "dropped_non_isin_pct_nav": source.get("dropped_non_isin_pct_nav"),
+        }
         status = "ok" if passed else "quarantined"
         report_json = json.dumps({
             "issues": issues, "prev_month": prev_month,
-            "nav_sum": nav_sum,
+            "nav_sum": nav_sum, **provenance,
         })
-        hashes = sorted(set(touched[(scheme_id, month)]["hashes"]))
+        hashes = sorted(set(source["hashes"]))
         conn.execute(
             """INSERT OR REPLACE INTO scheme_month_status
                (scheme_id, report_month, status, validation_report_json, source_data_hash)
@@ -136,22 +200,19 @@ def run_validation_gate(conn, touched: dict) -> dict:
         outcomes.append({
             "scheme_id": scheme_id, "amc_name": amc, "scheme_name": scheme,
             "report_month": month, "status": status, "issues": issues,
+            "nav_sum": nav_sum, **provenance,
         })
     conn.commit()
 
-    # Cross-scheme implied-price check (warn-only, never quarantines):
-    # same ISIN held by >=2 schemes should imply the same month-end price.
+    # Cross-scheme implied-price check remains warn-only.
     price_warnings = []
     months = sorted({m for (_, m) in touched})
     for month in months:
-        try:
-            all_hold = pd.read_sql_query(
-                "SELECT isin, quantity, market_value_lakhs "
-                "FROM mf_holdings_monthly WHERE report_month = ?",
-                conn, params=(month,),
-            )
-        except Exception:
-            continue
+        all_hold = pd.read_sql_query(
+            "SELECT isin, quantity, market_value_lakhs "
+            "FROM mf_holdings_monthly WHERE report_month = ?",
+            conn, params=(month,),
+        )
         for isin, grp in all_hold.groupby("isin"):
             if len(grp) < 2:
                 continue
@@ -161,7 +222,36 @@ def run_validation_gate(conn, touched: dict) -> dict:
             for issue in res.get("issues", []):
                 price_warnings.append({
                     "isin": str(isin), "report_month": month, **issue})
-    return {"scheme_months": outcomes, "price_warnings": price_warnings}
+    return {
+        "scheme_months": outcomes, "price_warnings": price_warnings,
+        "corporate_action_candidates": [candidates[key] for key in sorted(candidates)],
+    }
+
+
+def _track_source(touched: dict, conn, df: pd.DataFrame, path: Path, file_hash: str):
+    """Collect repeated per-scheme CSV metadata once, not once per holding."""
+    id_map = dict(conn.execute(
+        "SELECT amc_name || '||' || scheme_name, scheme_id FROM schemes"
+    ).fetchall())
+    for (amc, scheme, month), group in df.groupby(
+        ["amc_name", "scheme_name", "report_month"]
+    ):
+        sid = id_map[f"{amc}||{scheme}"]
+        entry = touched.setdefault((int(sid), str(month)), {"files": [], "hashes": []})
+        entry["files"].append(str(path))
+        entry["hashes"].append(file_hash)
+        for column in ("dropped_non_isin_count", "dropped_non_isin_pct_nav"):
+            if column not in group:
+                entry[column] = None
+                continue
+            values = pd.to_numeric(group[column], errors="coerce").dropna().unique()
+            if len(values) > 1:
+                raise ValueError(f"Inconsistent {column} for {amc} | {scheme} | {month}")
+            value = float(values[0]) if len(values) else None
+            if value is not None and not math.isfinite(value):
+                raise ValueError(f"Non-finite {column} for {amc} | {scheme} | {month}")
+            # A reloaded scheme snapshot replaces earlier provenance, not sums it.
+            entry[column] = int(value) if column.endswith("count") and value is not None else value
 
 
 def main():
@@ -187,20 +277,7 @@ def main():
             print(f"Loaded {n} rows from {csv_path}")
             file_hash = _file_sha256(path)
             df = pd.read_csv(path)
-            id_map = dict(conn.execute(
-                "SELECT amc_name || '||' || scheme_name, scheme_id FROM schemes"
-            ).fetchall())
-            for _, row in df.iterrows():
-                key = f"{row['amc_name']}||{row['scheme_name']}"
-                sid = id_map.get(key)
-                if sid is None:
-                    continue
-                entry = touched.setdefault(
-                    (int(sid), str(row["report_month"])),
-                    {"files": [], "hashes": []},
-                )
-                entry["files"].append(str(csv_path))
-                entry["hashes"].append(file_hash)
+            _track_source(touched, conn, df, path, file_hash)
 
     # Validation gate: the second gate after the parser's fail-loud column
     # check. A file that parses fine can still produce numbers that don't
@@ -221,6 +298,7 @@ def main():
             "ok_count": len(ok), "quarantined_count": len(bad),
             "scheme_months": report["scheme_months"],
             "price_warnings": report["price_warnings"],
+            "corporate_action_candidates": report["corporate_action_candidates"],
         })),
     )
     conn.commit()
@@ -267,6 +345,17 @@ def main():
     for (scheme_id,) in scheme_ids:
         print()
         print(fallback_summary.build_summary(conn, scheme_id, args.curr))
+
+    print("\n=== Corporate-action candidates (unconfirmed; no flow adjustments) ===")
+    if not report["corporate_action_candidates"]:
+        print("(none passed both peer-agreement and inverse-price checks)")
+    for candidate in report["corporate_action_candidates"]:
+        print(
+            f"  {candidate['isin']} | {candidate['effective_month']} | "
+            f"quantity {candidate['qty_ratio']:.4f}x | "
+            f"price {candidate['price_ratio']:.4f}x | "
+            f"target {candidate['target_qty_ratio']:g}x | confirmed=0"
+        )
 
 
 if __name__ == "__main__":
