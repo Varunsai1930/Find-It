@@ -5,6 +5,7 @@ Kept deliberately simple for the personal-MVP phase: SQLite, no ORM,
 plain SQL. Swap to Postgres later only if you actually need concurrent
 writers (see the build plan, section 11).
 """
+import re
 import sqlite3
 from pathlib import Path
 import pandas as pd
@@ -210,6 +211,181 @@ PASSIVE_SCHEME_PATTERNS = (
 )
 
 
+# Scheme identity ------------------------------------------------------------
+#
+# A scheme's name is the AMC's Excel *sheet name*: "SCRF", "SETFNIF50",
+# "SBI  Bluechip  Fund". AMCs re-punctuate and rename these between months.
+# Keying identity on the exact string forks one fund into two scheme_ids and
+# manufactures a phantom full exit plus a phantom new fund in the deltas.
+#
+# Resolution order, most trustworthy first:
+#   1. exact (amc_name, scheme_name)
+#   2. a recorded alias for this AMC (operator-confirmed renames)
+#   3. the normalized scheme_key (punctuation/case/spacing drift only)
+# Nothing beyond character normalization is inferred: "SCRF" -> "SBI Credit
+# Risk Fund" is a judgement call, so it must be recorded as an alias by a
+# human via `python3 -m findit.cli.alias`, never guessed here.
+
+_SCHEME_KEY_STRIP_RE = re.compile(r"[^a-z0-9]+")
+
+
+def normalize_scheme_name(scheme_name: str) -> str:
+    """Canonical scheme key: case, punctuation and spacing folded away.
+
+    Deliberately conservative. It never drops words ("Direct"/"Regular",
+    "Fund", plan names), because two distinct schemes must never collapse
+    into one key. It only absorbs the formatting drift AMCs actually apply
+    to the same sheet from month to month.
+    """
+    folded = _SCHEME_KEY_STRIP_RE.sub(" ", str(scheme_name or "").strip().lower())
+    return " ".join(folded.split())
+
+
+def ensure_scheme_identity_schema(conn: sqlite3.Connection) -> None:
+    """Add the identity columns/indexes additively (safe to re-run)."""
+    scheme_cols = [r[1] for r in conn.execute("PRAGMA table_info(schemes)").fetchall()]
+    if "scheme_key" not in scheme_cols:
+        conn.execute("ALTER TABLE schemes ADD COLUMN scheme_key TEXT")
+    alias_cols = [r[1] for r in conn.execute("PRAGMA table_info(scheme_aliases)").fetchall()]
+    if "alias_normalized" not in alias_cols:
+        conn.execute("ALTER TABLE scheme_aliases ADD COLUMN alias_normalized TEXT")
+    if "source" not in alias_cols:
+        conn.execute("ALTER TABLE scheme_aliases ADD COLUMN source TEXT")
+    # Non-unique on purpose: a genuine key collision is an ambiguity to
+    # report at resolution time, not a CREATE INDEX failure on an existing DB.
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_schemes_amc_key ON schemes(amc_name, scheme_key)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_scheme_aliases_norm "
+        "ON scheme_aliases(alias_normalized)"
+    )
+    conn.commit()
+
+
+def backfill_scheme_identity(conn: sqlite3.Connection) -> int:
+    """Fill scheme_key and register each scheme's own name as an alias.
+
+    Returns the number of scheme rows given a key. Idempotent."""
+    ensure_scheme_identity_schema(conn)
+    rows = conn.execute(
+        "SELECT scheme_id, scheme_name FROM schemes WHERE scheme_key IS NULL"
+    ).fetchall()
+    cur = conn.cursor()
+    for scheme_id, scheme_name in rows:
+        cur.execute(
+            "UPDATE schemes SET scheme_key = ? WHERE scheme_id = ?",
+            (normalize_scheme_name(scheme_name), scheme_id),
+        )
+    # Every scheme vouches for its own name, so a later rename can be
+    # attached to the same identity without a special case.
+    cur.execute(
+        "INSERT OR IGNORE INTO scheme_aliases (scheme_id, alias, alias_normalized, "
+        "created_at, source) SELECT scheme_id, scheme_name, scheme_key, "
+        "datetime('now'), 'self' FROM schemes WHERE scheme_key IS NOT NULL"
+    )
+    cur.execute(
+        "UPDATE scheme_aliases SET alias_normalized = ("
+        "  SELECT scheme_key FROM schemes WHERE schemes.scheme_id = scheme_aliases.scheme_id"
+        ") WHERE alias_normalized IS NULL AND alias IN ("
+        "  SELECT scheme_name FROM schemes WHERE schemes.scheme_id = scheme_aliases.scheme_id)"
+    )
+    conn.commit()
+    return len(rows)
+
+
+class AmbiguousSchemeError(RuntimeError):
+    """Two schemes in one AMC claim the same normalized identity."""
+
+
+def resolve_scheme_id(
+    conn: sqlite3.Connection, amc_name: str, scheme_name: str, create: bool = True
+):
+    """Resolve one AMC sheet name to a stable scheme_id.
+
+    Returns the scheme_id, or None when no match exists and create=False.
+    Raises AmbiguousSchemeError rather than picking one of several matches.
+    """
+    ensure_scheme_identity_schema(conn)
+    amc = str(amc_name)
+    raw = str(scheme_name)
+    key = normalize_scheme_name(raw)
+    cur = conn.cursor()
+
+    row = cur.execute(
+        "SELECT scheme_id FROM schemes WHERE amc_name = ? AND scheme_name = ?",
+        (amc, raw),
+    ).fetchone()
+    if row:
+        return int(row[0])
+
+    matches = cur.execute(
+        "SELECT DISTINCT s.scheme_id FROM scheme_aliases a "
+        "JOIN schemes s ON s.scheme_id = a.scheme_id "
+        "WHERE s.amc_name = ? AND a.alias_normalized = ?",
+        (amc, key),
+    ).fetchall()
+    if not matches:
+        matches = cur.execute(
+            "SELECT scheme_id FROM schemes WHERE amc_name = ? AND scheme_key = ?",
+            (amc, key),
+        ).fetchall()
+    if len(matches) > 1:
+        raise AmbiguousSchemeError(
+            f"{amc} | {raw!r} normalizes to {key!r}, which matches scheme_ids "
+            f"{sorted(int(m[0]) for m in matches)}. Resolve them with "
+            f"`python3 -m findit.cli.alias --merge-from <id> --merge-into <id>` "
+            f"-- do not guess."
+        )
+    if matches:
+        return int(matches[0][0])
+
+    if not create:
+        return None
+    cur.execute(
+        "INSERT INTO schemes (amc_name, scheme_name, scheme_key) VALUES (?, ?, ?)",
+        (amc, raw, key),
+    )
+    scheme_id = int(cur.lastrowid)
+    cur.execute(
+        "INSERT OR IGNORE INTO scheme_aliases (scheme_id, alias, alias_normalized, "
+        "created_at, source) VALUES (?, ?, ?, datetime('now'), 'self')",
+        (scheme_id, raw, key),
+    )
+    conn.commit()
+    return scheme_id
+
+
+def record_scheme_alias(
+    conn: sqlite3.Connection, scheme_id: int, alias: str, source: str = "operator"
+) -> None:
+    """Attach a raw sheet name to an existing scheme identity."""
+    ensure_scheme_identity_schema(conn)
+    row = conn.execute(
+        "SELECT amc_name FROM schemes WHERE scheme_id = ?", (scheme_id,)
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"No scheme with scheme_id={scheme_id}")
+    key = normalize_scheme_name(alias)
+    if not key:
+        raise ValueError("alias must contain at least one alphanumeric character")
+    clash = conn.execute(
+        "SELECT DISTINCT s.scheme_id FROM scheme_aliases a "
+        "JOIN schemes s ON s.scheme_id = a.scheme_id "
+        "WHERE s.amc_name = ? AND a.alias_normalized = ? AND s.scheme_id != ?",
+        (row[0], key, scheme_id),
+    ).fetchall()
+    if clash:
+        raise AmbiguousSchemeError(
+            f"alias {alias!r} already resolves to scheme_id(s) "
+            f"{sorted(int(c[0]) for c in clash)} within {row[0]}"
+        )
+    conn.execute(
+        "INSERT OR IGNORE INTO scheme_aliases (scheme_id, alias, alias_normalized, "
+        "created_at, source) VALUES (?, ?, ?, datetime('now'), ?)",
+        (scheme_id, str(alias), key, source),
+    )
+    conn.commit()
+
+
 def classify_scheme_active(scheme_name: str) -> int:
     """1 if the scheme looks like an active fund, 0 if passive/debt-like."""
     name = (scheme_name or "").lower()
@@ -275,6 +451,10 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
         _existing = [r[1] for r in conn.execute(f"PRAGMA table_info({_table})").fetchall()]
         if _col not in _existing:
             conn.execute(f"ALTER TABLE {_table} ADD COLUMN {_ddl}")
+
+    # Backfill stable scheme identity (scheme_key + self-aliases) so existing
+    # DBs resolve renamed sheets to the scheme_id they already have.
+    backfill_scheme_identity(conn)
 
     # Backfill is_active_equity for schemes lacking it (pattern heuristic).
     # Prints newly-flagged passive schemes so the filter stays auditable.
@@ -345,16 +525,12 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
             df.loc[group_indices, "pct_nav"] = df.loc[group_indices, "pct_nav"] * 100.0
 
     cur = conn.cursor()
+    # Identity is resolved per sheet name, so a re-punctuated or aliased
+    # sheet keeps its existing scheme_id instead of forking into a new fund.
+    scheme_ids = {}
     for (amc, scheme), _ in df.groupby(["amc_name", "scheme_name"]):
-        cur.execute(
-            "INSERT OR IGNORE INTO schemes (amc_name, scheme_name) VALUES (?, ?)",
-            (amc, scheme),
-        )
+        scheme_ids[f"{amc}||{scheme}"] = resolve_scheme_id(conn, amc, scheme)
     conn.commit()
-
-    scheme_ids = dict(
-        cur.execute("SELECT amc_name || '||' || scheme_name, scheme_id FROM schemes").fetchall()
-    )
 
     # A scheme containing only cash/non-ISIN holdings carries one metadata
     # row. Register the scheme above, but never turn that row into a security.

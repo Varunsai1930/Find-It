@@ -58,9 +58,23 @@ number wrong.
 
 ## After that (per the roadmap in the build plan)
 
-- **Phase 1:** add FII/DII quarterly shareholding parsing (NSE/BSE), join
-  it against `consensus_signals.py`'s output on ISIN for the full MF+FII
-  overlap view.
+- **Phase 1 (done):** BSE quarterly FII/DII parsing (`fetch_shareholding.py`,
+  `db.load_shareholding_records`) joined against `compute_consensus()` on
+  ISIN via `join_shareholding_increase()` for the full MF+FII overlap view.
+  `run_pipeline.py` prints the overlap each month with an `as_of_month`
+  no-lookahead cutoff; missing filings stay `no_data` (never zero) and stale
+  quarters are flagged. `fetch_shareholding.py --report-month YYYY-MM` prints
+  the same overlap after a fetch.
+
+  Consensus separates `new_position_flow_lakhs` from
+  `accumulation_flow_lakhs`. A new position books its entire market value as
+  flow, so without the split an IPO or fresh listing that every fund "bought"
+  because it began existing outranks real accumulation. `universe_status` is
+  tri-state like the FII/DII directions — `established`, `new_listing`, or
+  `unknown` when no previous month is on record. Ranking still leads with
+  consensus breadth (`net_amc_count`); the split only orders names within one
+  breadth level, and the tiebreak is accumulation flow rather than a position's
+  entry value.
 - **Phase 2:** implemented as cached, constrained GLM narration over the
   existing rule summary; see the Phase 2 instructions below. Live API use
   requires `ZAI_API_KEY`.
@@ -80,6 +94,49 @@ python3 -m findit.cli.digest --db /tmp/tracker.copy.db --month 2026-04 --schemes
 Rebuild copies the DB first and computes deltas via `delta_calculator` on the
 copy only; digest prints a preview from cached rule summaries (no sending,
 no credentials). Both are offline and never write `./tracker.db` or `real_data/`.
+
+### Scheme identity (`findit.cli.alias`)
+
+A scheme's stored name is the AMC's Excel *sheet* name (`SCRF`, `SETFNIF50`,
+`SBI  Bluechip Fund`). Punctuation, casing and spacing drift between months is
+absorbed automatically by `db.normalize_scheme_name`, so a re-punctuated sheet
+keeps its existing `scheme_id` instead of forking the fund into two identities
+and manufacturing a phantom full exit plus a phantom new fund in the deltas.
+
+A *real* rename (`SCRF` -> `SBI Credit Risk Fund`) is a judgement call and is
+never guessed. Record it yourself:
+
+```bash
+python3 -m findit.cli.alias --db tracker.db --amc "SBI AMC" --list
+python3 -m findit.cli.alias --db tracker.db --add-alias SCRF --scheme-id 33
+python3 -m findit.cli.alias --db tracker.db --merge-from 214 --merge-into 33
+```
+
+`--merge-from` moves every holdings/delta/status/summary row onto the surviving
+`scheme_id`, keeps the old sheet name as a resolvable alias, then deletes the
+duplicate. It refuses to merge across AMCs, and refuses when both schemes hold a
+row for the same (isin, month) — that is a data conflict, not a rename, and
+dropping one side silently is exactly the invisible wrong number this project
+refuses to produce. Two schemes that already share a normalized key make
+ingestion raise `AmbiguousSchemeError` naming both IDs rather than picking one.
+
+### Re-validation (`findit.cli.revalidate`)
+
+Statuses in `scheme_month_status` are whatever the gate's rules said on the day
+the data was ingested. When those rules change, a database can carry quarantines
+the current code would never produce — and the consensus filter and narration
+eligibility still read them, withholding good data. Re-run the gate over stored
+holdings, with no CSVs and no network:
+
+```bash
+python3 -m findit.cli.revalidate --db tracker.db --dry-run
+python3 -m findit.cli.revalidate --db tracker.db
+```
+
+`--dry-run` reports the status changes from a temporary copy and never opens
+`--db` for writing. `--month` (repeatable) and `--schemes` restrict the run.
+Source hashes and drop provenance are carried over from the existing status
+rows, so re-validating never invents provenance the ingest did not record.
 
 ## Phase 2 — cached AI-assisted summaries
 

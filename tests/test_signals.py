@@ -7,6 +7,7 @@ import pandas as pd
 import consensus_signals
 import fallback_summary
 from findit.narrate.template import render_summary
+from run_pipeline import _overlap_summary, build_overlap_view
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -475,3 +476,63 @@ def test_template_deterministic_and_validated():
     assert "0.66%" in first
     assert "and 2 more" in first
     assert "+₹-" not in first
+
+
+# ---- Phase 1 pipeline overlap (build_overlap_view) ----------------------------
+
+def test_pipeline_overlap_common_via_end_to_end_consensus():
+    conn = _mem_conn()
+    _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity",
+                            10, 100, 100, 0.5, "added")
+    _add_scheme_stock_delta(conn, 2, "SBI AMC", "Bluechip", "INEAAA01001", "AAA", "equity",
+                            10, 100, 100, 0.5, "added")
+    _add_sh(conn, "INEAAA01001", "2026-03-31", 10.0, 5.0)
+    _add_sh(conn, "INEAAA01001", "2026-06-30", 12.0, 4.0)  # FII up -> common
+    consensus = consensus_signals.compute_consensus(conn, "2026-08")
+    assert not consensus.empty
+    overlap = build_overlap_view(conn, consensus, "2026-08")
+    assert overlap["status"] == "ok"
+    assert len(overlap["common"]) == 1
+    assert overlap["common"].iloc[0]["isin"] == "INEAAA01001"
+    summary = _overlap_summary(overlap["joined"], overlap["common"], overlap["status"])
+    assert summary == {
+        "status": "ok", "common_count": 1, "consensus_count": 1,
+        "stale_count": 0, "missing_shareholding_count": 0,
+    }
+    conn.close()
+
+
+def test_pipeline_overlap_no_lookahead():
+    conn = _mem_conn()
+    # Q2 shows an FII increase; a future Q3 filing reverses it. With a June
+    # cutoff the pipeline must rank Q2 (common), not the future quarter.
+    _add_sh(conn, "INE000A01001", "2026-03-31", 10.0, 5.0)
+    _add_sh(conn, "INE000A01001", "2026-06-30", 12.0, 6.0)
+    _add_sh(conn, "INE000A01001", "2026-09-30", 1.0, 1.0)
+    overlap = build_overlap_view(conn, _consensus_row("INE000A01001"), "2026-06")
+    assert overlap["status"] == "ok"
+    assert overlap["joined"].iloc[0]["shareholding_quarter_end"] == "2026-06-30"
+    assert bool(overlap["common"].iloc[0]["is_common"]) is True
+    conn.close()
+
+
+def test_pipeline_overlap_empty_consensus_and_missing_table():
+    empty = pd.DataFrame([{
+        "isin": "INE000A01001", "stock_name": "X",
+        "amcs_buying": 0, "amcs_selling": 0,
+        "total_flow_lakhs": 0.0, "total_price_effect_lakhs": 0.0,
+        "net_amc_count": 0, "buying_ratio": 0.0,
+    }]).iloc[0:0]
+    conn = _mem_conn()
+    overlap = build_overlap_view(conn, empty, "2026-08")
+    assert overlap["status"] == "no_consensus"
+    conn.close()
+
+    # Legacy DB without the shareholding table: never raises, MF-only survives.
+    bare = sqlite3.connect(":memory:")
+    overlap2 = build_overlap_view(bare, _consensus_row("INE000A01001"), "2026-08")
+    assert overlap2["status"] == "unavailable"
+    assert overlap2["joined"].equals(_consensus_row("INE000A01001"))
+    summary = _overlap_summary(overlap2["joined"], overlap2["common"], overlap2["status"])
+    assert summary == {"status": "unavailable", "common_count": 0}
+    bare.close()

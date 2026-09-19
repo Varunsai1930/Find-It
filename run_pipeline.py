@@ -10,8 +10,9 @@ USAGE (after parsing each AMC's file with amfi_mf_parser.py):
 
 This loads every given CSV into tracker.db, computes deltas between
 --prev and --curr, prints the cross-fund consensus table (the "who's
-buying the same thing" signal), and prints a fallback summary for
-every scheme that has data for --curr.
+buying the same thing" signal), joins it against quarterly FII/DII
+shareholding on ISIN for the full MF+FII overlap view (Phase 1), and
+prints a fallback summary for every scheme that has data for --curr.
 
 Nothing here calls an LLM. This is the fully rule-based baseline —
 wire GLM 5.3 in afterwards to narrate on top of build_summary()'s
@@ -135,6 +136,68 @@ def _record_candidates(conn, issues, prev_df, curr_df, month: str) -> list[dict]
     return candidates
 
 
+def build_overlap_view(conn, consensus: pd.DataFrame, curr: str) -> dict:
+    """Join MF consensus against quarterly FII/DII shareholding (Phase 1).
+
+    Uses ``curr`` as a no-lookahead cutoff so only quarters with
+    ``quarter_end <= <curr month-end>`` are ranked. Missing filings stay
+    ``no_data`` (never zero); stale quarters are flagged by the join.
+    Never raises on missing/empty shareholding data — returns the
+    consensus unchanged with an ``unavailable`` status instead.
+    """
+    if consensus is None or consensus.empty:
+        return {"joined": consensus, "common": consensus, "status": "no_consensus"}
+    try:
+        joined = consensus_signals.join_shareholding_increase(
+            conn, consensus, as_of_month=curr,
+        )
+    except Exception:
+        return {"joined": consensus, "common": consensus.iloc[0:0], "status": "unavailable"}
+    try:
+        common = joined[joined["is_common_with_fii_increase"]]
+    except (KeyError, TypeError):
+        return {"joined": joined, "common": joined.iloc[0:0], "status": "unavailable"}
+    return {"joined": joined, "common": common, "status": "ok"}
+
+
+def _format_overlap_row(row) -> str:
+    isin = row.get("isin", "?")
+    name = row.get("stock_name", "")
+    mf_net = row.get("net_amc_count", 0)
+    fii_dir = row.get("fii_direction", "no_data")
+    dii_dir = row.get("dii_direction", "no_data")
+    qend = row.get("shareholding_quarter_end")
+    prev_qend = row.get("previous_shareholding_quarter_end")
+    stale = bool(row.get("shareholding_stale", False))
+    stale_mark = " [stale]" if stale else ""
+    return (
+        f"  {name} | {isin} | MF net {mf_net} | "
+        f"FII {fii_dir} / DII {dii_dir} | "
+        f"as-of {qend} (prev {prev_qend}){stale_mark}"
+    )
+
+
+def _overlap_summary(joined, common, status: str) -> dict:
+    """Auditable counts for the ingest_runs report (JSON-safe)."""
+    if status != "ok" or joined is None or getattr(joined, "empty", True):
+        return {"status": status, "common_count": 0}
+    try:
+        stale_count = int(joined["shareholding_stale"].fillna(True).sum())
+    except (KeyError, TypeError, ValueError):
+        stale_count = 0
+    try:
+        missing_count = int((joined["shareholding_quarter_end"].isna()).sum())
+    except (KeyError, TypeError, AttributeError):
+        missing_count = 0
+    return {
+        "status": status,
+        "common_count": int(len(common)),
+        "consensus_count": int(len(joined)),
+        "stale_count": stale_count,
+        "missing_shareholding_count": missing_count,
+    }
+
+
 def run_validation_gate(conn, touched: dict) -> dict:
     """Validate touched scheme-months and persist reports, including provenance.
 
@@ -230,13 +293,17 @@ def run_validation_gate(conn, touched: dict) -> dict:
 
 def _track_source(touched: dict, conn, df: pd.DataFrame, path: Path, file_hash: str):
     """Collect repeated per-scheme CSV metadata once, not once per holding."""
-    id_map = dict(conn.execute(
-        "SELECT amc_name || '||' || scheme_name, scheme_id FROM schemes"
-    ).fetchall())
     for (amc, scheme, month), group in df.groupby(
         ["amc_name", "scheme_name", "report_month"]
     ):
-        sid = id_map[f"{amc}||{scheme}"]
+        # Same resolution the loader used: an aliased/re-punctuated sheet
+        # name must land on the scheme_id its holdings were just written to.
+        sid = db.resolve_scheme_id(conn, amc, scheme, create=False)
+        if sid is None:
+            raise RuntimeError(
+                f"no scheme_id for {amc} | {scheme} | {month} after loading -- "
+                "this shouldn't happen"
+            )
         entry = touched.setdefault((int(sid), str(month)), {"files": [], "hashes": []})
         entry["files"].append(str(path))
         entry["hashes"].append(file_hash)
@@ -278,6 +345,11 @@ def main():
             file_hash = _file_sha256(path)
             df = pd.read_csv(path)
             _track_source(touched, conn, df, path, file_hash)
+
+    # Classify freshly loaded schemes: backfill only runs at connect time
+    # (before these inserts), so without this every new scheme stays NULL
+    # and the consensus filter (is_active_equity = 1) silently drops it.
+    db.backfill_is_active_equity(conn)
 
     # Validation gate: the second gate after the parser's fail-loud column
     # check. A file that parses fine can still produce numbers that don't
@@ -324,6 +396,37 @@ def main():
         print("(no signals yet)")
     else:
         print(consensus.to_string(index=False))
+
+    # Phase 1: MF+FII/DII overlap on ISIN. Missing filings stay no_data
+    # (never zero); quarterly filings may be stale relative to the MF month.
+    print(f"\n=== MF + FII/DII overlap, {args.curr} ===")
+    overlap = build_overlap_view(conn, consensus, args.curr)
+    joined, common, overlap_status = (
+        overlap["joined"], overlap["common"], overlap["status"],
+    )
+    if overlap_status == "no_consensus":
+        print("(no MF signals, so no overlap to report)")
+    elif overlap_status == "unavailable":
+        print("(shareholding data unavailable — showing MF-only consensus above)")
+    elif common.empty:
+        print("(no MF+FII/DII common increases this month)")
+    else:
+        print("(MF net buying + FII-or-DII quarterly increase; stale quarters flagged)")
+        for _, row in common.iterrows():
+            print(_format_overlap_row(row))
+    try:
+        current_report = json.loads(conn.execute(
+            "SELECT validation_report_json FROM ingest_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()[0])
+        current_report["mf_fii_overlap"] = _overlap_summary(joined, common, overlap_status)
+        conn.execute(
+            "UPDATE ingest_runs SET validation_report_json = ? WHERE run_id = ?",
+            (json.dumps(current_report), run_id),
+        )
+        conn.commit()
+    except Exception:
+        pass
     try:
         passive = conn.execute(
             "SELECT DISTINCT s.amc_name, s.scheme_name FROM schemes s "

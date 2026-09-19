@@ -1,11 +1,13 @@
 """
 consensus_signals.py — cross-fund agreement per stock for a given month.
 
-This is the "MF side" of the common-holdings idea: how many distinct
-schemes/AMCs added vs trimmed a given stock this month. Once FII/DII
-quarterly data is loaded (phase 1, not built yet — see build plan §2),
-this joins against that on ISIN to produce the full MF+FII overlap signal.
-For now this proves the MF-only consensus logic end to end.
+``compute_consensus`` is the "MF side" of the common-holdings idea: how
+many distinct schemes/AMCs added vs trimmed a given stock this month.
+``join_shareholding_increase`` (Phase 1) joins that output against
+quarterly FII/DII shareholding on ISIN to produce the full MF+FII
+overlap signal: MF net buying plus an FII-or-DII quarterly increase,
+with missing filings kept as no_data (never zero) and stale quarters
+flagged via ``as_of_month``.
 """
 import calendar
 import sqlite3
@@ -40,6 +42,29 @@ def _quarantined_scheme_ids(conn: sqlite3.Connection, report_month: str) -> list
     return [int(r[0]) for r in rows if r[0] is not None]
 
 
+def _prev_universe_isins(conn: sqlite3.Connection, prev_months) -> set[str] | None:
+    """ISINs any tracked scheme already held in the compared previous month(s).
+
+    Returns None when no previous month is known, so callers report
+    ``unknown`` instead of asserting every stock is a new listing.
+    """
+    months = sorted({str(m) for m in prev_months if m is not None and str(m) != "nan"})
+    if not months:
+        return None
+    placeholders = ",".join("?" for _ in months)
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT isin FROM mf_holdings_monthly "
+            f"WHERE report_month IN ({placeholders})",
+            months,
+        ).fetchall()
+    except Exception:
+        return None
+    if not rows:
+        return None
+    return {str(r[0]) for r in rows}
+
+
 def compute_consensus(
     conn: sqlite3.Connection,
     report_month: str,
@@ -54,7 +79,7 @@ def compute_consensus(
         price_select = "d.price_effect_lakhs, " if include_price else ""
         sql = (
             "SELECT d.isin, s.name AS stock_name, d.action, d.value_change_lakhs, "
-            f"       d.flow_lakhs, {price_select}sch.amc_name "
+            f"       d.flow_lakhs, {price_select}d.prev_month, sch.amc_name "
             "FROM mf_holding_deltas d "
             "JOIN stocks s ON s.isin = d.isin "
             "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
@@ -98,21 +123,32 @@ def compute_consensus(
     if deltas.empty:
         return pd.DataFrame(columns=[
             "isin", "stock_name", "amcs_buying", "amcs_selling",
-            "total_flow_lakhs", "total_price_effect_lakhs", "net_amc_count",
-            "buying_ratio",
+            "amcs_opening", "total_flow_lakhs", "new_position_flow_lakhs",
+            "accumulation_flow_lakhs", "total_price_effect_lakhs",
+            "net_amc_count", "buying_ratio", "universe_status",
+            "is_new_to_universe",
         ])
 
     buying = deltas[deltas["action"].isin(["new", "added"])]
     selling = deltas[deltas["action"].isin(["trimmed", "exited"])]
+    opening = deltas[deltas["action"] == "new"]
 
     buy_counts = buying.groupby("isin")["amc_name"].nunique().rename("amcs_buying")
     sell_counts = selling.groupby("isin")["amc_name"].nunique().rename("amcs_selling")
+    open_counts = opening.groupby("isin")["amc_name"].nunique().rename("amcs_opening")
     names = deltas.drop_duplicates("isin").set_index("isin")["stock_name"]
 
-    series_to_concat = [names, buy_counts, sell_counts]
+    series_to_concat = [names, buy_counts, sell_counts, open_counts]
     if "flow_lakhs" in deltas.columns and deltas["flow_lakhs"].notna().any():
         flow_totals = deltas.groupby("isin")["flow_lakhs"].sum().rename("total_flow_lakhs")
         series_to_concat.append(flow_totals)
+        # A new position books its entire market value as flow, so an IPO or
+        # fresh listing every fund "bought" because it began existing outranks
+        # real accumulation. Split the two rather than ranking on the sum.
+        new_flow = (
+            opening.groupby("isin")["flow_lakhs"].sum().rename("new_position_flow_lakhs")
+        )
+        series_to_concat.append(new_flow)
     if has_price and "price_effect_lakhs" in deltas.columns:
         price_totals = (
             deltas.groupby("isin")["price_effect_lakhs"].sum().rename("total_price_effect_lakhs")
@@ -126,15 +162,23 @@ def compute_consensus(
         out["total_flow_lakhs"] = 0.0
     if "total_price_effect_lakhs" not in out.columns:
         out["total_price_effect_lakhs"] = 0.0
+    if "new_position_flow_lakhs" not in out.columns:
+        out["new_position_flow_lakhs"] = 0.0
     # fillna(0) would coerce stock_name NaNs to 0; fill numeric cols only,
     # then fill any missing names with empty string (should not happen).
-    for col in ["amcs_buying", "amcs_selling", "total_flow_lakhs", "total_price_effect_lakhs"]:
+    for col in ["amcs_buying", "amcs_selling", "amcs_opening", "total_flow_lakhs",
+                "total_price_effect_lakhs", "new_position_flow_lakhs"]:
         if col in out.columns:
             out[col] = out[col].fillna(0)
     if "stock_name" in out.columns:
         out["stock_name"] = out["stock_name"].fillna("")
     out["amcs_buying"] = out["amcs_buying"].astype(int)
     out["amcs_selling"] = out["amcs_selling"].astype(int)
+    out["amcs_opening"] = out["amcs_opening"].astype(int)
+    # Capital moved into or out of positions that already existed last month.
+    out["accumulation_flow_lakhs"] = (
+        out["total_flow_lakhs"] - out["new_position_flow_lakhs"]
+    )
     out["net_amc_count"] = out["amcs_buying"] - out["amcs_selling"]
     denom = (out["amcs_buying"] + out["amcs_selling"]).clip(lower=1)
     out["buying_ratio"] = out["amcs_buying"] / denom
@@ -143,8 +187,28 @@ def compute_consensus(
     # otherwise "index" — normalise to "isin" in both cases.
     if "index" in out.columns and "isin" not in out.columns:
         out = out.rename(columns={"index": "isin"})
+
+    # Tri-state, like the FII/DII directions: a stock absent from every
+    # tracked portfolio last month is a new listing, not a conviction buy.
+    # With no previous month on record we say "unknown" rather than
+    # branding the whole universe new.
+    universe = _prev_universe_isins(
+        conn, deltas["prev_month"].tolist() if "prev_month" in deltas.columns else []
+    )
+    if universe is None:
+        out["universe_status"] = "unknown"
+    else:
+        out["universe_status"] = out["isin"].apply(
+            lambda i: "established" if str(i) in universe else "new_listing"
+        )
+    out["is_new_to_universe"] = out["universe_status"] == "new_listing"
+
+    # Consensus breadth still leads. Within one breadth level, established
+    # names outrank fresh listings, and the tiebreak is accumulation flow —
+    # never the entry value of a position that had nowhere to come from.
     return out.sort_values(
-        ["net_amc_count", "total_flow_lakhs"], ascending=[False, False]
+        ["net_amc_count", "is_new_to_universe", "accumulation_flow_lakhs"],
+        ascending=[False, True, False],
     ).reset_index(drop=True)
 
 

@@ -595,6 +595,7 @@ def main() -> None:
     if args.report_month:
         joined = consensus_signals.join_shareholding_increase(
             conn, consensus_signals.compute_consensus(conn, args.report_month),
+            as_of_month=args.report_month,
         )
         common = joined[joined["is_common_with_fii_increase"]]
         print(f"\n=== MF + FII/DII common increases, {args.report_month} ===")

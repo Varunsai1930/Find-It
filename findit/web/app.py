@@ -78,6 +78,29 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
         return set()
 
 
+def _prev_universe_isins(conn: sqlite3.Connection, prev_months) -> set[str] | None:
+    """ISINs any tracked scheme held in the compared previous month(s).
+
+    None when no previous month is on record, so the caller reports
+    ``unknown`` instead of calling every stock a new listing.
+    """
+    months = sorted({str(m) for m in prev_months if m is not None})
+    if not months:
+        return None
+    placeholders = ",".join("?" for _ in months)
+    try:
+        rows = conn.execute(
+            f"SELECT DISTINCT isin FROM mf_holdings_monthly "
+            f"WHERE report_month IN ({placeholders})",
+            months,
+        ).fetchall()
+    except sqlite3.Error:
+        return None
+    if not rows:
+        return None
+    return {str(r[0]) for r in rows}
+
+
 def _quarterly_predicate(conn: sqlite3.Connection, alias: str = "") -> str:
     """SQL fragment restricting shareholding rows to quarterly filings.
 
@@ -383,7 +406,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     "sch.amc_name AS amc_name, d.action AS action, "
                     "d.qty_change AS qty_change, d.value_change_lakhs AS value_change_lakhs, "
                     f"{price_select}"
-                    "d.flow_lakhs AS flow_lakhs "
+                    "d.flow_lakhs AS flow_lakhs, d.prev_month AS prev_month "
                     "FROM mf_holding_deltas d "
                     "JOIN stocks s ON s.isin = d.isin "
                     "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
@@ -438,7 +461,9 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                         "buy_amcs": set(),
                         "sell_amcs": set(),
                         "total_flow_lakhs": 0.0,
+                        "new_position_flow_lakhs": 0.0,
                         "total_price_effect_lakhs": 0.0,
+                        "open_amcs": set(),
                     },
                 )
                 action = str(r["action"])
@@ -463,6 +488,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     g["buy_amcs"].add(str(r["amc_name"]))
                     g["total_flow_lakhs"] += flow
                     g["total_price_effect_lakhs"] += price
+                    # A new position books its whole market value as flow;
+                    # keep it separate so entry value never reads as buying
+                    # pressure (mirrors consensus_signals.compute_consensus).
+                    if action == "new":
+                        g["open_amcs"].add(str(r["amc_name"]))
+                        g["new_position_flow_lakhs"] += flow
                 elif action in SELL_ACTIONS:
                     g["sell_schemes"].add(int(r["scheme_id"]))
                     g["sell_amcs"].add(str(r["amc_name"]))
@@ -494,6 +525,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                         "net_amc_count": ab - as_,
                         "buying_ratio": buying_ratio,
                         "total_flow_lakhs": g["total_flow_lakhs"],
+                        "new_position_flow_lakhs": g["new_position_flow_lakhs"],
+                        "accumulation_flow_lakhs": (
+                            g["total_flow_lakhs"] - g["new_position_flow_lakhs"]
+                        ),
+                        "amcs_opening": len(g["open_amcs"]),
                         "total_price_effect_lakhs": g["total_price_effect_lakhs"],
                     }
                 )
@@ -511,11 +547,25 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                         ),
                     }
                 )
+            universe = _prev_universe_isins(
+                conn, [r["prev_month"] for r in rows]
+            )
+            for r in ranked:
+                if universe is None:
+                    r["universe_status"] = "unknown"
+                else:
+                    r["universe_status"] = (
+                        "established" if r["isin"] in universe else "new_listing"
+                    )
+                r["is_new_to_universe"] = r["universe_status"] == "new_listing"
+            # Breadth first; then established names ahead of fresh listings;
+            # then accumulation flow, never a new position's entry value.
             ranked.sort(
                 key=lambda x: (
                     x["net_amc_count"],
                     x["net_scheme_count"],
-                    x["total_flow_lakhs"],
+                    not x["is_new_to_universe"],
+                    x["accumulation_flow_lakhs"],
                 ),
                 reverse=True,
             )
