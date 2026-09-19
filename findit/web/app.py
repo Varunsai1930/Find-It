@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from findit.narrate.service import get_summary
+from findit.summary import get_summary
 
 _WEB_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -444,7 +444,6 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     {
                         "month": month,
                         "equity_only": bool(equity_filter),
-                "active_equity_only": bool(active_filter),
                         "active_equity_only": bool(active_filter),
                         "count": 0,
                         "results": [],
@@ -547,7 +546,6 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     {
                         "month": month,
                         "equity_only": bool(equity_filter),
-                "active_equity_only": bool(active_filter),
                         "active_equity_only": bool(active_filter),
                         "count": 0,
                         "results": [],

@@ -1,10 +1,9 @@
 """
 fallback_summary.py — rule-based plain-English monthly summary, with NO
-LLM involved. This is the baseline the AI narration layer sits on top of
-(build plan §4/§7): build and trust this first, since the app must never
-depend on the LLM call succeeding. When GLM 5.3 is wired in later, it
-narrates exactly these same pre-computed numbers — it never computes
-them itself.
+LLM involved. This is the only summary path. A constrained GLM narration
+layer was built on top of it and then removed (see the README): the model
+could only reorder these sentences, so it earned none of its complexity.
+findit.summary wraps this with the withhold-on-bad-data checks.
 """
 import sqlite3
 import pandas as pd

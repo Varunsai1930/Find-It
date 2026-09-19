@@ -135,17 +135,6 @@ CREATE TABLE IF NOT EXISTS consensus_signals (
     PRIMARY KEY (isin, report_month)
 );
 
-CREATE TABLE IF NOT EXISTS fund_summaries (
-    scheme_id INTEGER NOT NULL,
-    report_month TEXT NOT NULL,
-    summary_text TEXT,
-    generated_by TEXT,
-    generated_at TEXT,
-    source_data_hash TEXT,
-    model_version TEXT,
-    PRIMARY KEY (scheme_id, report_month)
-);
-
 CREATE TABLE IF NOT EXISTS ingest_runs (
     run_id TEXT PRIMARY KEY,
     started_at TEXT NOT NULL,

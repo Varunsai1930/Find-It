@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
-from findit.narrate.service import get_summary
+from findit.summary import get_summary
 
 
 def _cached_summary(conn: sqlite3.Connection, scheme_id: int, month: str) -> str:

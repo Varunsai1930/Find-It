@@ -14,8 +14,8 @@ buying the same thing" signal), joins it against quarterly FII/DII
 shareholding on ISIN for the full MF+FII overlap view (Phase 1), and
 prints a fallback summary for every scheme that has data for --curr.
 
-Nothing here calls an LLM. This is the fully rule-based baseline —
-wire GLM 5.3 in afterwards to narrate on top of build_summary()'s
+Nothing here calls an LLM, and nothing in this project does any more —
+the narration layer was removed. This is the rule-based path on
 underlying numbers (build plan §7), not to replace this file.
 """
 import argparse

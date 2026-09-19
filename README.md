@@ -5,9 +5,9 @@ and tested end-to-end on synthetic data. It proves the hard part — messy
 AMC Excel parsing → storage → deltas → cross-fund consensus → a plain-English
 summary — works, before spending any time on FII data, an API, or a UI.
 
-No LLM is used anywhere in this phase. The AI narration layer comes later
-and sits *on top of* `fallback_summary.py`'s numbers — see §7 of the build
-plan for why that order matters.
+No LLM is used anywhere. An AI narration layer was built and then removed;
+see "Why the GLM narration layer was removed" below. Summaries are produced
+by `fallback_summary.py` from numbers Python computed.
 
 ## Files
 
@@ -75,9 +75,9 @@ number wrong.
   consensus breadth (`net_amc_count`); the split only orders names within one
   breadth level, and the tiebreak is accumulation flow rather than a position's
   entry value.
-- **Phase 2:** implemented as cached, constrained GLM narration over the
-  existing rule summary; see the Phase 2 instructions below. Live API use
-  requires `ZAI_API_KEY`.
+- **Phase 2:** built as cached, constrained GLM narration over the rule
+  summary, then **removed** — the model's only authority was reordering
+  pre-written sentences. See "Why the GLM narration layer was removed".
 - **Phase 3:** dashboard UI (Top-5 cards, common holdings screener) — will
   need daily price data too, which nothing here ingests yet.
 
@@ -169,7 +169,7 @@ the ranking.
 
 Statuses in `scheme_month_status` are whatever the gate's rules said on the day
 the data was ingested. When those rules change, a database can carry quarantines
-the current code would never produce — and the consensus filter and narration
+the current code would never produce — and the consensus filter and summary
 eligibility still read them, withholding good data. Re-run the gate over stored
 holdings, with no CSVs and no network:
 
@@ -183,60 +183,40 @@ python3 -m findit.cli.revalidate --db tracker.db
 Source hashes and drop provenance are carried over from the existing status
 rows, so re-validating never invents provenance the ingest did not record.
 
-## Phase 2 — cached AI-assisted summaries
+## Summaries (rule-based, no LLM)
 
-The summary API and monthly digest now read `fund_summaries` when its source
-hash is current. Otherwise they use the rule-based summary. Neither consumer
-calls an AI provider or writes to the database.
+`fallback_summary.build_summary` turns one scheme's computed deltas into a
+plain-English paragraph. `findit.summary.get_summary` wraps it with the
+data-safety checks the summary API and digest rely on:
 
-The [implementation plan](docs/phase-2-plan.md) describes the design and scope.
-Python supplies all financial facts and sentence variants. GLM chooses wording
-and order through a strict JSON plan; it cannot insert prose, numbers, stock
-names, or recommendations. This is constrained AI editing, not free-form
-analysis. Each supplied fact must be retained exactly once.
+- a quarantined current **or referenced previous** month is withheld, with
+  wording that says so explicitly — a delta is a comparison, so bad data on
+  either side makes it unsafe to describe;
+- non-finite numbers or an unrecognised action are withheld the same way;
+- "no data" is always reported as no data, never as no activity.
 
-### Generate a batch
-
-Use an existing database populated by the monthly pipeline. For a safe local
-trial, copy the database first:
+Neither consumer writes, calls a network service, or caches anything.
 
 ```bash
-cp tracker.db /tmp/findit-narration.db
-
-# Read-only eligibility preview; no credentials, writes, or model calls.
-python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
-  --month 2026-08 --dry-run
-
-# Offline rule-based cache generation (the default).
-python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
-  --month 2026-08 --provider rules
-
-# Configure ZAI_API_KEY in your environment before this explicit network run.
-python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
-  --month 2026-08 --provider zai --model glm-5.3
-
-# Read the resulting summaries without network calls or message delivery.
-python3 -m findit.cli.digest --db /tmp/findit-narration.db --month 2026-08
+python3 -m findit.cli.digest --db tracker.db --month 2026-08 --schemes 1 2
 ```
 
-`--schemes 1 2` restricts the batch; `--force` regenerates eligible summaries.
-Start with one scheme when checking a new API key. Existing matching source and
-model versions are skipped. The provider uses Z.ai's
-[official Chat Completions API](https://docs.z.ai/api-reference/llm/chat-completion),
-a 60-second request timeout, at most two retries for transient failures, and a
-bounded response budget. Credentials and raw provider errors are not logged.
+### Why the GLM narration layer was removed
 
-The batch writes only the summary table. It does not rerun validation or change
-holdings, deltas, flow calculations, or consensus. Current data must have an
-`ok` or `validated` status and usable equity deltas. Quarantined current or
-referenced previous months, non-finite inputs, and missing data cannot produce
-an AI summary. Existing unvalidated data continues to use the ordinary rule
-fallback. Run the normal ingestion/validation process to update its status.
+An earlier phase put a constrained GLM editor over these summaries: Python
+computed every number and wrote every sentence, and the model returned only
+`{"fact_id", "variant_index"}` pairs, which a strict renderer validated.
 
-Cache freshness includes raw input rows, security/fund metadata, validation
-reports, trusted wording, and a narration policy version. A data change while
-an API request is running prevents that response from being saved. API errors
-and rejected model plans fall back to rules; a later AI batch can retry them.
+The containment was sound and the idea was defensible, but the model's entire
+authority came down to reordering pre-written sentences and choosing between
+wordings like "Added to" and "Increased holdings in". That is not worth ~1,000
+lines, a provider adapter, a cache with hash-based invalidation, and a live API
+dependency that was never actually exercised — `ZAI_API_KEY` was never
+configured, so the real provider path only ever ran against mocks.
 
-The real provider adapter is covered by mocked HTTP tests. A live GLM request
-was not run during implementation because `ZAI_API_KEY` was not configured.
+It was removed rather than left dormant. The output is unchanged, because the
+model never produced any of it. The eligibility logic it carried was the
+genuinely valuable part and was kept, in `findit/summary.py`.
+`docs/phase-2-plan.md` remains as the record of the design, and the code is in
+git history if the decision is ever revisited with a job worth the constraint
+budget — cross-fund synthesis, say, with the numbers still Python-computed.

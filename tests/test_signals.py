@@ -6,7 +6,6 @@ import pandas as pd
 
 import consensus_signals
 import fallback_summary
-from findit.narrate.template import render_summary
 from run_pipeline import _overlap_summary, build_overlap_view
 
 
@@ -455,27 +454,6 @@ def test_new_detail_stays_flow_plus_value():
     assert "price effect" not in text
     assert "flow" in text and "value change" in text
     conn.close()
-
-
-# ---- narrate template --------------------------------------------------------
-
-def test_template_deterministic_and_validated():
-    payload = {
-        "scheme_name": "BLUECHIP", "amc_name": "ICICI Prudential AMC",
-        "report_month": "2026-08",
-        "new_count": 1, "new_largest_name": "BSE Ltd.",
-        "new_largest_value_cr": 531.4, "new_largest_flow_cr": 531.4,
-        "new_largest_nav_pct": 0.66,
-        "added_count": 0, "trimmed_count": 0,
-        "exited_names": ["A", "B", "C", "D", "E", "F", "G"],
-    }
-    first = render_summary(payload)
-    second = render_summary(dict(payload))
-    assert first == second
-    assert "BSE Ltd." in first
-    assert "0.66%" in first
-    assert "and 2 more" in first
-    assert "+₹-" not in first
 
 
 # ---- Phase 1 pipeline overlap (build_overlap_view) ----------------------------
