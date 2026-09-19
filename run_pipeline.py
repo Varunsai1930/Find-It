@@ -22,6 +22,8 @@ import argparse
 import hashlib
 import json
 import math
+import sqlite3
+import sys
 from statistics import median
 import uuid
 from datetime import datetime, timezone
@@ -151,13 +153,15 @@ def build_overlap_view(conn, consensus: pd.DataFrame, curr: str) -> dict:
         joined = consensus_signals.join_shareholding_increase(
             conn, consensus, as_of_month=curr,
         )
-    except Exception:
-        return {"joined": consensus, "common": consensus.iloc[0:0], "status": "unavailable"}
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        return {"joined": consensus, "common": consensus.iloc[0:0],
+                "status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
     try:
         common = joined[joined["is_common_with_fii_increase"]]
-    except (KeyError, TypeError):
-        return {"joined": joined, "common": joined.iloc[0:0], "status": "unavailable"}
-    return {"joined": joined, "common": common, "status": "ok"}
+    except (KeyError, TypeError) as exc:
+        return {"joined": joined, "common": joined.iloc[0:0],
+                "status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+    return {"joined": joined, "common": common, "status": "ok", "error": None}
 
 
 def _format_overlap_row(row) -> str:
@@ -177,10 +181,13 @@ def _format_overlap_row(row) -> str:
     )
 
 
-def _overlap_summary(joined, common, status: str) -> dict:
+def _overlap_summary(joined, common, status: str, error: str | None = None) -> dict:
     """Auditable counts for the ingest_runs report (JSON-safe)."""
     if status != "ok" or joined is None or getattr(joined, "empty", True):
-        return {"status": status, "common_count": 0}
+        summary = {"status": status, "common_count": 0}
+        if error:
+            summary["error"] = error
+        return summary
     try:
         stale_count = int(joined["shareholding_stale"].fillna(True).sum())
     except (KeyError, TypeError, ValueError):
@@ -404,29 +411,39 @@ def main():
     joined, common, overlap_status = (
         overlap["joined"], overlap["common"], overlap["status"],
     )
+    overlap_error = overlap.get("error")
     if overlap_status == "no_consensus":
         print("(no MF signals, so no overlap to report)")
     elif overlap_status == "unavailable":
         print("(shareholding data unavailable — showing MF-only consensus above)")
+        if overlap_error:
+            print(f"  reason: {overlap_error}")
     elif common.empty:
         print("(no MF+FII/DII common increases this month)")
     else:
         print("(MF net buying + FII-or-DII quarterly increase; stale quarters flagged)")
         for _, row in common.iterrows():
             print(_format_overlap_row(row))
+    # The run report is the audit trail for this month. If it cannot be
+    # written, say so loudly rather than leaving a silently incomplete record.
     try:
         current_report = json.loads(conn.execute(
             "SELECT validation_report_json FROM ingest_runs WHERE run_id = ?",
             (run_id,),
         ).fetchone()[0])
-        current_report["mf_fii_overlap"] = _overlap_summary(joined, common, overlap_status)
+        current_report["mf_fii_overlap"] = _overlap_summary(
+            joined, common, overlap_status, overlap_error)
         conn.execute(
             "UPDATE ingest_runs SET validation_report_json = ? WHERE run_id = ?",
             (json.dumps(current_report), run_id),
         )
         conn.commit()
-    except Exception:
-        pass
+    except (sqlite3.DatabaseError, TypeError, ValueError) as exc:
+        print(
+            f"  [warn] could not record the MF+FII overlap in ingest_runs "
+            f"{run_id}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
     try:
         passive = conn.execute(
             "SELECT DISTINCT s.amc_name, s.scheme_name FROM schemes s "
@@ -435,8 +452,12 @@ def main():
             "ORDER BY 1, 2",
             (args.curr,),
         ).fetchall()
-    except Exception:
+    except sqlite3.DatabaseError as exc:
+        # The consensus filter already excluded these; not being able to
+        # list them makes the exclusion unauditable, so it must be visible.
         passive = []
+        print(f"  [warn] could not list excluded passive schemes: {exc}",
+              file=sys.stderr)
     if passive:
         print(f"\nExcluded {len(passive)} passive/debt scheme(s) from consensus "
               f"(pattern heuristic, still shown in own summaries):")

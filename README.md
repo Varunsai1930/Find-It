@@ -95,6 +95,16 @@ Rebuild copies the DB first and computes deltas via `delta_calculator` on the
 copy only; digest prints a preview from cached rule summaries (no sending,
 no credentials). Both are offline and never write `./tracker.db` or `real_data/`.
 
+### Validation gate failure policy
+
+A check inside `validate_holdings_month` that raises is reported as a
+`<check>_crashed` error and fails the gate. A validator that could not run has
+not validated anything, so the scheme-month is quarantined for a human rather
+than published on the strength of checks that silently did not happen.
+Likewise, `_quarantined_scheme_ids` returns `[]` only for a genuinely absent
+table; any other database error propagates, because silently returning `[]`
+would publish quarantined schemes as though they had passed.
+
 ### Scheme identity (`findit.cli.alias`)
 
 A scheme's stored name is the AMC's Excel *sheet* name (`SCRF`, `SETFNIF50`,
@@ -119,6 +129,41 @@ row for the same (isin, month) — that is a data conflict, not a rename, and
 dropping one side silently is exactly the invisible wrong number this project
 refuses to produce. Two schemes that already share a normalized key make
 ingestion raise `AmbiguousSchemeError` naming both IDs rather than picking one.
+
+### Month-end prices and signal evaluation
+
+`findit.cli.prices` is the only command that downloads prices. It reads NSE's
+UDiFF bhavcopy, which carries an ISIN column, so prices join to holdings with
+no symbol-mapping step to get wrong. It walks back from the calendar month end
+to the real last trading day, never into a later month, caches each day's zip
+in `.price_cache/`, and writes only `security_prices_monthly`. That table is
+deliberately separate from `instrument_prices_monthly`, which holds prices
+*implied* by fund holdings and therefore cannot be used to check the holdings
+they came from.
+
+```bash
+python3 -m findit.cli.prices --db tracker.db --month 2026-07 --month 2026-08
+python3 -m findit.cli.backtest --db tracker.db \
+  --signal-month 2026-08 --forward-month 2026-09
+```
+
+`findit.cli.backtest` scores each signal group's forward return against the
+*tracked universe* — every equity any tracked scheme held that month — which
+holds the selection process fixed and varies only the signal. It is read-only.
+
+Its output always carries the sample-size caveat, and you should take it
+seriously: one signal month is one event, not a sample. The permutation `p`
+compares against random subsets of the same universe and ignores that stocks
+move together, so it is optimistic. It is a cross-sectional comparison, not a
+strategy return — no costs, no liquidity limits, no position sizing.
+
+The first measurement (2026-08 -> 2026-09-18, 766 priced equities) is worth
+knowing before building anything else on the signal: MF-only net buying beat
+the universe by +1.26% (n=98, p=0.035), while adding the FII/DII agreement
+filter — the project's headline idea — did *worse*, at +0.28% (n=191,
+p=0.275). On one month that settles nothing, but it is the opposite of the
+assumed direction, so the overlay needs evidence before it earns its place in
+the ranking.
 
 ### Re-validation (`findit.cli.revalidate`)
 

@@ -17,10 +17,10 @@ import pandas as pd
 
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Column names of a table (empty set when unreadable)."""
+    """Column names of a table (empty set when the table does not exist)."""
     try:
         return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    except Exception:
+    except sqlite3.DatabaseError:
         return set()
 
 
@@ -30,15 +30,20 @@ def _delta_columns(conn: sqlite3.Connection) -> set[str]:
 
 
 def _quarantined_scheme_ids(conn: sqlite3.Connection, report_month: str) -> list[int]:
-    """Scheme IDs quarantined for report_month (empty when table missing)."""
-    try:
-        rows = conn.execute(
-            "SELECT scheme_id FROM scheme_month_status "
-            "WHERE report_month = ? AND status = 'quarantined'",
-            (report_month,),
-        ).fetchall()
-    except Exception:
+    """Scheme IDs quarantined for report_month (empty when table missing).
+
+    Only a genuinely absent table yields an empty list. Any other database
+    error propagates: silently returning [] here would publish quarantined
+    schemes as though they had passed, which is the one outcome this filter
+    exists to prevent.
+    """
+    if not _table_columns(conn, "scheme_month_status"):
         return []
+    rows = conn.execute(
+        "SELECT scheme_id FROM scheme_month_status "
+        "WHERE report_month = ? AND status = 'quarantined'",
+        (report_month,),
+    ).fetchall()
     return [int(r[0]) for r in rows if r[0] is not None]
 
 
@@ -58,7 +63,7 @@ def _prev_universe_isins(conn: sqlite3.Connection, prev_months) -> set[str] | No
             f"WHERE report_month IN ({placeholders})",
             months,
         ).fetchall()
-    except Exception:
+    except sqlite3.DatabaseError:
         return None
     if not rows:
         return None
@@ -290,10 +295,7 @@ def join_shareholding_increase(
                 out[column] = pd.Series(dtype="object")
         return out
 
-    try:
-        sh_cols = [r[1] for r in conn.execute("PRAGMA table_info(shareholding_quarterly)").fetchall()]
-    except Exception:
-        sh_cols = []
+    sh_cols = sorted(_table_columns(conn, "shareholding_quarterly"))
 
     where_clauses: list[str] = []
     params: list = []

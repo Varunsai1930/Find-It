@@ -449,72 +449,100 @@ def validate_holdings_month(
     - NAV sum warns outside 95-105, fails only above 110.
     - Per-ISIN implied-price CV warn-only (when >=2 holders in df_current).
     - Per-ISIN qty ratio vs df_prev: warn-only, with peer agreement context.
+
+    A check that raises is reported as a `<check>_crashed` error and fails the
+    gate. A validator that could not run has not validated anything, so the
+    scheme-month is quarantined for a human rather than published on the
+    strength of checks that silently did not happen.
     """
     issues: list = []
     passed = True
 
-    # NAV
+    def _run(name: str, check) -> Any:
+        """Run one check; turn a crash into a reported error, never silence."""
+        nonlocal passed
+        try:
+            return check()
+        except Exception as exc:  # noqa: BLE001 - recorded, not swallowed
+            passed = False
+            issues.append(
+                _issue(
+                    f"{name}_crashed",
+                    "error",
+                    f"{name} check raised {type(exc).__name__}: {exc}",
+                    check=name,
+                )
+            )
+            return None
+
     try:
-        nav_res = validate_nav_sum(df_current)
-        issues.extend(nav_res["issues"])
-        passed = nav_res["passed"]
-    except Exception:
-        pass
+        import pandas as pd
+    except ImportError as exc:
+        return {
+            "passed": False,
+            "issues": [
+                _issue(
+                    "validation_unavailable",
+                    "error",
+                    f"pandas is required to validate a holdings month: {exc}",
+                )
+            ],
+        }
+
+    # NAV
+    def _nav():
+        result = validate_nav_sum(df_current)
+        issues.extend(result["issues"])
+        return bool(result["passed"])
+
+    nav_passed = _run("nav_sum", _nav)
+    if nav_passed is False:
+        passed = False
 
     # Price CV per ISIN (needs market_value_lakhs + quantity columns)
-    try:
-        import pandas as pd
+    def _price_cv():
+        if not isinstance(df_current, pd.DataFrame):
+            return
+        if not {"isin", "quantity", "market_value_lakhs"} <= set(df_current.columns):
+            return
+        tmp = df_current.copy()
+        tmp["quantity"] = pd.to_numeric(tmp["quantity"], errors="coerce")
+        tmp["market_value_lakhs"] = pd.to_numeric(
+            tmp["market_value_lakhs"], errors="coerce"
+        )
+        tmp = tmp[(tmp["quantity"] > 0) & (tmp["market_value_lakhs"].notna())]
+        if tmp.empty:
+            return
+        tmp["implied_px"] = tmp["market_value_lakhs"] / tmp["quantity"]
+        for isin, grp in tmp.groupby("isin"):
+            if len(grp) >= 2:
+                result = validate_implied_price_cv(
+                    prices=grp["implied_px"].tolist(), label=str(isin)
+                )
+                issues.extend(result["issues"])
 
-        if isinstance(df_current, pd.DataFrame) and {
-            "isin",
-            "quantity",
-            "market_value_lakhs",
-        } <= set(df_current.columns):
-            tmp = df_current.copy()
-            tmp["quantity"] = pd.to_numeric(tmp["quantity"], errors="coerce")
-            tmp["market_value_lakhs"] = pd.to_numeric(
-                tmp["market_value_lakhs"], errors="coerce"
-            )
-            tmp = tmp[(tmp["quantity"] > 0) & (tmp["market_value_lakhs"].notna())]
-            if not tmp.empty:
-                tmp["implied_px"] = tmp["market_value_lakhs"] / tmp["quantity"]
-                for isin, grp in tmp.groupby("isin"):
-                    if len(grp) >= 2:
-                        r = validate_implied_price_cv(
-                            prices=grp["implied_px"].tolist(), label=str(isin)
-                        )
-                        issues.extend(r["issues"])
-    except ImportError:
-        pass
-    except Exception:
-        pass
+    _run("implied_price_cv", _price_cv)
 
     # Qty ratios vs prev
-    try:
-        import pandas as pd
-
+    def _qty_ratios():
         ca = set(corporate_action_isins or [])
-        if isinstance(df_current, pd.DataFrame) and df_prev is not None and isinstance(
-            df_prev, pd.DataFrame
-        ):
-            if {"isin", "quantity"} <= set(df_current.columns) and {
-                "isin",
-                "quantity",
-            } <= set(df_prev.columns):
-                cur = df_current.groupby("isin")["quantity"].sum()
-                prev = df_prev.groupby("isin")["quantity"].sum()
-                for isin in set(cur.index) & set(prev.index):
-                    r = validate_qty_ratio(
-                        float(prev.loc[isin]),
-                        float(cur.loc[isin]),
-                        has_corporate_action=(str(isin) in ca),
-                        isin=str(isin),
-                        peer_median_ratio=(peer_median_ratios or {}).get(str(isin)),
-                    )
-                    issues.extend(r["issues"])
-    except ImportError:
-        pass
-    except Exception:
-        pass
+        if not isinstance(df_current, pd.DataFrame) or not isinstance(df_prev, pd.DataFrame):
+            return
+        if not ({"isin", "quantity"} <= set(df_current.columns)
+                and {"isin", "quantity"} <= set(df_prev.columns)):
+            return
+        cur = df_current.groupby("isin")["quantity"].sum()
+        prev = df_prev.groupby("isin")["quantity"].sum()
+        for isin in sorted(set(cur.index) & set(prev.index)):
+            result = validate_qty_ratio(
+                float(prev.loc[isin]),
+                float(cur.loc[isin]),
+                has_corporate_action=(str(isin) in ca),
+                isin=str(isin),
+                peer_median_ratio=(peer_median_ratios or {}).get(str(isin)),
+            )
+            issues.extend(result["issues"])
+
+    _run("qty_ratio", _qty_ratios)
 
     return {"passed": passed, "issues": issues}

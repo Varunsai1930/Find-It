@@ -16,3 +16,4 @@ dist/
 *.parsed.csv
 *_pipeline_output.txt
 # NOTE: do NOT ignore *.db, real_data/, tracker.db (already tracked).
+.price_cache/

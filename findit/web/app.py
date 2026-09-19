@@ -380,12 +380,17 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     # -- consensus --------------------------------------------------------
     @app.get("/api/consensus/{month}")
-    def api_consensus(month: str, equity_only: int = 1) -> Any:
+    def api_consensus(month: str, equity_only: int = 1, active_only: int = 1) -> Any:
         conn = _ro_connect(resolved_db)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
             equity_filter = equity_only == 1
+            # Match compute_consensus: index/ETF/debt schemes track a
+            # benchmark rather than express a view, so counting them as
+            # conviction made the dashboard and the CLI disagree about the
+            # same month. active_only=0 opts back in to the wider view.
+            active_filter = active_only == 1
             quarantined_schemes = sorted(
                 {sid for (sid, m) in _quarantined_pairs(conn) if m == month}
             )
@@ -416,6 +421,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 if equity_filter:
                     sql += " AND s.instrument_type = ?"
                     params.append("equity")
+                if active_filter and "is_active_equity" in _table_columns(conn, "schemes"):
+                    sql += " AND sch.is_active_equity = 1"
                 if quarantined_schemes:
                     placeholders = ",".join("?" for _ in quarantined_schemes)
                     sql += f" AND d.scheme_id NOT IN ({placeholders})"
@@ -437,6 +444,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     {
                         "month": month,
                         "equity_only": bool(equity_filter),
+                "active_equity_only": bool(active_filter),
+                        "active_equity_only": bool(active_filter),
                         "count": 0,
                         "results": [],
                         "message": (
@@ -538,6 +547,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     {
                         "month": month,
                         "equity_only": bool(equity_filter),
+                "active_equity_only": bool(active_filter),
+                        "active_equity_only": bool(active_filter),
                         "count": 0,
                         "results": [],
                         "message": (
@@ -586,6 +597,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             payload: dict[str, Any] = {
                 "month": month,
                 "equity_only": bool(equity_filter),
+                "active_equity_only": bool(active_filter),
                 "count": len(ranked),
                 "results": ranked,
             }

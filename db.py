@@ -161,6 +161,22 @@ CREATE TABLE IF NOT EXISTS scheme_month_status (
     source_data_hash TEXT,
     PRIMARY KEY (scheme_id, report_month)
 );
+
+-- Month-end exchange closes, kept apart from instrument_prices_monthly:
+-- that table holds prices *implied* by fund holdings, which cannot be used
+-- to check the holdings they came from. These are independent observations.
+CREATE TABLE IF NOT EXISTS security_prices_monthly (
+    isin TEXT NOT NULL,
+    report_month TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    close_price REAL,
+    series TEXT,
+    symbol TEXT,
+    source TEXT,
+    source_url TEXT,
+    fetched_at TEXT,
+    PRIMARY KEY (isin, report_month)
+);
 """
 
 
