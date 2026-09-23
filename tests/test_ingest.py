@@ -453,3 +453,66 @@ def test_fetch_single_filing_keeps_one_and_persists_attachment(tmp_path):
     expected_sha = hashlib.sha256(ixbrl.encode("utf-8")).hexdigest()
     assert (cache_dir / "attachments" / f"{expected_sha}.ixbrl").exists()
     conn.close()
+
+
+class _DownSession:
+    """BSE unreachable: every request raises, as during throttling or an outage."""
+
+    def __init__(self, exc):
+        self.exc = exc
+        self.calls = 0
+
+    def get(self, url, **kwargs):
+        self.calls += 1
+        raise self.exc
+
+
+def _many_isins_db(tmp_path, n):
+    isins = [f"INE{i:03d}A01011" for i in range(n)]
+    conn = _seed_min_db(tmp_path / "t.db", isins[0])
+    for isin in isins[1:]:
+        conn.execute("INSERT INTO stocks (isin, name) VALUES (?, ?)", (isin, isin))
+        conn.execute("INSERT INTO mf_holdings_monthly (scheme_id, isin, report_month, "
+                     "quantity, market_value_lakhs, pct_nav) VALUES (1, ?, '2026-06', 1, 1, 1)",
+                     (isin,))
+    conn.commit()
+    cache_dir = tmp_path / ".shareholding_cache"
+    cache_dir.mkdir()
+    (cache_dir / "nse_equity_master.csv").write_text(
+        "SYMBOL,ISIN NUMBER\n" + "".join(f"S{i},{isin}\n" for i, isin in enumerate(isins)),
+        encoding="utf-8")
+    return conn, cache_dir
+
+
+def test_an_outage_stops_the_run_instead_of_failing_every_stock(tmp_path):
+    import requests
+
+    conn, cache_dir = _many_isins_db(tmp_path, 20)
+    stats = fetch_shareholding.fetch_shareholding(
+        conn, _DownSession(requests.ConnectionError("connection reset")), cache_dir)
+    assert stats.attempted == fetch_shareholding.MAX_CONSECUTIVE_OUTAGES
+    assert "re-run the same command to resume" in stats.stopped_early
+    conn.close()
+
+
+@pytest.mark.parametrize("status, outage", [(404, False), (429, True), (503, True), (403, True)])
+def test_only_server_or_connection_failures_count_as_outages(status, outage):
+    import requests
+
+    response = requests.Response()
+    response.status_code = status
+    assert fetch_shareholding._is_outage(requests.HTTPError(response=response)) is outage
+    assert fetch_shareholding._is_outage(requests.Timeout()) is True
+    assert fetch_shareholding._is_outage(fetch_shareholding.ShareholdingFetchError("x")) is False
+
+
+def test_failure_summary_groups_by_reason(capsys):
+    stats = fetch_shareholding.FetchStats(failed_isins=[
+        "INE001A01011: connection reset",
+        "INE002A01011: connection reset",
+        "INE003A01011 2025-06-30: 404 Client Error: Not Found for url: https://x/y.html",
+    ])
+    fetch_shareholding._print_stats(stats)
+    out = capsys.readouterr().out
+    assert "   2  connection reset  (e.g. INE001A01011)" in out
+    assert "   1  404 Client Error: Not Found  (e.g. INE003A01011 2025-06-30)" in out

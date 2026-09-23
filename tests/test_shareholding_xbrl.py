@@ -162,3 +162,5 @@ def test_no_promoter_group_reads_as_zero_only_when_public_holds_everything():
     widely_held["PublicShareholding"] = "60.00"  # 40% belongs to someone unnamed
     with pytest.raises(fs.ShareholdingFetchError, match="promoter/public"):
         fs.parse_bse_shareholding_xbrl(_xbrl(widely_held))
+    widely_held["EmployeeBenefitsTrusts"] = "40.00"  # ...unless trusts hold it (IEX)
+    assert fs.parse_bse_shareholding_xbrl(_xbrl(widely_held))["promoter_pct"] == 0.0

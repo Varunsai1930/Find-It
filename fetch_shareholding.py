@@ -76,6 +76,22 @@ DII_LABELS = {
 NEGATIVE_CACHE_TTL_SECONDS = 7 * 86400
 
 
+# Consecutive stocks failing on the network (not on one missing file) before
+# the run stops: past this BSE is throttling us or the connection is down, and
+# carrying on only marks hundreds of stocks failed in seconds. Stored filings
+# are kept, so re-running the same command resumes.
+MAX_CONSECUTIVE_OUTAGES = 5
+_OUTAGE_STATUS = {403, 429, 500, 502, 503, 504}
+
+
+def _is_outage(exc: Exception) -> bool:
+    """A failure of the connection or the server, not of one document."""
+    if isinstance(exc, (requests.ConnectionError, requests.Timeout)):
+        return True
+    response = getattr(exc, "response", None)
+    return isinstance(exc, requests.HTTPError) and getattr(
+        response, "status_code", None) in _OUTAGE_STATUS
+
 
 class ShareholdingFetchError(RuntimeError):
     """A source response could not be safely interpreted as shareholding data."""
@@ -92,6 +108,7 @@ class FetchStats:
     unresolved_isins: list[str] = field(default_factory=list)
     no_filings_isins: list[str] = field(default_factory=list)
     failed_isins: list[str] = field(default_factory=list)
+    stopped_early: str | None = None
 
 
 class PoliteSession:
@@ -474,6 +491,10 @@ _XBRL_PCT_ELEMENT = "ShareholdingAsAPercentageOfTotalNumberOfShares"
 _XBRL_PROMOTER = "ShareholdingOfPromoterAndPromoterGroup"
 _XBRL_PUBLIC = "PublicShareholding"
 _XBRL_TOTAL = "ShareholdingPattern"
+# Non-promoter non-public holders (SEBI category C): an aggregate line in
+# 2016 filings, only its parts later.
+_XBRL_NPNP = "SharesHeldByNonPromoterNonPublicShareholders"
+_XBRL_NPNP_PARTS = ("EmployeeBenefitsTrusts", "CustodianOrDRHolder")
 _XBRL_MF = "MutualFundsOrUti"
 # The taxonomy spells it "Catergory"; accept the correct spelling too.
 _XBRL_FPI_CATEGORY_RE = re.compile(
@@ -514,13 +535,15 @@ def parse_bse_shareholding_xbrl(document: str | bytes) -> dict[str, float]:
                 f"Conflicting percentages for {name} in BSE XBRL: {values[name]} vs {value}")
         values[name] = value
 
-    # A company with no promoter group (ITC, most banks) files no promoter
-    # line at all. Read that as 0 only when the filing itself says the public
-    # holds everything (the total line, or 100% where 2016 filings omit it);
-    # anything else stays a loud failure.
-    if (_XBRL_PROMOTER not in values and _XBRL_PUBLIC in values
-            and abs(values[_XBRL_PUBLIC] - values.get(_XBRL_TOTAL, 100.0)) <= 0.01):
-        values[_XBRL_PROMOTER] = 0.0
+    # A company with no promoter group (ITC, IEX, most banks) files no
+    # promoter line at all. Read that as 0 only when the filing itself
+    # accounts for every share without one: public + non-promoter non-public
+    # = the total (100% where 2016 filings omit the total line). Anything
+    # else stays a loud failure.
+    if _XBRL_PROMOTER not in values and _XBRL_PUBLIC in values:
+        npnp = values.get(_XBRL_NPNP, sum(values.get(k, 0.0) for k in _XBRL_NPNP_PARTS))
+        if abs(values[_XBRL_PUBLIC] + npnp - values.get(_XBRL_TOTAL, 100.0)) <= 0.01:
+            values[_XBRL_PROMOTER] = 0.0
     if _XBRL_PROMOTER not in values or _XBRL_PUBLIC not in values:
         raise ShareholdingFetchError(
             "BSE XBRL did not contain its aggregate promoter/public percentage contexts"
@@ -611,9 +634,11 @@ def fetch_shareholding(
 
     scrip_cache_path = cache_dir / "bse_scrip_codes.json"
     scrip_cache = _read_json_cache(scrip_cache_path)
+    outages_in_a_row = 0
     for index, stock in equities.reset_index(drop=True).iterrows():
         isin = stock["isin"]
         stats.attempted += 1
+        outage_this_stock = False
         try:
             bse_scrip_code = resolve_bse_scrip_code(session, isin, scrip_cache)
             _write_json_cache(scrip_cache_path, scrip_cache)
@@ -668,6 +693,9 @@ def fetch_shareholding(
                     parsed = parse_shareholding_document(bytes(raw_bytes))
                 except (requests.RequestException, ShareholdingFetchError) as exc:
                     stats.failed_isins.append(f"{isin} {filing['quarter_end']}: {exc}")
+                    if _is_outage(exc):
+                        outage_this_stock = True
+                        break
                     continue
                 record = {
                     "isin": isin,
@@ -693,6 +721,15 @@ def fetch_shareholding(
                 }
         except (requests.RequestException, ShareholdingFetchError) as exc:
             stats.failed_isins.append(f"{isin}: {exc}")
+            outage_this_stock = _is_outage(exc)
+
+        outages_in_a_row = outages_in_a_row + 1 if outage_this_stock else 0
+        if outages_in_a_row >= MAX_CONSECUTIVE_OUTAGES:
+            stats.stopped_early = (
+                f"stopped after {outages_in_a_row} stocks in a row failed on the network "
+                f"(last: {stats.failed_isins[-1]}); {index + 1}/{len(equities)} tried. "
+                "Stored filings are kept -- re-run the same command to resume.")
+            break
 
         if (index + 1) % 25 == 0:
             print(f"Processed {index + 1}/{len(equities)} listed-equity ISINs")
@@ -711,9 +748,18 @@ def _print_stats(stats: FetchStats) -> None:
     print(f"Fewer than two usable BSE filings: {len(stats.no_filings_isins)}")
     print(f"Fetch/parse failures: {len(stats.failed_isins)}")
     if stats.failed_isins:
-        print("First failures:")
-        for failure in stats.failed_isins[:10]:
-            print(f"  - {failure}")
+        # Group by reason (the message without the ISIN/quarter prefix or URL),
+        # so a network outage cannot hide behind ten unrelated parse errors.
+        reasons: dict[str, list[str]] = {}
+        for failure in stats.failed_isins:
+            where, _, message = failure.partition(": ")
+            reason = message.split(" for url:")[0][:90]
+            reasons.setdefault(reason, []).append(where)
+        print("Failures by reason:")
+        for reason, where in sorted(reasons.items(), key=lambda kv: -len(kv[1])):
+            print(f"  {len(where):>4}  {reason}  (e.g. {where[0]})")
+    if stats.stopped_early:
+        print(f"\nINCOMPLETE: {stats.stopped_early}")
 
 
 def main() -> None:
@@ -764,6 +810,8 @@ def main() -> None:
         history=args.history or None, universe=args.universe,
     )
     _print_stats(stats)
+    if stats.stopped_early:
+        raise SystemExit(1)
 
     if args.report_month:
         joined = consensus_signals.join_shareholding_increase(
