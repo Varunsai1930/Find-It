@@ -21,6 +21,16 @@ by `fallback_summary.py` from numbers Python computed.
 | `run_pipeline.py` | The one command you run each month once this is wired to real data: load → delta → consensus → summaries. |
 | `make_test_fixtures.py` | Generates the synthetic test files below. Not needed once you're using real AMFI data. |
 
+## Data is not in the repo
+
+The repository holds code only. `tracker.db`, `real_data/` (downloaded AMC
+disclosures), the fetch caches and the generated `test_*.xlsx` fixtures are
+git-ignored and live only on your machine. A fresh clone rebuilds them:
+`make_test_fixtures.py` for the synthetic files below, the AMC's monthly
+disclosure workbooks for real data, and `fetch_shareholding.py` /
+`findit.cli.prices` for filings and prices. The test suite needs none of
+them -- every test builds its own temporary database.
+
 ## Try it right now (no real data needed yet)
 
 ```bash
