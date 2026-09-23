@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-# Share-count ratios produced by common splits, bonuses and consolidations.
-SPLIT_RATIOS = (1.25, 1.5, 2.0, 3.0, 4.0, 5.0, 10.0, 0.5, 0.2, 0.1)
+from findit.core.corporate_actions import SPLIT_RATIOS
+
 # Holders' quantity ratios must cluster this tightly on the split ratio...
 QTY_TOLERANCE = 0.02
 # ...and the per-share price must move by roughly its inverse.
@@ -44,8 +44,7 @@ def _check(frame: pd.DataFrame, name: str) -> pd.DataFrame:
     missing = set(_HOLDING_COLUMNS) - set(frame.columns)
     if missing:
         raise ValueError(f"{name} holdings are missing columns: {sorted(missing)}")
-    out = frame.loc[:, list(_HOLDING_COLUMNS) + (["amc_name"] if "amc_name" in frame else [])]
-    out = out.copy()
+    out = frame.loc[:, list(_HOLDING_COLUMNS)].copy()
     out["quantity"] = pd.to_numeric(out["quantity"], errors="coerce")
     out["market_value_lakhs"] = pd.to_numeric(out["market_value_lakhs"], errors="coerce")
     return out[(out["quantity"] > 0) & (out["market_value_lakhs"] > 0)]
@@ -86,7 +85,7 @@ def active_weight_changes(prev: pd.DataFrame, curr: pd.DataFrame,
     """Per (scheme, stock) active weight change between two months.
 
     ``prev``/``curr``: one scheme-month of equity holdings per scheme
-    (scheme_id, isin, quantity, market_value_lakhs[, amc_name]). Only schemes
+    (scheme_id, isin, quantity, market_value_lakhs). Only schemes
     present in both are scored -- a scheme with no previous month has no
     drift to compare against.
 
@@ -97,7 +96,7 @@ def active_weight_changes(prev: pd.DataFrame, curr: pd.DataFrame,
     is marked ``price_basis='assumed_flat'`` so it can be audited.
     """
     prev, curr = _check(prev, "previous"), _check(curr, "current")
-    columns = ["scheme_id", "isin", "w_prev_pp", "w_drift_pp", "w_curr_pp",
+    columns = ["scheme_id", "isin", "w_drift_pp", "w_curr_pp",
                "active_weight_change_pp", "discretionary_flow_lakhs", "price_basis"]
     shared = sorted(set(prev["scheme_id"]) & set(curr["scheme_id"]))
     if not shared:
@@ -134,20 +133,17 @@ def active_weight_changes(prev: pd.DataFrame, curr: pd.DataFrame,
                 b = "assumed_flat"
             drift[isin] = qty_prev * px
             basis[isin] = b
-        total_prev = float(p["market_value_lakhs"].sum())
         total_drift = sum(drift.values())
         total_curr = float(c["market_value_lakhs"].sum())
-        if total_prev <= 0 or total_drift <= 0 or total_curr <= 0:
+        if total_drift <= 0 or total_curr <= 0:
             continue
         for isin in isins:
-            w_prev = float(p.at[isin, "market_value_lakhs"]) / total_prev if isin in p.index else 0.0
             w_drift = drift[isin] / total_drift
             w_curr = float(c.at[isin, "market_value_lakhs"]) / total_curr if isin in c.index else 0.0
             change = w_curr - w_drift
             rows.append({
                 "scheme_id": scheme_id, "isin": isin,
-                "w_prev_pp": 100.0 * w_prev, "w_drift_pp": 100.0 * w_drift,
-                "w_curr_pp": 100.0 * w_curr,
+                "w_drift_pp": 100.0 * w_drift, "w_curr_pp": 100.0 * w_curr,
                 "active_weight_change_pp": 100.0 * change,
                 "discretionary_flow_lakhs": change * total_curr,
                 "price_basis": basis[isin],

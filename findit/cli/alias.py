@@ -20,9 +20,7 @@ import db
 _SCHEME_TABLES = (
     ("mf_holdings_monthly", ("isin", "report_month")),
     ("mf_holding_deltas", ("isin", "report_month")),
-    ("mf_holding_flows", ("isin", "report_month")),
     ("scheme_month_status", ("report_month",)),
-    ("fund_summaries", ("report_month",)),
 )
 
 

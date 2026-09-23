@@ -34,8 +34,8 @@ import pandas as pd
 import db
 import delta_calculator
 import consensus_signals
-import fallback_summary
 from findit.core.corporate_actions import detect_candidate
+from findit.summary import get_summary
 from findit.store.validation_gate import (
     validate_holdings_month,
     validate_implied_price_cv,
@@ -141,8 +141,8 @@ def _record_candidates(conn, issues, prev_df, curr_df, month: str) -> list[dict]
 def build_overlap_view(conn, consensus: pd.DataFrame, curr: str) -> dict:
     """Join MF consensus against quarterly FII/DII shareholding (Phase 1).
 
-    Uses ``curr`` as a no-lookahead cutoff so only quarters with
-    ``quarter_end <= <curr month-end>`` are ranked. Missing filings stay
+    Uses ``curr`` as a no-lookahead cutoff: only filings published by the
+    day ``curr``'s MF portfolios became public are ranked. Missing filings stay
     ``no_data`` (never zero); stale quarters are flagged by the join.
     Never raises on missing/empty shareholding data — returns the
     consensus unchanged with an ``unavailable`` status instead.
@@ -425,6 +425,14 @@ def main():
     deltas = delta_calculator.compute_deltas(conn, args.prev, args.curr)
     delta_calculator.persist_deltas(conn, deltas)
     print(f"\nComputed {len(deltas)} deltas for {args.prev} -> {args.curr}")
+    unmatched = delta_calculator.unmatched_schemes(conn, args.prev, args.curr)
+    for side, month in (("only_curr", args.curr), ("only_prev", args.prev)):
+        for sid in unmatched[side]:
+            amc, scheme = conn.execute(
+                "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?", (sid,)
+            ).fetchone()
+            print(f"  [no comparison] {amc} | {scheme}: holdings only in {month}; "
+                  "not counted as buying or selling")
 
     print(f"\n=== Cross-fund consensus, {args.curr} (active equity only) ===")
     print("Ranked by raw breadth (net_amc_count). net_active_amc_count counts only AMCs that\n"
@@ -507,7 +515,9 @@ def main():
     scheme_ids = conn.execute("SELECT DISTINCT scheme_id FROM mf_holding_deltas WHERE report_month = ?", (args.curr,)).fetchall()
     for (scheme_id,) in scheme_ids:
         print()
-        print(fallback_summary.build_summary(conn, scheme_id, args.curr))
+        # get_summary also withholds a delta whose *previous* month is
+        # quarantined -- the same check the dashboard and digest apply.
+        print(get_summary(conn, scheme_id, args.curr)["text"])
 
     print("\n=== Corporate-action candidates (unconfirmed; no flow adjustments) ===")
     if not report["corporate_action_candidates"]:

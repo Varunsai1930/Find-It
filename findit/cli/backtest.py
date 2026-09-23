@@ -44,12 +44,6 @@ ACTIVE_GROUPS = ("active_and_fii", "active_only", "active_neutral", "active_sell
 MAX_TRADING_GAP_DAYS = 10
 
 
-def _prices(conn: sqlite3.Connection, month: str) -> pd.DataFrame:
-    return pd.read_sql_query(
-        "SELECT isin, close_price, trade_date FROM security_prices_monthly "
-        "WHERE report_month = ?", conn, params=(month,))
-
-
 def classify(row) -> str:
     """One stock's signal group for the signal month."""
     net = row.get("net_amc_count", 0)
@@ -178,13 +172,8 @@ def holding_period(signal_month: str, today: date | None = None) -> dict:
             "exit_in_future": exit_ > today, "entry_in_future": entry > today}
 
 
-def run(db_path: str, signal_month: str, forward_month: str | None = None,
-        iterations: int = 5000) -> dict:
-    """Score one signal month, entering at publication and exiting at the next.
-
-    ``forward_month`` is accepted for backward compatibility and ignored:
-    the exit is the next month's entry date, not a month-end close.
-    """
+def run(db_path: str, signal_month: str, iterations: int = 5000) -> dict:
+    """Score one signal month, entering at publication and exiting at the next."""
     period = holding_period(signal_month)
     if period["entry_in_future"]:
         raise SystemExit(
@@ -359,8 +348,6 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--from", dest="first", metavar="YYYY-MM",
                     help="First signal month of a range (with --to)")
     ap.add_argument("--to", dest="last", metavar="YYYY-MM", help="Last signal month of a range")
-    ap.add_argument("--forward-month", metavar="YYYY-MM",
-                    help="Ignored; kept for old scripts. The exit is the next month's entry.")
     ap.add_argument("--iterations", type=int, default=2000,
                     help="Permutation iterations per month (0 disables)")
     return ap

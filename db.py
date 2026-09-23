@@ -10,6 +10,8 @@ import sqlite3
 from pathlib import Path
 import pandas as pd
 
+from findit.core.instruments import classify_isin  # noqa: F401  (re-exported)
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schemes (
     scheme_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,31 +67,12 @@ CREATE TABLE IF NOT EXISTS shareholding_quarterly (
 
 # Additive v2 tables (never modifies SCHEMA above; applied alongside it).
 V2_SCHEMA = """
-CREATE TABLE IF NOT EXISTS instruments (
-    isin TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    issuer_name TEXT,
-    instrument_type TEXT,
-    is_listed_equity INTEGER,
-    nse_symbol TEXT,
-    sector TEXT
-);
-
 CREATE TABLE IF NOT EXISTS scheme_aliases (
     alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scheme_id INTEGER NOT NULL REFERENCES schemes(scheme_id),
     alias TEXT NOT NULL,
     created_at TEXT,
     UNIQUE(scheme_id, alias)
-);
-
-CREATE TABLE IF NOT EXISTS instrument_prices_monthly (
-    isin TEXT NOT NULL,
-    report_month TEXT NOT NULL,
-    implied_px REAL,
-    n_schemes INTEGER,
-    px_cv REAL,
-    PRIMARY KEY (isin, report_month)
 );
 
 CREATE TABLE IF NOT EXISTS corporate_actions (
@@ -100,39 +83,6 @@ CREATE TABLE IF NOT EXISTS corporate_actions (
     detected_by TEXT,
     confirmed INTEGER DEFAULT 0,
     PRIMARY KEY (isin, effective_month)
-);
-
-CREATE TABLE IF NOT EXISTS mf_holding_flows (
-    scheme_id INTEGER NOT NULL,
-    isin TEXT NOT NULL,
-    report_month TEXT NOT NULL,
-    prev_month TEXT,
-    qty_prev REAL,
-    qty_curr REAL,
-    qty_delta_adjusted REAL,
-    flow_lakhs REAL,
-    price_effect_lakhs REAL,
-    value_change_lakhs REAL,
-    pct_nav_prev REAL,
-    pct_nav_curr REAL,
-    flow_pct_of_scheme_equity REAL,
-    action TEXT NOT NULL,
-    validation_status TEXT,
-    pricing_method TEXT,
-    PRIMARY KEY (scheme_id, isin, report_month),
-    FOREIGN KEY (scheme_id) REFERENCES schemes(scheme_id)
-);
-
-CREATE TABLE IF NOT EXISTS consensus_signals (
-    isin TEXT NOT NULL,
-    report_month TEXT NOT NULL,
-    eligible_schemes INTEGER,
-    schemes_buying INTEGER,
-    schemes_selling INTEGER,
-    net_flow_lakhs REAL,
-    conviction_score REAL,
-    buying_ratio REAL,
-    PRIMARY KEY (isin, report_month)
 );
 
 CREATE TABLE IF NOT EXISTS ingest_runs (
@@ -151,9 +101,9 @@ CREATE TABLE IF NOT EXISTS scheme_month_status (
     PRIMARY KEY (scheme_id, report_month)
 );
 
--- Month-end exchange closes, kept apart from instrument_prices_monthly:
--- that table holds prices *implied* by fund holdings, which cannot be used
--- to check the holdings they came from. These are independent observations.
+-- Month-end exchange closes: independent of the prices implied by fund
+-- holdings (market value / quantity), which cannot check the holdings they
+-- came from.
 CREATE TABLE IF NOT EXISTS security_prices_monthly (
     isin TEXT NOT NULL,
     report_month TEXT NOT NULL,
@@ -183,39 +133,6 @@ CREATE TABLE IF NOT EXISTS security_prices_daily (
 CREATE INDEX IF NOT EXISTS idx_security_prices_daily_date
     ON security_prices_daily(trade_date);
 """
-
-
-def classify_isin(isin: str) -> str:
-    """Classifies an Indian ISIN into instrument type based on prefix and series code (chars 8-9).
-
-    - Chars 1-2: Country ('IN')
-    - Char 3: Issuer type ('E' = corporate, '0' = central govt, '9' = state govt, 'F' = mutual fund)
-    - Chars 8-9: Security series ('01' = equity, '02' = preference, '07'/'08' = NCD, '14'/'16' = CP/CD)
-    """
-    if not isinstance(isin, str) or len(isin) < 12:
-        return "other"
-    isin = isin.upper().strip()
-    if not isin.startswith("IN"):
-        return "foreign"
-    char3 = isin[2]
-    series = isin[7:9]
-    if char3 == "0":
-        return "tbill_or_gsec"
-    if char3 == "9":
-        return "sgsec"
-    if char3 == "F":
-        return "mf_units"
-    if char3 == "E":
-        if series == "01":
-            return "equity"
-        if series == "02":
-            return "preference"
-        if series in ("07", "08", "09", "10", "11", "12"):
-            return "ncd"
-        if series in ("14", "16"):
-            return "cp_or_cd"
-        return "debt_other"
-    return "other"
 
 
 # Stopgap heuristic for consensus eligibility, pending a real AMFI

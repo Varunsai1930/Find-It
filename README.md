@@ -94,7 +94,7 @@ python3 -m findit.cli.digest --db /tmp/tracker.copy.db --month 2026-04 --schemes
 ```
 
 Rebuild copies the DB first and computes deltas via `delta_calculator` on the
-copy only; digest prints a preview from cached rule summaries (no sending,
+copy only; digest prints rule-based summaries with the same safety checks (no sending,
 no credentials). Both are offline and never write `./tracker.db` or `real_data/`.
 
 ### Validation gate failure policy
@@ -181,7 +181,13 @@ D (both NSE bhavcopy formats: UDiFF from July 2024, legacy before), and the
 backtests print the exact `--date` list they are missing. A holding period
 that has not ended is marked `*`, valued at the latest stored close, and kept
 out of the pooled line. `run_pipeline.py` prints the same track record under
-each month's ranking.
+each month's ranking, and the web dashboard ranks with the same
+`compute_consensus` and FII/DII join -- one implementation, so the two can
+never disagree, and an older month never shows filings published after it.
+
+Deltas compare only schemes present in both months. A fund launched this
+month, or one whose previous file was not loaded, is listed as "no
+comparison" rather than counted as buying (or selling) its whole portfolio.
 
 The first measurement changed under rule 1. With a month-end entry, August's
 MF-only buying beat the universe by +1.26%; entering after publication

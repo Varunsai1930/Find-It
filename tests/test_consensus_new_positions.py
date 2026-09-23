@@ -108,3 +108,24 @@ def test_empty_consensus_still_exposes_the_new_columns():
     for column in ("amcs_opening", "new_position_flow_lakhs",
                    "accumulation_flow_lakhs", "universe_status", "is_new_to_universe"):
         assert column in out.columns
+
+
+def test_a_fund_missing_from_either_month_is_not_compared(tmp_path):
+    import db
+    import delta_calculator
+
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    conn.executemany("INSERT INTO schemes (scheme_id, amc_name, scheme_name) VALUES (?, ?, ?)",
+                     [(1, "A AMC", "Ongoing"), (2, "B AMC", "Launched in August"),
+                      (3, "C AMC", "File missing in August")])
+    conn.execute("INSERT INTO stocks (isin, name, instrument_type) VALUES "
+                 "('INEAAA01001', 'A', 'equity')")
+    conn.executemany(
+        "INSERT INTO mf_holdings_monthly (scheme_id, isin, report_month, quantity, "
+        "market_value_lakhs, pct_nav) VALUES (?, 'INEAAA01001', ?, 10, 10.0, 1.0)",
+        [(1, "2026-07"), (1, "2026-08"), (2, "2026-08"), (3, "2026-07")])
+    deltas = delta_calculator.compute_deltas(conn, "2026-07", "2026-08")
+    assert sorted(deltas["scheme_id"]) == [1]
+    assert delta_calculator.unmatched_schemes(conn, "2026-07", "2026-08") == {
+        "only_prev": [3], "only_curr": [2]}
+    conn.close()

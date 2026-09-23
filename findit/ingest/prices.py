@@ -5,17 +5,15 @@ directly with no symbol-mapping step to get wrong: the UDiFF file NSE has
 published since July 2024, and the legacy "cm...bhav.csv" file before it,
 which is what a backtest reaching back to 2016 needs.
 
-These are independent observations, deliberately kept out of
-``instrument_prices_monthly``: that table holds prices *implied* by fund
-holdings (market_value / quantity), which cannot be used to check the
-holdings they were derived from.
+These are independent observations: prices *implied* by fund holdings
+(market_value / quantity) cannot be used to check the holdings they were
+derived from.
 
 The parsing half is pure and offline; only ``fetch_bhavcopy`` touches the
 network, and it caches each day's file so a re-run costs nothing.
 """
 from __future__ import annotations
 
-import calendar
 import io
 import zipfile
 from datetime import date, datetime, timedelta, timezone
@@ -23,6 +21,8 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+
+from findit.core.publication import month_end
 
 BHAVCOPY_URL = (
     "https://nsearchives.nseindia.com/content/cm/"
@@ -53,18 +53,6 @@ MAX_LOOKAHEAD_DAYS = 10
 
 class PriceFetchError(RuntimeError):
     """A bhavcopy could not be retrieved or read as prices."""
-
-
-def month_end(report_month: str) -> date:
-    """Calendar month end for YYYY-MM (raises ValueError on a bad month)."""
-    parts = str(report_month).split("-")
-    if len(parts) != 2:
-        raise ValueError(f"report_month must be YYYY-MM, got {report_month!r}")
-    try:
-        year, month = int(parts[0]), int(parts[1])
-        return date(year, month, calendar.monthrange(year, month)[1])
-    except (ValueError, calendar.IllegalMonthError) as exc:
-        raise ValueError(f"report_month must be YYYY-MM, got {report_month!r}") from exc
 
 
 # Column names per bhavcopy format: (ISIN, symbol, series, close, volume).

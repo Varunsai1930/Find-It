@@ -27,6 +27,10 @@ MF_DISCLOSURE_DAYS = 10
 # SEBI LODR Reg. 31(1)(b): shareholding pattern within 21 days of quarter end.
 SHAREHOLDING_FILING_DAYS = 21
 
+# Month-days of the four regulatory quarter ends; a filing dated otherwise
+# is an interim one (a shareholding change between quarters).
+QUARTER_END_MONTH_DAYS = ("03-31", "06-30", "09-30", "12-31")
+
 BASIS_OBSERVED = "observed"
 BASIS_DEADLINE = "regulatory_deadline"
 

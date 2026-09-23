@@ -40,11 +40,10 @@ from statistics import mean
 
 import pandas as pd
 
-from findit.cli.backtest import MAX_TRADING_GAP_DAYS, _pct, track_record
+from findit.cli.backtest import _close_on_or_after, _pct, track_record
 from findit.core import publication
 
 GROUPS = ("mf_up_fii_up", "mf_up_only", "mf_flat", "mf_down", "mf_top_q", "mf_bottom_q")
-QUARTER_MONTH_DAYS = ("03-31", "06-30", "09-30", "12-31")
 DEFAULT_LAG_DAYS = 30
 DEFAULT_THRESHOLD_PP = 0.25
 
@@ -73,8 +72,8 @@ def load_filings(conn: sqlite3.Connection) -> pd.DataFrame:
             "version first:\n  python3 fetch_shareholding.py --db <db> --history 0")
     frame = pd.read_sql_query(
         "SELECT isin, quarter_end, mf_pct, fii_pct, published_at FROM shareholding_quarterly "
-        f"WHERE substr(quarter_end, 6, 5) IN ({','.join('?' for _ in QUARTER_MONTH_DAYS)})",
-        conn, params=QUARTER_MONTH_DAYS)
+        f"WHERE substr(quarter_end, 6, 5) IN ({','.join('?' for _ in publication.QUARTER_END_MONTH_DAYS)})",
+        conn, params=publication.QUARTER_END_MONTH_DAYS)
     published, basis = [], []
     for quarter_end, published_at in zip(frame["quarter_end"], frame["published_at"]):
         day, how = publication.shareholding_published(quarter_end, published_at)
@@ -104,7 +103,6 @@ def signal_panel(filings: pd.DataFrame, quarter_end: str, decision: date,
     }
     both = curr.join(prev, lsuffix="", rsuffix="_prev", how="inner")
     both = both[both["mf_pct"].notna() & both["mf_pct_prev"].notna()]
-    audit["with_previous_quarter"] = int(len(both))
     if both.empty:
         return pd.DataFrame(columns=["isin", "d_mf", "d_fii", "group"]), audit
     panel = pd.DataFrame({
@@ -122,19 +120,6 @@ def signal_panel(filings: pd.DataFrame, quarter_end: str, decision: date,
     return panel, audit
 
 
-def _closes(conn: sqlite3.Connection, target: date) -> tuple[str, pd.DataFrame] | None:
-    row = conn.execute(
-        "SELECT MIN(trade_date) FROM security_prices_daily WHERE trade_date >= ? "
-        "AND trade_date <= ?",
-        (target.isoformat(), (target + timedelta(days=MAX_TRADING_GAP_DAYS)).isoformat()),
-    ).fetchone()
-    if not row or row[0] is None:
-        return None
-    return str(row[0]), pd.read_sql_query(
-        "SELECT isin, close_price FROM security_prices_daily WHERE trade_date = ?",
-        conn, params=(row[0],))
-
-
 def score_quarter(panel: pd.DataFrame, entry: pd.DataFrame, exit_: pd.DataFrame) -> dict:
     """Per-group mean return and excess vs the universe for one quarter."""
     priced = panel.merge(entry.rename(columns={"close_price": "px_in"}), on="isin")
@@ -146,18 +131,12 @@ def score_quarter(panel: pd.DataFrame, entry: pd.DataFrame, exit_: pd.DataFrame)
     priced["ret"] = priced["px_out"] / priced["px_in"] - 1.0
     base = float(priced["ret"].mean())
     out["universe"]["mean"] = base
-    ranks = priced["d_mf"].rank(method="first")
-    fifth = len(priced) // 5
-    if fifth:
-        priced["quintile"] = pd.qcut(ranks, 5, labels=False)
+    # Fifths need at least one stock each; below that the two groups stay empty.
+    priced["quintile"] = (pd.qcut(priced["d_mf"].rank(method="first"), 5, labels=False)
+                          if len(priced) >= 5 else -1)
+    members = {"mf_top_q": priced["quintile"] == 4, "mf_bottom_q": priced["quintile"] == 0}
     for name in GROUPS:
-        if name == "mf_top_q":
-            values = priced.loc[priced.get("quintile", pd.Series(dtype=float)) == 4, "ret"]
-        elif name == "mf_bottom_q":
-            values = priced.loc[priced.get("quintile", pd.Series(dtype=float)) == 0, "ret"]
-        else:
-            values = priced.loc[priced["group"] == name, "ret"]
-        values = values.tolist()
+        values = priced.loc[members.get(name, priced["group"] == name), "ret"].tolist()
         out["groups"][name] = ({"n": len(values), "mean": mean(values),
                                 "excess_mean": mean(values) - base} if values else {"n": 0})
     return out
@@ -186,14 +165,10 @@ def run(db_path: str, quarters: list[str] | None = None, lag_days: int = DEFAULT
             entry_target = publication.first_tradable_date(decision)
             exit_target = publication.first_tradable_date(nxt)
             partial = exit_target > today
-            entry = _closes(conn, entry_target)
-            exit_ = _closes(conn, exit_target) if not partial else None
-            if partial and entry is not None:
-                last = conn.execute("SELECT MAX(trade_date) FROM security_prices_daily").fetchone()[0]
-                if last and last > entry[0]:
-                    exit_ = (str(last), pd.read_sql_query(
-                        "SELECT isin, close_price FROM security_prices_daily WHERE trade_date = ?",
-                        conn, params=(last,)))
+            entry = _close_on_or_after(conn, entry_target)
+            exit_ = _close_on_or_after(conn, exit_target, latest_ok=partial)
+            if entry is not None and exit_ is not None and exit_[0] <= entry[0]:
+                exit_ = None
             if entry is None:
                 missing_dates.add(entry_target)
             if exit_ is None:
@@ -260,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     for q in args.quarter:
-        if q[5:] not in QUARTER_MONTH_DAYS:
+        if q[5:] not in publication.QUARTER_END_MONTH_DAYS:
             parser.error(f"--quarter must be a quarter end (YYYY-03-31 etc.), got {q}")
     if args.decision_lag_days < publication.SHAREHOLDING_FILING_DAYS:
         print(f"note: a decision lag under {publication.SHAREHOLDING_FILING_DAYS} days "

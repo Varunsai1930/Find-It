@@ -9,7 +9,6 @@ overlap signal: MF net buying plus an FII-or-DII quarterly increase,
 with missing filings kept as no_data (never zero) and stale quarters
 flagged via ``as_of_month``.
 """
-import calendar
 import sqlite3
 from datetime import date
 
@@ -167,58 +166,44 @@ def compute_consensus(
     instrument_type: str | None = "equity",
     active_equity_only: bool = True,
 ) -> pd.DataFrame:
-    # price_effect_lakhs is added PRAGMA-guarded by Worker A; legacy DBs
-    # lack it, so detect upfront and fall back to a price-less SELECT.
+    """Per-stock cross-fund buying vs selling for one month, best-supported first.
+
+    The one implementation of the consensus signal: the pipeline, the
+    backtests and the web dashboard all rank with it. Only active equity
+    schemes vote (``active_equity_only``) and quarantined scheme-months never
+    do. AMC counts lead; scheme counts are carried for display.
+    """
+    # Legacy DBs predate price_effect_lakhs; PRAGMA is authoritative.
     has_price = "price_effect_lakhs" in _delta_columns(conn)
-
-    def _build_sql(include_price: bool) -> str:
-        price_select = "d.price_effect_lakhs, " if include_price else ""
-        sql = (
-            "SELECT d.isin, s.name AS stock_name, d.action, d.value_change_lakhs, "
-            f"       d.flow_lakhs, {price_select}d.prev_month, sch.amc_name "
-            "FROM mf_holding_deltas d "
-            "JOIN stocks s ON s.isin = d.isin "
-            "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-            "WHERE d.report_month = ?"
-        )
-        if instrument_type is not None:
-            sql += " AND s.instrument_type = ?"
-        return sql
-
+    price_select = "d.price_effect_lakhs, " if has_price else ""
+    sql = (
+        "SELECT d.isin, d.scheme_id, s.name AS stock_name, s.industry, "
+        "       s.instrument_type, d.action, d.value_change_lakhs, "
+        f"       d.flow_lakhs, {price_select}d.prev_month, sch.amc_name "
+        "FROM mf_holding_deltas d "
+        "JOIN stocks s ON s.isin = d.isin "
+        "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
+        "WHERE d.report_month = ?"
+    )
     params: list = [report_month]
     if instrument_type is not None:
+        sql += " AND s.instrument_type = ?"
         params.append(instrument_type)
-
     # Passive/debt schemes never count toward market-wide conviction.
-    # Independent of, and additional to, the instrument_type filter.
     # Guarded for legacy DBs whose schemes table predates the column.
-    has_active_col = "is_active_equity" in _table_columns(conn, "schemes")
-    extra_sql = ""
-    if active_equity_only and has_active_col:
-        extra_sql += " AND sch.is_active_equity = 1"
+    if active_equity_only and "is_active_equity" in _table_columns(conn, "schemes"):
+        sql += " AND sch.is_active_equity = 1"
     quarantined = _quarantined_scheme_ids(conn, report_month)
     if quarantined:
-        placeholders = ",".join("?" for _ in quarantined)
-        extra_sql += f" AND d.scheme_id NOT IN ({placeholders})"
+        sql += f" AND d.scheme_id NOT IN ({','.join('?' for _ in quarantined)})"
         params.extend(quarantined)
-
-    def _build_sql_guarded(include_price: bool) -> str:
-        return _build_sql(include_price) + extra_sql
-
-    try:
-        deltas = pd.read_sql_query(_build_sql_guarded(has_price), conn, params=params)
-    except sqlite3.OperationalError as exc:
-        # Defensive retry for DBs whose PRAGMA advertised the column but
-        # whose table actually predates it (or vice versa).
-        if has_price and "price_effect" in str(exc).lower():
-            has_price = False
-            deltas = pd.read_sql_query(_build_sql_guarded(False), conn, params=params)
-        else:
-            raise
+    deltas = pd.read_sql_query(sql, conn, params=params)
 
     if deltas.empty:
         return pd.DataFrame(columns=[
-            "isin", "stock_name", "amcs_buying", "amcs_selling",
+            "isin", "stock_name", "industry", "instrument_type",
+            "schemes_buying", "schemes_selling", "net_scheme_count",
+            "amcs_buying", "amcs_selling",
             "amcs_opening", "total_flow_lakhs", "new_position_flow_lakhs",
             "accumulation_flow_lakhs", "total_price_effect_lakhs",
             "net_amc_count", "buying_ratio", "universe_status",
@@ -232,9 +217,13 @@ def compute_consensus(
     buy_counts = buying.groupby("isin")["amc_name"].nunique().rename("amcs_buying")
     sell_counts = selling.groupby("isin")["amc_name"].nunique().rename("amcs_selling")
     open_counts = opening.groupby("isin")["amc_name"].nunique().rename("amcs_opening")
-    names = deltas.drop_duplicates("isin").set_index("isin")["stock_name"]
+    scheme_buys = buying.groupby("isin")["scheme_id"].nunique().rename("schemes_buying")
+    scheme_sells = selling.groupby("isin")["scheme_id"].nunique().rename("schemes_selling")
+    stock_info = deltas.drop_duplicates("isin").set_index("isin")[
+        ["stock_name", "industry", "instrument_type"]]
 
-    series_to_concat = [names, buy_counts, sell_counts, open_counts]
+    series_to_concat = [stock_info, buy_counts, sell_counts, open_counts,
+                        scheme_buys, scheme_sells]
     if "flow_lakhs" in deltas.columns and deltas["flow_lakhs"].notna().any():
         flow_totals = deltas.groupby("isin")["flow_lakhs"].sum().rename("total_flow_lakhs")
         series_to_concat.append(flow_totals)
@@ -252,25 +241,15 @@ def compute_consensus(
         series_to_concat.append(price_totals)
 
     out = pd.concat(series_to_concat, axis=1)
-    # Ensure totals always exist so ranking is stable even when no flow or
-    # price-effect data was recorded for this month (legacy DBs).
-    if "total_flow_lakhs" not in out.columns:
-        out["total_flow_lakhs"] = 0.0
-    if "total_price_effect_lakhs" not in out.columns:
-        out["total_price_effect_lakhs"] = 0.0
-    if "new_position_flow_lakhs" not in out.columns:
-        out["new_position_flow_lakhs"] = 0.0
-    # fillna(0) would coerce stock_name NaNs to 0; fill numeric cols only,
-    # then fill any missing names with empty string (should not happen).
-    for col in ["amcs_buying", "amcs_selling", "amcs_opening", "total_flow_lakhs",
-                "total_price_effect_lakhs", "new_position_flow_lakhs"]:
-        if col in out.columns:
-            out[col] = out[col].fillna(0)
-    if "stock_name" in out.columns:
-        out["stock_name"] = out["stock_name"].fillna("")
-    out["amcs_buying"] = out["amcs_buying"].astype(int)
-    out["amcs_selling"] = out["amcs_selling"].astype(int)
-    out["amcs_opening"] = out["amcs_opening"].astype(int)
+    # Totals always exist so ranking is stable when a legacy month recorded
+    # no flow or price effect; counts are 0 where nobody bought or sold.
+    for col in ("total_flow_lakhs", "total_price_effect_lakhs", "new_position_flow_lakhs"):
+        out[col] = out[col].fillna(0.0) if col in out.columns else 0.0
+    for col in ("amcs_buying", "amcs_selling", "amcs_opening", "schemes_buying",
+                "schemes_selling"):
+        out[col] = out[col].fillna(0).astype(int)
+    out["stock_name"] = out["stock_name"].fillna("")
+    out["net_scheme_count"] = out["schemes_buying"] - out["schemes_selling"]
     # Capital moved into or out of positions that already existed last month.
     out["accumulation_flow_lakhs"] = (
         out["total_flow_lakhs"] - out["new_position_flow_lakhs"]
@@ -315,17 +294,18 @@ def compute_consensus(
     ).reset_index(drop=True)
 
 
-def _month_end_iso(as_of_month: str) -> str:
-    """Return the YYYY-MM-DD month-end for a YYYY-MM string (raises ValueError)."""
-    try:
-        parts = str(as_of_month).split("-")
-        if len(parts) != 2:
-            raise ValueError
-        y, m = int(parts[0]), int(parts[1])
-        last_day = calendar.monthrange(y, m)[1]
-        return date(y, m, last_day).isoformat()
-    except Exception as exc:
-        raise ValueError(f"as_of_month must be YYYY-MM, got {as_of_month!r}") from exc
+def quarterly_filing_sql(columns: set[str], alias: str = "") -> str:
+    """SQL predicate keeping quarterly shareholding filings, dropping interim ones.
+
+    With a filing_type column, legacy NULL rows fall back to the date test.
+    """
+    prefix = f"{alias}." if alias else ""
+    month_days = ",".join(f"'{md}'" for md in publication.QUARTER_END_MONTH_DAYS)
+    by_date = f"substr({prefix}quarter_end, 6, 5) IN ({month_days})"
+    if "filing_type" in columns:
+        return (f"({prefix}filing_type = 'quarterly' OR "
+                f"({prefix}filing_type IS NULL AND {by_date}))")
+    return by_date
 
 
 def _cutoff_date(as_of_month: str | None, as_of_date) -> date | None:
@@ -338,7 +318,6 @@ def _cutoff_date(as_of_month: str | None, as_of_date) -> date | None:
     if as_of_date is not None:
         return publication.to_date(as_of_date)
     if as_of_month is not None:
-        _month_end_iso(as_of_month)  # validates the format with the usual message
         return publication.mf_disclosure_deadline(as_of_month)
     return None
 
@@ -409,18 +388,8 @@ def join_shareholding_increase(
 
     sh_cols = sorted(_table_columns(conn, "shareholding_quarterly"))
 
-    where_clauses: list[str] = []
+    where_clauses: list[str] = [quarterly_filing_sql(set(sh_cols))]
     params: list = []
-    if "filing_type" in sh_cols:
-        # NULL-safe: legacy rows predate filing_type; infer quarterly for them.
-        where_clauses.append(
-            "(filing_type = 'quarterly' OR (filing_type IS NULL AND "
-            "substr(quarter_end,6,5) IN ('03-31','06-30','09-30','12-31')))"
-        )
-    elif "quarter_end" in sh_cols or not sh_cols:
-        # Fallback for DBs without filing_type: only standard quarter ends.
-        where_clauses.append("substr(quarter_end,6,5) IN ('03-31','06-30','09-30','12-31')")
-    # else: unknown schema — legacy behavior (no quarterly filter).
 
     # When a filing became public: observed broadcast date, else the
     # regulatory deadline (legacy rows and DBs without the column).

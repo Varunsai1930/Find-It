@@ -185,3 +185,12 @@ def test_pipeline_track_record_lists_months_it_could_not_score(tmp_path):
     assert "2026-07: no stored close" in text
     assert "--date 2026-08-11" in text
     conn.close()
+
+
+def test_too_few_stocks_leave_the_fifths_empty_without_failing():
+    panel = pd.DataFrame({"isin": ["A", "B"], "d_mf": [1.0, -1.0], "d_fii": [0.0, 0.0],
+                          "group": ["mf_up_only", "mf_down"]})
+    prices = pd.DataFrame({"isin": ["A", "B"], "close_price": [100.0, 100.0]})
+    scored = bq.score_quarter(panel, prices, prices)
+    assert scored["groups"]["mf_top_q"] == {"n": 0}
+    assert scored["groups"]["mf_up_only"]["n"] == 1

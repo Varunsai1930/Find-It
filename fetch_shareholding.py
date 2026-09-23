@@ -44,6 +44,7 @@ import requests
 
 import consensus_signals
 import db
+from findit.core import publication
 
 
 NSE_EQUITY_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -68,22 +69,12 @@ DII_LABELS = {
     "insurance companies",
     "other financial institutions",
 }
-FII_LABELS = {
-    "foreign portfolio investors category i",
-    "foreign portfolio investors category ii",
-    "foreign portfolio investor (category - iii)",
-    "foreign institutional investors",  # older filings may use this label.
-}
-PCT_TAG = "shareholdingasapercentageoftotalnumberofshares"
 
 # Negative scrip-code lookups are retried after 7 days; positive mappings
 # are kept forever. JSON cache stays backward-compatible: old `None`
 # negatives and old {"bse_scrip_code": ...} positives still read correctly.
 NEGATIVE_CACHE_TTL_SECONDS = 7 * 86400
 
-# Quarter-end month-days that count as quarterly Reg. 31 filings; anything
-# else is an interim filing. Both are kept — never filtered, never invented.
-QUARTERLY_MONTH_DAYS = {"03-31", "06-30", "09-30", "12-31"}
 
 
 class ShareholdingFetchError(RuntimeError):
@@ -166,17 +157,8 @@ def classify_filing_type(quarter_end: str) -> str:
     Quarterly month-days are 03-31/06-30/09-30/12-31; anything else is
     interim. Both kinds are kept by the fetcher — this only labels them.
     """
-    md: str | None = None
-    try:
-        md = pd.Timestamp(quarter_end).strftime("%m-%d")
-    except Exception:
-        try:
-            md = str(quarter_end).strip()[5:10]
-        except Exception:
-            md = None
-    if md in QUARTERLY_MONTH_DAYS:
-        return "quarterly"
-    return "interim"
+    month_day = str(quarter_end).strip()[5:10]
+    return "quarterly" if month_day in publication.QUARTER_END_MONTH_DAYS else "interim"
 
 
 def _persist_ixbrl_attachment(cache_dir: Path, content: bytes) -> str:
@@ -769,6 +751,9 @@ def main() -> None:
         parser.error("--limit must be at least 1")
     if args.history < 0:
         parser.error("--history must not be negative")
+    if args.only_missing and args.history == 0:
+        parser.error("--only-missing cannot tell which stocks have *every* filing without "
+                     "asking BSE; drop it -- stored filings are skipped anyway")
 
     db_path = Path(args.db)
     conn = db.get_connection(str(db_path))
