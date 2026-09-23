@@ -1,14 +1,24 @@
-"""Fetch NSE month-end closing prices into security_prices_monthly.
+"""Fetch NSE closing prices: month ends into security_prices_monthly, and
+specific trading days (backtest entry/exit dates) into security_prices_daily.
 
-The only command in this project that downloads prices. It writes one table
-and touches nothing else: no holdings, deltas, validation or consensus.
+The only command in this project that downloads prices. It writes those two
+tables and touches nothing else: no holdings, deltas, validation or consensus.
+
+``--date D`` stores the first trading day on or after D -- the backtests
+print exactly which dates they need.
 """
 from __future__ import annotations
 
 import argparse
 
 import db
-from findit.ingest.prices import PriceFetchError, fetch_bhavcopy, load_prices
+from findit.ingest.prices import (
+    PriceFetchError,
+    fetch_bhavcopy,
+    fetch_close_on_or_after,
+    load_daily_prices,
+    load_prices,
+)
 
 
 def fetch_months(db_path: str, months: list[str], cache_dir=None) -> dict:
@@ -27,6 +37,24 @@ def fetch_months(db_path: str, months: list[str], cache_dir=None) -> dict:
                 "status": "ok", "rows": written,
                 "trade_date": str(prices["trade_date"].iloc[0]),
             }
+    finally:
+        conn.close()
+    return results
+
+
+def fetch_dates(db_path: str, dates: list[str], cache_dir=None) -> dict:
+    results: dict = {}
+    conn = db.get_connection(db_path)
+    try:
+        for day in dates:
+            try:
+                prices = fetch_close_on_or_after(
+                    day, **({"cache_dir": cache_dir} if cache_dir else {}))
+            except (PriceFetchError, ValueError) as exc:
+                results[day] = {"status": "failed", "error": str(exc), "rows": 0}
+                continue
+            results[day] = {"status": "ok", "rows": load_daily_prices(conn, prices),
+                            "trade_date": str(prices["trade_date"].iloc[0])}
     finally:
         conn.close()
     return results
@@ -53,14 +81,19 @@ def coverage(db_path: str, month: str) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", required=True, help="SQLite file to write prices into")
-    ap.add_argument("--month", action="append", required=True, metavar="YYYY-MM",
+    ap.add_argument("--month", action="append", default=[], metavar="YYYY-MM",
                     help="Month to fetch the last trading day's closes for (repeatable)")
+    ap.add_argument("--date", action="append", default=[], metavar="YYYY-MM-DD",
+                    help="Fetch the first trading day on or after this date (repeatable)")
     ap.add_argument("--cache-dir", default=None, help="Where to cache downloaded zips")
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not args.month and not args.date:
+        parser.error("give at least one --month or --date")
     results = fetch_months(args.db, args.month, args.cache_dir)
     failed = 0
     for month, result in results.items():
@@ -72,6 +105,12 @@ def main(argv: list[str] | None = None) -> int:
         else:
             failed += 1
             print(f"{month}: FAILED -- {result['error']}")
+    for day, result in fetch_dates(args.db, args.date, args.cache_dir).items():
+        if result["status"] == "ok":
+            print(f"{day}: {result['rows']} closes as of {result['trade_date']}")
+        else:
+            failed += 1
+            print(f"{day}: FAILED -- {result['error']}")
     return 1 if failed else 0
 
 

@@ -182,6 +182,20 @@ CREATE TABLE IF NOT EXISTS scheme_month_status (
 CREATE INDEX IF NOT EXISTS idx_scheme_month_status_month
     ON scheme_month_status(report_month);
 
+CREATE TABLE IF NOT EXISTS security_prices_daily (
+    isin TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    close_price REAL,
+    series TEXT,
+    symbol TEXT,
+    source TEXT,
+    source_url TEXT,
+    fetched_at TEXT,
+    PRIMARY KEY (isin, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_security_prices_daily_date
+    ON security_prices_daily(trade_date);
+
 CREATE INDEX IF NOT EXISTS idx_holdings_month
     ON mf_holdings_monthly(report_month);
 CREATE INDEX IF NOT EXISTS idx_holdings_scheme_month
@@ -202,3 +216,5 @@ ALTER TABLE shareholding_quarterly ADD COLUMN validation_status TEXT;
 ALTER TABLE shareholding_quarterly ADD COLUMN source_url TEXT;
 ALTER TABLE shareholding_quarterly ADD COLUMN source_sha256 TEXT;
 ALTER TABLE mf_holding_deltas ADD COLUMN price_effect_lakhs REAL;
+ALTER TABLE shareholding_quarterly ADD COLUMN mf_pct REAL;
+ALTER TABLE shareholding_quarterly ADD COLUMN published_at TEXT;

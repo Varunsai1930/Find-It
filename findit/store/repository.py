@@ -170,6 +170,10 @@ def migrate(conn: sqlite3.Connection) -> None:
     _ensure_column(
         conn, "shareholding_quarterly", "source_sha256", "source_sha256 TEXT"
     )
+    _ensure_column(conn, "shareholding_quarterly", "mf_pct", "mf_pct REAL")
+    _ensure_column(conn, "shareholding_quarterly", "published_at", "published_at TEXT")
+    if "schemes" in _tables(conn):
+        _ensure_column(conn, "schemes", "scheme_title", "scheme_title TEXT")
 
     # Backfill instrument_type for stocks missing it (db.py behavior).
     try:

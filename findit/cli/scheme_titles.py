@@ -1,0 +1,85 @@
+"""Record full scheme names from disclosure workbooks and re-derive the
+passive/arbitrage flag from them.
+
+Sheets are often named by code ("SAOF", "NIF30DEX"), which the sheet-name
+heuristic cannot read, so index and arbitrage funds were counted as active
+managers. The workbook's own title rows carry the real name. This reads
+only those rows -- no holdings are loaded or changed -- and prints every
+scheme whose ``is_active_equity`` flag changes.
+
+    python3 -m findit.cli.scheme_titles --db tracker.db --amc "SBI AMC" \\
+        real_data/sbi_aug2026.xlsx
+    python3 -m findit.cli.scheme_titles --db tracker.db --amc "ICICI Prudential AMC" \\
+        real_data/icici_aug2026/*.xlsx --dry-run
+"""
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
+import amfi_mf_parser
+import db
+
+
+def apply_titles(conn, amc: str, files: list[Path], dry_run: bool = False) -> dict:
+    changes, unknown, untitled, recorded = [], [], [], 0
+    for path in files:
+        for sheet, title in amfi_mf_parser.read_scheme_titles(path).items():
+            scheme_id = db.resolve_scheme_id(conn, amc, sheet, create=False)
+            if scheme_id is None:
+                unknown.append(f"{path.name}: {sheet}")
+                continue
+            if not title:
+                untitled.append(f"{path.name}: {sheet}")
+                continue
+            if dry_run:
+                row = conn.execute(
+                    "SELECT scheme_name, is_active_equity FROM schemes WHERE scheme_id = ?",
+                    (scheme_id,)).fetchone()
+                new_flag = db.classify_scheme_title(title)
+                if row[1] is not None and int(row[1]) != new_flag:
+                    changes.append((amc, row[0], title, int(row[1]), new_flag))
+            else:
+                change = db.record_scheme_title(conn, scheme_id, title)
+                if change:
+                    changes.append(change)
+            recorded += 1
+    return {"recorded": recorded, "changes": changes, "unknown": unknown,
+            "untitled": untitled}
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--db", required=True)
+    ap.add_argument("--amc", required=True, help="AMC name exactly as stored, e.g. 'SBI AMC'")
+    ap.add_argument("files", nargs="+", type=Path, help="Disclosure .xlsx workbook(s)")
+    ap.add_argument("--dry-run", action="store_true", help="Report changes, write nothing")
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    conn = db.get_connection(args.db)
+    try:
+        result = apply_titles(conn, args.amc, args.files, args.dry_run)
+    finally:
+        conn.close()
+    verb = "would change" if args.dry_run else "changed"
+    print(f"{result['recorded']} scheme title(s) read; {len(result['changes'])} flag(s) {verb}")
+    for amc, scheme, title, old, new in result["changes"]:
+        label = "active" if new else "excluded (passive/hedged/FoF/debt)"
+        print(f"  {old}->{new} {amc} | {scheme} | {title} -> {label}")
+    if result["unknown"]:
+        print(f"{len(result['unknown'])} sheet(s) with no scheme in the DB (skipped):")
+        for item in result["unknown"][:20]:
+            print(f"  - {item}")
+    if result["untitled"]:
+        print(f"{len(result['untitled'])} sheet(s) with no title row (kept as is):")
+        for item in result["untitled"]:
+            print(f"  - {item}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

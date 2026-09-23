@@ -328,6 +328,35 @@ def _track_source(touched: dict, conn, df: pd.DataFrame, path: Path, file_hash: 
             entry[column] = int(value) if column.endswith("count") and value is not None else value
 
 
+def signal_track_record(db_path: str, conn) -> str:
+    """The signal's own history, printed next to the signal it ranks.
+
+    A ranking with no record of how its past picks did asks for trust it has
+    not earned. Months without the needed closes are listed, not skipped
+    silently; iterations=0 keeps this fast (no permutation p).
+    """
+    from findit.cli import backtest
+
+    months = [r[0] for r in conn.execute(
+        "SELECT DISTINCT report_month FROM mf_holding_deltas ORDER BY 1")]
+    results, unscored = [], []
+    for month in months:
+        try:
+            results.append(backtest.run(db_path, month, iterations=0))
+        except SystemExit as exc:
+            unscored.append(f"  {month}: {str(exc).splitlines()[0]}")
+            unscored += [f"    {line.strip()}" for line in str(exc).splitlines()[1:]]
+    lines = []
+    if results:
+        lines.append(backtest.track_record(results))
+    else:
+        lines.append("(no signal month has entry/exit closes stored yet)")
+    if unscored:
+        lines.append("Not scored:")
+        lines += unscored
+    return "\n".join(lines)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -398,6 +427,9 @@ def main():
     print(f"\nComputed {len(deltas)} deltas for {args.prev} -> {args.curr}")
 
     print(f"\n=== Cross-fund consensus, {args.curr} (active equity only) ===")
+    print("Ranked by raw breadth (net_amc_count). net_active_amc_count counts only AMCs that\n"
+          "raised a stock's weight beyond what inflows explain; it is shown alongside, not\n"
+          "used for ranking, until the track record below shows which one earns it.")
     consensus = consensus_signals.compute_consensus(conn, args.curr)
     if consensus.empty:
         print("(no signals yet)")
@@ -459,10 +491,17 @@ def main():
         print(f"  [warn] could not list excluded passive schemes: {exc}",
               file=sys.stderr)
     if passive:
-        print(f"\nExcluded {len(passive)} passive/debt scheme(s) from consensus "
-              f"(pattern heuristic, still shown in own summaries):")
+        print(f"\nExcluded {len(passive)} passive/hedged/FoF/debt scheme(s) from consensus "
+              f"(by full scheme name where the sheet has one; still shown in own summaries):")
         for amc, scheme in passive:
             print(f"  - {amc} | {scheme}")
+
+    print("\n=== Signal track record (entry after publication; see findit.cli.backtest) ===")
+    try:
+        print(signal_track_record(args.db, conn))
+    except (sqlite3.DatabaseError, ValueError) as exc:
+        print(f"  [warn] track record unavailable: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
 
     print(f"\n=== Monthly summaries, {args.curr} ===")
     scheme_ids = conn.execute("SELECT DISTINCT scheme_id FROM mf_holding_deltas WHERE report_month = ?", (args.curr,)).fetchall()

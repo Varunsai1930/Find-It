@@ -78,8 +78,10 @@ number wrong.
 - **Phase 2:** built as cached, constrained GLM narration over the rule
   summary, then **removed** — the model's only authority was reordering
   pre-written sentences. See "Why the GLM narration layer was removed".
-- **Phase 3:** dashboard UI (Top-5 cards, common holdings screener) — will
-  need daily price data too, which nothing here ingests yet.
+- **Phase 3:** dashboard UI (Top-5 cards, common holdings screener). Prices
+  are ingested now; what it still waits on is evidence -- the quarterly
+  history backtest and a track record of more than a handful of months (see
+  "Testing the signal before building on it").
 
 ## Operations (offline)
 
@@ -130,40 +132,86 @@ dropping one side silently is exactly the invisible wrong number this project
 refuses to produce. Two schemes that already share a normalized key make
 ingestion raise `AmbiguousSchemeError` naming both IDs rather than picking one.
 
-### Month-end prices and signal evaluation
+### Testing the signal before building on it
 
-`findit.cli.prices` is the only command that downloads prices. It reads NSE's
-UDiFF bhavcopy, which carries an ISIN column, so prices join to holdings with
-no symbol-mapping step to get wrong. It walks back from the calendar month end
-to the real last trading day, never into a later month, caches each day's zip
-in `.price_cache/`, and writes only `security_prices_monthly`. That table is
-deliberately separate from `instrument_prices_monthly`, which holds prices
-*implied* by fund holdings and therefore cannot be used to check the holdings
-they came from.
+The project's claim -- stocks many AMCs are buying beat comparable stocks,
+more so with FII/DII agreement -- is a hypothesis, and everything downstream
+(ranking, dashboard) is only worth building if it holds. Four rules keep the
+measurement honest:
+
+1. **Only use what was public.** A month's portfolios are public on the SEBI
+   deadline (month end + 10 days), a company's shareholding pattern when BSE
+   broadcast it (`published_at`, recorded for every filing) -- or its 21-day
+   deadline when that was never observed, which the output counts. Positions
+   are entered at the close of the first trading day *after* publication.
+   Before this, the backtest entered at the month-end close and the FII/DII
+   join admitted any quarter ending by month end: both used data nobody had.
+2. **Count managers' choices, not their inflows.** A fund with inflows buys
+   more of everything. `findit.core.active_weight` compares each stock's weight
+   now with the weight it would have had with no trading (last month's shares
+   at this month's prices). `net_active_amc_count` counts AMCs whose change
+   beats that drift. Splits and bonuses are detected from the holdings (every
+   holder's quantity on the same multiple, price on its inverse) so they are
+   not read as buying. It is reported beside `net_amc_count`; the ranking
+   still uses `net_amc_count` until the track record says otherwise.
+3. **Only active stock pickers vote.** Index funds, ETFs, arbitrage and
+   equity-savings funds, FoFs and debt funds are excluded -- decided from the
+   workbook's own scheme name ("SBI Arbitrage Fund"), not the sheet code
+   ("SAOF"), which the old heuristic could not read. New ingests record it
+   automatically; for an existing DB:
+
+   ```bash
+   python3 -m findit.cli.scheme_titles --db tracker.db --amc "SBI AMC" \
+     real_data/sbi_aug2026.xlsx --dry-run
+   ```
+4. **Months, not stocks, are the sample.** Stocks in one month move together,
+   so the track record reports each period's excess return per group and a
+   t-statistic *across periods*.
+
+#### Monthly: the signal this project actually ranks
 
 ```bash
-python3 -m findit.cli.prices --db tracker.db --month 2026-07 --month 2026-08
-python3 -m findit.cli.backtest --db tracker.db \
-  --signal-month 2026-08 --forward-month 2026-09
+python3 -m findit.cli.prices --db tracker.db --date 2026-09-11 --date 2026-10-11
+python3 -m findit.cli.backtest --db tracker.db --from 2026-07 --to 2026-08
 ```
 
-`findit.cli.backtest` scores each signal group's forward return against the
-*tracked universe* — every equity any tracked scheme held that month — which
-holds the selection process fixed and varies only the signal. It is read-only.
+`findit.cli.prices` is the only command that downloads prices. `--month`
+stores month-end closes; `--date D` stores the first trading day on or after
+D (both NSE bhavcopy formats: UDiFF from July 2024, legacy before), and the
+backtests print the exact `--date` list they are missing. A holding period
+that has not ended is marked `*`, valued at the latest stored close, and kept
+out of the pooled line. `run_pipeline.py` prints the same track record under
+each month's ranking.
 
-Its output always carries the sample-size caveat, and you should take it
-seriously: one signal month is one event, not a sample. The permutation `p`
-compares against random subsets of the same universe and ignores that stocks
-move together, so it is optimistic. It is a cross-sectional comparison, not a
-strategy return — no costs, no liquidity limits, no position sizing.
+The first measurement changed under rule 1. With a month-end entry, August's
+MF-only buying beat the universe by +1.26%; entering after publication
+(2026-09-11, first 7 trading days only) it is -0.98%. Neither number is
+evidence -- one partial month -- but the difference shows how much of a
+one-month result the look-ahead can manufacture.
 
-The first measurement (2026-08 -> 2026-09-18, 766 priced equities) is worth
-knowing before building anything else on the signal: MF-only net buying beat
-the universe by +1.26% (n=98, p=0.035), while adding the FII/DII agreement
-filter — the project's headline idea — did *worse*, at +0.28% (n=191,
-p=0.275). On one month that settles nothing, but it is the opposite of the
-assumed direction, so the overlay needs evidence before it earns its place in
-the ranking.
+#### Quarterly: ten years, every company
+
+Monthly AMC files here cover a few months; they cannot settle the question.
+Every listed company's shareholding pattern can: one format, back to 2015,
+with mutual-fund ownership (`mf_pct`) and FPI ownership as separate lines.
+
+```bash
+python3 fetch_shareholding.py --db tracker.db --history 0          # every filing
+python3 -m findit.cli.backtest_quarterly --db tracker.db           # lists missing closes
+python3 -m findit.cli.prices --db tracker.db --date ... --date ... # as printed
+python3 -m findit.cli.backtest_quarterly --db tracker.db
+```
+
+The fetcher reads both BSE formats (inline-XBRL HTML for recent quarters,
+XBRL instance XML for 2016-2025), keeps a stored filing unless it predates
+`mf_pct`, and fills `published_at` from BSE's filing index. `--universe nse`
+fetches every NSE-listed equity instead of those tracked schemes hold -- a
+broader universe, at roughly 45 requests per company. The backtest decides
+30 days after quarter end (`--decision-lag-days`), uses a filing only if it
+was published by then (late filers sit that quarter out), and groups stocks
+by the change in MF ownership (`mf_up_fii_up`, `mf_up_only`, `mf_flat`,
+`mf_down`, top/bottom fifth). Its caveats print with every run: survivorship
+(delisted firms are missing) and no size/sector matching yet.
 
 ### Re-validation (`findit.cli.revalidate`)
 

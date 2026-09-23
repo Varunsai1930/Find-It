@@ -15,6 +15,8 @@ from datetime import date
 
 import pandas as pd
 
+from findit.core import active_weight, publication
+
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     """Column names of a table (empty set when the table does not exist)."""
@@ -68,6 +70,95 @@ def _prev_universe_isins(conn: sqlite3.Connection, prev_months) -> set[str] | No
     if not rows:
         return None
     return {str(r[0]) for r in rows}
+
+
+ACTIVE_COLUMNS = [
+    "active_amcs_buying", "active_amcs_selling", "net_active_amc_count",
+    "discretionary_flow_lakhs", "active_weight_change_pp_sum",
+]
+
+
+def compute_active_consensus(
+    conn: sqlite3.Connection,
+    report_month: str,
+    instrument_type: str | None = "equity",
+    active_equity_only: bool = True,
+) -> pd.DataFrame:
+    """Per-stock breadth of *discretionary* buying (see findit.core.active_weight).
+
+    Same eligibility as compute_consensus -- active schemes only, quarantined
+    months excluded -- and additionally a scheme whose *previous* month is
+    quarantined is skipped: the drift weight is built from that month, so
+    bad data there makes the comparison unsafe.
+    """
+    empty = pd.DataFrame(columns=["isin"] + ACTIVE_COLUMNS)
+    # Deltas-only DBs (legacy, or built for a test) carry no holdings to
+    # measure drift from: report no discretionary data rather than failing.
+    if not _table_columns(conn, "mf_holding_deltas") or not _table_columns(
+            conn, "mf_holdings_monthly"):
+        return empty
+    pairs = conn.execute(
+        "SELECT DISTINCT scheme_id, prev_month FROM mf_holding_deltas "
+        "WHERE report_month = ? AND prev_month IS NOT NULL",
+        (report_month,),
+    ).fetchall()
+    if not pairs:
+        return empty
+    scheme_cols = _table_columns(conn, "schemes")
+    active_ok = set()
+    if active_equity_only and "is_active_equity" in scheme_cols:
+        active_ok = {int(r[0]) for r in conn.execute(
+            "SELECT scheme_id FROM schemes WHERE is_active_equity = 1")}
+    quarantined = {report_month: set(_quarantined_scheme_ids(conn, report_month))}
+    prev_months: dict[int, str] = {}
+    for scheme_id, prev_month in pairs:
+        scheme_id, prev_month = int(scheme_id), str(prev_month)
+        if active_equity_only and "is_active_equity" in scheme_cols and scheme_id not in active_ok:
+            continue
+        if prev_month not in quarantined:
+            quarantined[prev_month] = set(_quarantined_scheme_ids(conn, prev_month))
+        if scheme_id in quarantined[report_month] or scheme_id in quarantined[prev_month]:
+            continue
+        prev_months[scheme_id] = prev_month
+    if not prev_months:
+        return empty
+
+    type_sql = " AND s.instrument_type = ?" if instrument_type is not None else ""
+
+    def _holdings(scheme_month: list[tuple[int, str]]) -> pd.DataFrame:
+        frames = []
+        for month in sorted({m for _, m in scheme_month}):
+            ids = [sid for sid, m in scheme_month if m == month]
+            marks = ",".join("?" for _ in ids)
+            params = [month, *ids] + ([instrument_type] if instrument_type is not None else [])
+            frames.append(pd.read_sql_query(
+                "SELECT h.scheme_id, h.isin, h.quantity, h.market_value_lakhs "
+                "FROM mf_holdings_monthly h JOIN stocks s ON s.isin = h.isin "
+                f"WHERE h.report_month = ? AND h.scheme_id IN ({marks}){type_sql}",
+                conn, params=params))
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
+            columns=["scheme_id", "isin", "quantity", "market_value_lakhs"])
+
+    prev = _holdings(list(prev_months.items()))
+    curr = _holdings([(sid, report_month) for sid in prev_months])
+
+    confirmed = {}
+    if _table_columns(conn, "corporate_actions"):
+        confirmed = {str(r[0]): float(r[1]) for r in conn.execute(
+            "SELECT isin, ratio FROM corporate_actions "
+            "WHERE confirmed = 1 AND effective_month = ? AND ratio > 0", (report_month,))}
+    fallback = {}
+    if _table_columns(conn, "security_prices_monthly"):
+        # Exchange closes are rupees per share; holdings are lakhs.
+        fallback = {str(r[0]): float(r[1]) / 1e5 for r in conn.execute(
+            "SELECT isin, close_price FROM security_prices_monthly "
+            "WHERE report_month = ? AND close_price > 0", (report_month,))}
+
+    splits = active_weight.infer_split_ratios(prev, curr, confirmed)
+    changes = active_weight.active_weight_changes(prev, curr, fallback, splits)
+    scheme_amc = {int(r[0]): str(r[1]) for r in conn.execute(
+        "SELECT scheme_id, amc_name FROM schemes")}
+    return active_weight.aggregate_by_stock(changes, scheme_amc)
 
 
 def compute_consensus(
@@ -131,7 +222,7 @@ def compute_consensus(
             "amcs_opening", "total_flow_lakhs", "new_position_flow_lakhs",
             "accumulation_flow_lakhs", "total_price_effect_lakhs",
             "net_amc_count", "buying_ratio", "universe_status",
-            "is_new_to_universe",
+            "is_new_to_universe", *ACTIVE_COLUMNS,
         ])
 
     buying = deltas[deltas["action"].isin(["new", "added"])]
@@ -208,6 +299,13 @@ def compute_consensus(
         )
     out["is_new_to_universe"] = out["universe_status"] == "new_listing"
 
+    # Discretionary breadth alongside the raw counts. It does not change the
+    # ranking below: whether it should is a question for the backtest.
+    active = compute_active_consensus(conn, report_month, instrument_type, active_equity_only)
+    out = out.merge(active, on="isin", how="left")
+    for column in ("active_amcs_buying", "active_amcs_selling", "net_active_amc_count"):
+        out[column] = out[column].fillna(0).astype(int)
+
     # Consensus breadth still leads. Within one breadth level, established
     # names outrank fresh listings, and the tiebreak is accumulation flow —
     # never the entry value of a position that had nowhere to come from.
@@ -230,10 +328,19 @@ def _month_end_iso(as_of_month: str) -> str:
         raise ValueError(f"as_of_month must be YYYY-MM, got {as_of_month!r}") from exc
 
 
-def _reference_date(as_of_month: str | None) -> date:
-    if as_of_month is None:
-        return date.today()
-    return date.fromisoformat(_month_end_iso(as_of_month))
+def _cutoff_date(as_of_month: str | None, as_of_date) -> date | None:
+    """The day whose knowledge the join may use (None = everything on file).
+
+    An MF month is only known once its portfolios are published, so
+    ``as_of_month`` means "as of that month's MF disclosure deadline" -- not
+    its month end, which would admit filings nobody had seen yet.
+    """
+    if as_of_date is not None:
+        return publication.to_date(as_of_date)
+    if as_of_month is not None:
+        _month_end_iso(as_of_month)  # validates the format with the usual message
+        return publication.mf_disclosure_deadline(as_of_month)
+    return None
 
 
 def join_shareholding_increase(
@@ -241,6 +348,7 @@ def join_shareholding_increase(
     consensus: pd.DataFrame,
     as_of_month: str | None = None,
     stale_after_days: int = 200,
+    as_of_date=None,
 ) -> pd.DataFrame:
     """Add the latest available FII/DII quarter-over-quarter signal to MF consensus.
 
@@ -256,9 +364,13 @@ def join_shareholding_increase(
         standard quarter end (03-31/06-30/09-30/12-31) are considered, so
         interim filings never displace true quarterlies.
 
-    ``as_of_month`` (YYYY-MM, optional) is a no-lookahead cutoff: only
-    quarters with ``quarter_end <= <month-end>`` are ranked.  ``staleness_days``
-    is ``<reference month-end or today> - shareholding_quarter_end`` in days;
+    No-lookahead cutoff: only filings *published* on or before the cutoff
+    are ranked. The cutoff is ``as_of_date`` when given, else the MF
+    disclosure deadline of ``as_of_month`` (the day that month's consensus
+    became knowable). A filing's publication date is BSE's observed
+    broadcast time when recorded, else its 21-day filing deadline;
+    ``shareholding_published_basis`` says which.  ``staleness_days`` is
+    ``<cutoff or today> - shareholding_quarter_end`` in days;
     ``shareholding_stale`` is True when the quarter is missing or older than
     ``stale_after_days`` (default 200).
 
@@ -276,7 +388,7 @@ def join_shareholding_increase(
         "fii_increased", "dii_increased", "fii_or_dii_increased",
         "is_common_with_fii_increase", "is_common",
         "fii_direction", "dii_direction",
-        "staleness_days", "shareholding_stale",
+        "staleness_days", "shareholding_stale", "shareholding_published_basis",
     ]
     if consensus.empty:
         out = consensus.copy()
@@ -310,21 +422,32 @@ def join_shareholding_increase(
         where_clauses.append("substr(quarter_end,6,5) IN ('03-31','06-30','09-30','12-31')")
     # else: unknown schema — legacy behavior (no quarterly filter).
 
-    month_end_iso: str | None = None
-    if as_of_month is not None:
-        month_end_iso = _month_end_iso(as_of_month)
-        where_clauses.append("quarter_end <= ?")
-        params.append(month_end_iso)
+    # When a filing became public: observed broadcast date, else the
+    # regulatory deadline (legacy rows and DBs without the column).
+    deadline_sql = f"date(quarter_end, '+{publication.SHAREHOLDING_FILING_DAYS} days')"
+    if "published_at" in sh_cols:
+        published_sql = f"COALESCE(substr(published_at, 1, 10), {deadline_sql})"
+        basis_sql = (f"CASE WHEN published_at IS NULL THEN '{publication.BASIS_DEADLINE}' "
+                     f"ELSE '{publication.BASIS_OBSERVED}' END")
+    else:
+        published_sql = deadline_sql
+        basis_sql = f"'{publication.BASIS_DEADLINE}'"
+
+    cutoff = _cutoff_date(as_of_month, as_of_date)
+    if cutoff is not None:
+        where_clauses.append(f"{published_sql} <= ?")
+        params.append(cutoff.isoformat())
 
     where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
     shareholding = pd.read_sql_query(
         f"""WITH filtered AS (
-               SELECT isin, quarter_end, fii_pct, dii_pct
+               SELECT isin, quarter_end, fii_pct, dii_pct,
+                      {basis_sql} AS published_basis
                FROM shareholding_quarterly
                {where_sql}
             ),
             ranked AS (
-               SELECT isin, quarter_end, fii_pct, dii_pct,
+               SELECT isin, quarter_end, fii_pct, dii_pct, published_basis,
                       ROW_NUMBER() OVER (
                           PARTITION BY isin ORDER BY quarter_end DESC
                       ) AS quarter_rank
@@ -338,7 +461,8 @@ def join_shareholding_increase(
                    latest.fii_pct - previous.fii_pct AS fii_pct_change,
                    latest.dii_pct,
                    previous.dii_pct AS previous_dii_pct,
-                   latest.dii_pct - previous.dii_pct AS dii_pct_change
+                   latest.dii_pct - previous.dii_pct AS dii_pct_change,
+                   latest.published_basis AS shareholding_published_basis
             FROM ranked AS latest
             LEFT JOIN ranked AS previous
               ON previous.isin = latest.isin
@@ -367,7 +491,7 @@ def join_shareholding_increase(
     )
     out["is_common"] = out["is_common_with_fii_increase"]
 
-    ref = _reference_date(as_of_month)
+    ref = cutoff if cutoff is not None else date.today()
     ref_ts = pd.Timestamp(ref.isoformat())
     q_ts = pd.to_datetime(out["shareholding_quarter_end"], errors="coerce")
     out["staleness_days"] = (ref_ts - q_ts).dt.days.astype("float")

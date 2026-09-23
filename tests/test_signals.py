@@ -212,27 +212,59 @@ def test_single_quarter_yields_no_data_not_decreased():
     conn.close()
 
 
-def test_future_quarter_excluded_by_as_of_month():
+def test_unpublished_quarter_excluded_by_as_of_month():
+    # The June MF month is knowable on its disclosure deadline (July 10).
+    # Without an observed broadcast date the June quarter counts as public
+    # only on its filing deadline (July 21), so it is not usable yet --
+    # quarter_end <= month end would have leaked it in.
     conn = _mem_conn()
     isin = "INE000A01001"
+    _add_sh(conn, isin, "2025-12-31", 9.0, 4.0)
     _add_sh(conn, isin, "2026-03-31", 10.0, 5.0)
     _add_sh(conn, isin, "2026-06-30", 12.0, 6.0)
     _add_sh(conn, isin, "2026-09-30", 20.0, 20.0)
     out = consensus_signals.join_shareholding_increase(
         conn, _consensus_row(isin), as_of_month="2026-06"
     )
-    assert out.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
-    assert out.iloc[0]["previous_shareholding_quarter_end"] == "2026-03-31"
+    assert out.iloc[0]["shareholding_quarter_end"] == "2026-03-31"
+    assert out.iloc[0]["previous_shareholding_quarter_end"] == "2025-12-31"
+    assert out.iloc[0]["shareholding_published_basis"] == "regulatory_deadline"
+    # By the July MF deadline (Aug 10) the June quarter is public.
     out2 = consensus_signals.join_shareholding_increase(
-        conn, _consensus_row(isin), as_of_month="2026-09"
+        conn, _consensus_row(isin), as_of_month="2026-07"
     )
-    assert out2.iloc[0]["shareholding_quarter_end"] == "2026-09-30"
-    # as_of April: only Q1 visible -> single quarter -> no_data.
+    assert out2.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
+    # as_of April: Q1's deadline (Apr 21) is before May 10 -> visible.
     out3 = consensus_signals.join_shareholding_increase(
         conn, _consensus_row(isin), as_of_month="2026-04"
     )
     assert out3.iloc[0]["shareholding_quarter_end"] == "2026-03-31"
-    assert out3.iloc[0]["fii_direction"] == "no_data"
+    conn.close()
+
+
+def test_observed_publication_date_overrides_deadline():
+    conn = _mem_conn()
+    conn.execute("ALTER TABLE shareholding_quarterly ADD COLUMN published_at TEXT")
+    isin = "INE000A01001"
+    _add_sh(conn, isin, "2026-03-31", 10.0, 5.0)
+    _add_sh(conn, isin, "2026-06-30", 12.0, 6.0)
+    # Filed early (July 5): usable for the June MF month (deadline July 10).
+    conn.execute("UPDATE shareholding_quarterly SET published_at = '2026-07-05T18:00' "
+                 "WHERE quarter_end = '2026-06-30'")
+    out = consensus_signals.join_shareholding_increase(
+        conn, _consensus_row(isin), as_of_month="2026-06")
+    assert out.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
+    assert out.iloc[0]["shareholding_published_basis"] == "observed"
+    # Filed late (Aug 20): not usable for the July MF month (deadline Aug 10)
+    # even though its filing deadline (July 21) had passed.
+    conn.execute("UPDATE shareholding_quarterly SET published_at = '2026-08-20T18:00' "
+                 "WHERE quarter_end = '2026-06-30'")
+    out2 = consensus_signals.join_shareholding_increase(
+        conn, _consensus_row(isin), as_of_month="2026-07")
+    assert out2.iloc[0]["shareholding_quarter_end"] == "2026-03-31"
+    out3 = consensus_signals.join_shareholding_increase(
+        conn, _consensus_row(isin), as_of_date="2026-08-21")
+    assert out3.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
     conn.close()
 
 
@@ -482,12 +514,13 @@ def test_pipeline_overlap_common_via_end_to_end_consensus():
 
 def test_pipeline_overlap_no_lookahead():
     conn = _mem_conn()
-    # Q2 shows an FII increase; a future Q3 filing reverses it. With a June
-    # cutoff the pipeline must rank Q2 (common), not the future quarter.
+    # Q2 shows an FII increase; a future Q3 filing reverses it. The July MF
+    # month is knowable on Aug 10: Q2 (deadline Jul 21) is public by then,
+    # Q3 is not, so the pipeline must rank Q2 (common).
     _add_sh(conn, "INE000A01001", "2026-03-31", 10.0, 5.0)
     _add_sh(conn, "INE000A01001", "2026-06-30", 12.0, 6.0)
     _add_sh(conn, "INE000A01001", "2026-09-30", 1.0, 1.0)
-    overlap = build_overlap_view(conn, _consensus_row("INE000A01001"), "2026-06")
+    overlap = build_overlap_view(conn, _consensus_row("INE000A01001"), "2026-07")
     assert overlap["status"] == "ok"
     assert overlap["joined"].iloc[0]["shareholding_quarter_end"] == "2026-06-30"
     assert bool(overlap["common"].iloc[0]["is_common"]) is True

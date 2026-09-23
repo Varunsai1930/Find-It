@@ -113,3 +113,51 @@ def test_load_prices_upserts(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM security_prices_monthly").fetchone()[0] == 1
     assert P.load_prices(conn, rows.iloc[0:0]) == 0
     conn.close()
+
+
+# ---- legacy format and entry-day fetching --------------------------------------
+
+def _legacy_zip(rows) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("cm31JUL2019bhav.csv", pd.DataFrame(rows).to_csv(index=False))
+    return buf.getvalue()
+
+
+def test_parses_the_legacy_bhavcopy_format():
+    content = _legacy_zip([
+        {"SYMBOL": "RELIANCE", "SERIES": "EQ", "CLOSE": 1162.4, "TOTTRDQTY": 100,
+         "TIMESTAMP": "31-JUL-2019", "ISIN": "INE002A01018"},
+        {"SYMBOL": "1003GS2019", "SERIES": "GS", "CLOSE": 61.97, "TOTTRDQTY": 2,
+         "TIMESTAMP": "31-JUL-2019", "ISIN": "IN0020010065"},
+    ])
+    frame = P.parse_bhavcopy(content, None, date(2019, 7, 31))
+    assert frame[["isin", "close_price", "symbol"]].values.tolist() == [
+        ["INE002A01018", 1162.4, "RELIANCE"]]
+
+
+@pytest.mark.parametrize("day, formats", [
+    (date(2019, 7, 31), ["historical"]),
+    (date(2024, 7, 3), ["BhavCopy_NSE_CM", "historical"]),
+    (date(2026, 9, 11), ["BhavCopy_NSE_CM"]),
+])
+def test_only_formats_published_on_a_date_are_requested(day, formats):
+    urls = P.bhavcopy_urls(day)
+    assert len(urls) == len(formats)
+    assert all(marker in url for marker, url in zip(formats, urls))
+
+
+def test_entry_day_walks_forward_never_back(tmp_path):
+    session = _Session({"20260914"})  # Fri 11th and weekend unavailable -> Monday
+    frame = P.fetch_close_on_or_after(date(2026, 9, 11), cache_dir=tmp_path,
+                                           session=session)
+    assert frame["trade_date"].iloc[0] == "2026-09-14"
+    assert all(stamp >= "20260911" for stamp in session.requested)
+
+
+def test_load_daily_prices(tmp_path):
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    frame = P.parse_bhavcopy(_zip([ROW]), None, date(2026, 9, 14))
+    assert P.load_daily_prices(conn, frame) == 1
+    assert conn.execute("SELECT trade_date FROM security_prices_daily").fetchone()[0] == "2026-09-14"
+    conn.close()

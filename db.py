@@ -166,6 +166,22 @@ CREATE TABLE IF NOT EXISTS security_prices_monthly (
     fetched_at TEXT,
     PRIMARY KEY (isin, report_month)
 );
+
+-- Exchange closes on specific trading days (entry/exit dates for backtests),
+-- keyed by the actual trade date. Same independence rule as above.
+CREATE TABLE IF NOT EXISTS security_prices_daily (
+    isin TEXT NOT NULL,
+    trade_date TEXT NOT NULL,
+    close_price REAL,
+    series TEXT,
+    symbol TEXT,
+    source TEXT,
+    source_url TEXT,
+    fetched_at TEXT,
+    PRIMARY KEY (isin, trade_date)
+);
+CREATE INDEX IF NOT EXISTS idx_security_prices_daily_date
+    ON security_prices_daily(trade_date);
 """
 
 
@@ -392,7 +408,11 @@ def record_scheme_alias(
 
 
 def classify_scheme_active(scheme_name: str) -> int:
-    """1 if the scheme looks like an active fund, 0 if passive/debt-like."""
+    """1 if the scheme looks like an active fund, 0 if passive/debt-like.
+
+    A fallback for sheets with no title row: sheet codes ("SAOF",
+    "NIF30DEX") defeat substring patterns, so prefer classify_scheme_title.
+    """
     name = (scheme_name or "").lower()
     for pat in PASSIVE_SCHEME_PATTERNS:
         if pat in name:
@@ -400,22 +420,86 @@ def classify_scheme_active(scheme_name: str) -> int:
     return 1
 
 
+# Scheme *titles* whose stock holdings are not a manager's discretionary
+# equity choice: index-tracking, hedged (arbitrage legs), holdings of other
+# funds' units, or debt. Hybrids, multi-asset and balanced-advantage funds
+# stay active -- their unhedged equity is chosen. Word-bounded so "Long Term
+# Advantage Fund" (ELSS) is not caught by "term fund".
+_NON_DISCRETIONARY_TITLE_RE = re.compile(
+    r"\b(?:index|etf|passive|nifty|sensex|bse|crisil|ibx|nasdaq"
+    r"|arbitrage|equity savings"
+    r"|fof|fund of funds?"
+    r"|gold|silver"
+    r"|liquid|overnight|money market|gilt|g-sec|gsec|sdl|bond|debt|duration"
+    r"|credit risk|floating|floater|fixed maturity|fmp|constant maturity"
+    r"|ultra short|term fund|interval)\b",
+    re.IGNORECASE,
+)
+# SEBI category descriptions and rename notes, e.g. "(An open ended equity
+# scheme tracking ...)" or "(Erstwhile known as ...)". Short tags like
+# "(FOF)" or "(FMP)" are kept: they are the classification.
+_TITLE_DESCRIPTION_RE = re.compile(r"\((?:an?\s|erstwhile|formerly)[^)]*\)", re.IGNORECASE)
+
+
+def classify_scheme_title(scheme_title: str) -> int:
+    """1 if a full scheme name is a discretionary equity fund, else 0."""
+    name = _TITLE_DESCRIPTION_RE.sub(" ", scheme_title or "")
+    return 0 if _NON_DISCRETIONARY_TITLE_RE.search(name) else 1
+
+
+def classify_scheme(scheme_name: str, scheme_title: str | None = None) -> int:
+    """Title when the sheet carried one, sheet-name heuristic otherwise."""
+    if scheme_title and str(scheme_title).strip() and str(scheme_title) != "nan":
+        return classify_scheme_title(str(scheme_title))
+    return classify_scheme_active(scheme_name)
+
+
+def record_scheme_title(conn: sqlite3.Connection, scheme_id: int, title: str):
+    """Store a scheme's full name and re-derive is_active_equity from it.
+
+    Returns (amc, scheme_name, title, old_flag, new_flag) when the flag
+    changed, else None, so callers can print every reclassification.
+    """
+    title = " ".join(str(title).split())
+    if not title or title == "nan":
+        return None
+    for column, ddl in (("scheme_title", "TEXT"), ("is_active_equity", "INTEGER")):
+        if column not in [r[1] for r in conn.execute("PRAGMA table_info(schemes)")]:
+            conn.execute(f"ALTER TABLE schemes ADD COLUMN {column} {ddl}")
+    row = conn.execute(
+        "SELECT amc_name, scheme_name, is_active_equity FROM schemes WHERE scheme_id = ?",
+        (scheme_id,),
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"No scheme with scheme_id={scheme_id}")
+    new_flag = classify_scheme_title(title)
+    conn.execute(
+        "UPDATE schemes SET scheme_title = ?, is_active_equity = ? WHERE scheme_id = ?",
+        (title, new_flag, scheme_id),
+    )
+    conn.commit()
+    if row[2] is not None and int(row[2]) != new_flag:
+        return (row[0], row[1], title, int(row[2]), new_flag)
+    return None
+
+
 def backfill_is_active_equity(conn: sqlite3.Connection) -> list:
-    """Set is_active_equity where NULL via classify_scheme_active.
+    """Set is_active_equity where NULL via classify_scheme.
 
     Returns [(scheme_id, amc_name, scheme_name)] newly flagged 0, so the
     caller can print them (auditable, never a silent filter)."""
     cols = [r[1] for r in conn.execute("PRAGMA table_info(schemes)").fetchall()]
     if "is_active_equity" not in cols:
         conn.execute("ALTER TABLE schemes ADD COLUMN is_active_equity INTEGER")
+    title_sql = "scheme_title" if "scheme_title" in cols else "NULL"
     rows = conn.execute(
-        "SELECT scheme_id, amc_name, scheme_name FROM schemes "
+        f"SELECT scheme_id, amc_name, scheme_name, {title_sql} FROM schemes "
         "WHERE is_active_equity IS NULL"
     ).fetchall()
     flagged = []
     cur = conn.cursor()
-    for scheme_id, amc_name, scheme_name in rows:
-        active = classify_scheme_active(scheme_name or "")
+    for scheme_id, amc_name, scheme_name, scheme_title in rows:
+        active = classify_scheme(scheme_name or "", scheme_title)
         cur.execute(
             "UPDATE schemes SET is_active_equity = ? WHERE scheme_id = ?",
             (active, scheme_id),
@@ -452,6 +536,14 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
         ("shareholding_quarterly", "validation_status", "validation_status TEXT"),
         ("shareholding_quarterly", "source_url", "source_url TEXT"),
         ("shareholding_quarterly", "source_sha256", "source_sha256 TEXT"),
+        # Mutual-fund ownership on its own (DII folds it in with banks and
+        # insurers) and when the filing actually became public.
+        ("shareholding_quarterly", "mf_pct", "mf_pct REAL"),
+        ("shareholding_quarterly", "published_at", "published_at TEXT"),
+        # Full scheme name from the sheet header ("SBI Arbitrage Fund"), the
+        # only reliable input for the passive/arbitrage filter when sheets
+        # are named by code ("SAOF").
+        ("schemes", "scheme_title", "scheme_title TEXT"),
     ):
         _existing = [r[1] for r in conn.execute(f"PRAGMA table_info({_table})").fetchall()]
         if _col not in _existing:
@@ -537,6 +629,19 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
         scheme_ids[f"{amc}||{scheme}"] = resolve_scheme_id(conn, amc, scheme)
     conn.commit()
 
+    # Full scheme names from the sheet headers drive the passive/arbitrage
+    # filter. Every flag they change is printed, never applied silently.
+    if "scheme_title" in df:
+        titled = df.dropna(subset=["scheme_title"]).drop_duplicates(["amc_name", "scheme_name"])
+        for _, row in titled.iterrows():
+            change = record_scheme_title(
+                conn, scheme_ids[f"{row['amc_name']}||{row['scheme_name']}"],
+                row["scheme_title"])
+            if change:
+                amc, scheme, title, old_flag, new_flag = change
+                print(f"  [is_active_equity {old_flag}->{new_flag}] {amc} | {scheme} "
+                      f"| {title}")
+
     # A scheme containing only cash/non-ISIN holdings carries one metadata
     # row. Register the scheme above, but never turn that row into a security.
     if "dropped_non_isin_count" in df:
@@ -605,6 +710,8 @@ def load_shareholding_records(conn: sqlite3.Connection, records: pd.DataFrame) -
         ("validation_status", "TEXT"),
         ("source_url", "TEXT"),
         ("source_sha256", "TEXT"),
+        ("mf_pct", "REAL"),
+        ("published_at", "TEXT"),
     ):
         cols = [r[1] for r in conn.execute("PRAGMA table_info(shareholding_quarterly)").fetchall()]
         if col not in cols:
@@ -613,7 +720,7 @@ def load_shareholding_records(conn: sqlite3.Connection, records: pd.DataFrame) -
     cols = [
         "isin", "quarter_end", "promoter_pct", "fii_pct", "dii_pct",
         "public_pct", "source", "filing_type", "validation_status",
-        "source_url", "source_sha256",
+        "source_url", "source_sha256", "mf_pct", "published_at",
     ]
     available = [c for c in cols if c in records.columns]
     rows = records.loc[:, available].where(pd.notna(records[available]), None)
