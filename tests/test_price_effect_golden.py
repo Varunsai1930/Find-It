@@ -98,6 +98,9 @@ def test_golden_hdfc_flow_vs_price(tmp_path: Path):
 def test_new_position_flow_equals_value(tmp_path: Path):
     conn = db.get_connection(str(tmp_path / "new.db"))
     try:
+        # The fund held something else both months: a new *position* in an
+        # ongoing fund, not a fund that did not exist last month.
+        _seed(conn, 45, "INE009A01021", prev=(100.0, 10.0), curr=(100.0, 10.0))
         _seed(conn, 45, "INE002A01018", prev=None, curr=(10000.0, 500.0))
         _deltas, row = _compute_persist_reread(conn, 45, "INE002A01018")
         _qty, value, flow, price, _action = row
@@ -111,6 +114,7 @@ def test_new_position_flow_equals_value(tmp_path: Path):
 def test_exited_position_flow_minus_prev(tmp_path: Path):
     conn = db.get_connection(str(tmp_path / "exited.db"))
     try:
+        _seed(conn, 46, "INE009A01021", prev=(100.0, 10.0), curr=(100.0, 10.0))
         _seed(conn, 46, "INE003A01019", prev=(10000.0, 500.0), curr=None)
         _deltas, row = _compute_persist_reread(conn, 46, "INE003A01019")
         _qty, value, flow, price, _action = row

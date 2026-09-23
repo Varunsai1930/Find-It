@@ -4,10 +4,10 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
-from findit.narrate.service import get_summary
+from findit.summary import get_summary
 
 
-def _cached_summary(conn: sqlite3.Connection, scheme_id: int, month: str) -> str:
+def _summary_text(conn: sqlite3.Connection, scheme_id: int, month: str) -> str:
     # Freshness is checked on every read; this never calls the model or writes.
     return get_summary(conn, int(scheme_id), month)["text"]
 
@@ -25,7 +25,7 @@ def build_digest(conn: sqlite3.Connection, scheme_ids, month: str) -> str:
     parts = [header]
     for sid in ids:
         parts.append("")
-        parts.append(_cached_summary(conn, sid, month))
+        parts.append(_summary_text(conn, sid, month))
     return "\n".join(parts).rstrip() + "\n"
 
 

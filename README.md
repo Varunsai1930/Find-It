@@ -5,9 +5,9 @@ and tested end-to-end on synthetic data. It proves the hard part — messy
 AMC Excel parsing → storage → deltas → cross-fund consensus → a plain-English
 summary — works, before spending any time on FII data, an API, or a UI.
 
-No LLM is used anywhere in this phase. The AI narration layer comes later
-and sits *on top of* `fallback_summary.py`'s numbers — see §7 of the build
-plan for why that order matters.
+No LLM is used anywhere. An AI narration layer was built and then removed;
+see "Why the GLM narration layer was removed" below. Summaries are produced
+by `fallback_summary.py` from numbers Python computed.
 
 ## Files
 
@@ -20,6 +20,16 @@ plan for why that order matters.
 | `fallback_summary.py` | Turns one scheme's computed deltas into a short plain-English paragraph. Purely template-based, no AI. |
 | `run_pipeline.py` | The one command you run each month once this is wired to real data: load → delta → consensus → summaries. |
 | `make_test_fixtures.py` | Generates the synthetic test files below. Not needed once you're using real AMFI data. |
+
+## Data is not in the repo
+
+The repository holds code only. `tracker.db`, `real_data/` (downloaded AMC
+disclosures), the fetch caches and the generated `test_*.xlsx` fixtures are
+git-ignored and live only on your machine. A fresh clone rebuilds them:
+`make_test_fixtures.py` for the synthetic files below, the AMC's monthly
+disclosure workbooks for real data, and `fetch_shareholding.py` /
+`findit.cli.prices` for filings and prices. The test suite needs none of
+them -- every test builds its own temporary database.
 
 ## Try it right now (no real data needed yet)
 
@@ -58,14 +68,30 @@ number wrong.
 
 ## After that (per the roadmap in the build plan)
 
-- **Phase 1:** add FII/DII quarterly shareholding parsing (NSE/BSE), join
-  it against `consensus_signals.py`'s output on ISIN for the full MF+FII
-  overlap view.
-- **Phase 2:** implemented as cached, constrained GLM narration over the
-  existing rule summary; see the Phase 2 instructions below. Live API use
-  requires `ZAI_API_KEY`.
-- **Phase 3:** dashboard UI (Top-5 cards, common holdings screener) — will
-  need daily price data too, which nothing here ingests yet.
+- **Phase 1 (done):** BSE quarterly FII/DII parsing (`fetch_shareholding.py`,
+  `db.load_shareholding_records`) joined against `compute_consensus()` on
+  ISIN via `join_shareholding_increase()` for the full MF+FII overlap view.
+  `run_pipeline.py` prints the overlap each month with an `as_of_month`
+  no-lookahead cutoff; missing filings stay `no_data` (never zero) and stale
+  quarters are flagged. `fetch_shareholding.py --report-month YYYY-MM` prints
+  the same overlap after a fetch.
+
+  Consensus separates `new_position_flow_lakhs` from
+  `accumulation_flow_lakhs`. A new position books its entire market value as
+  flow, so without the split an IPO or fresh listing that every fund "bought"
+  because it began existing outranks real accumulation. `universe_status` is
+  tri-state like the FII/DII directions — `established`, `new_listing`, or
+  `unknown` when no previous month is on record. Ranking still leads with
+  consensus breadth (`net_amc_count`); the split only orders names within one
+  breadth level, and the tiebreak is accumulation flow rather than a position's
+  entry value.
+- **Phase 2:** built as cached, constrained GLM narration over the rule
+  summary, then **removed** — the model's only authority was reordering
+  pre-written sentences. See "Why the GLM narration layer was removed".
+- **Phase 3:** dashboard UI (Top-5 cards, common holdings screener). Prices
+  are ingested now; what it still waits on is evidence -- the quarterly
+  history backtest and a track record of more than a handful of months (see
+  "Testing the signal before building on it").
 
 ## Operations (offline)
 
@@ -78,63 +104,183 @@ python3 -m findit.cli.digest --db /tmp/tracker.copy.db --month 2026-04 --schemes
 ```
 
 Rebuild copies the DB first and computes deltas via `delta_calculator` on the
-copy only; digest prints a preview from cached rule summaries (no sending,
+copy only; digest prints rule-based summaries with the same safety checks (no sending,
 no credentials). Both are offline and never write `./tracker.db` or `real_data/`.
 
-## Phase 2 — cached AI-assisted summaries
+### Validation gate failure policy
 
-The summary API and monthly digest now read `fund_summaries` when its source
-hash is current. Otherwise they use the rule-based summary. Neither consumer
-calls an AI provider or writes to the database.
+A check inside `validate_holdings_month` that raises is reported as a
+`<check>_crashed` error and fails the gate. A validator that could not run has
+not validated anything, so the scheme-month is quarantined for a human rather
+than published on the strength of checks that silently did not happen.
+Likewise, `_quarantined_scheme_ids` returns `[]` only for a genuinely absent
+table; any other database error propagates, because silently returning `[]`
+would publish quarantined schemes as though they had passed.
 
-The [implementation plan](docs/phase-2-plan.md) describes the design and scope.
-Python supplies all financial facts and sentence variants. GLM chooses wording
-and order through a strict JSON plan; it cannot insert prose, numbers, stock
-names, or recommendations. This is constrained AI editing, not free-form
-analysis. Each supplied fact must be retained exactly once.
+### Scheme identity (`findit.cli.alias`)
 
-### Generate a batch
+A scheme's stored name is the AMC's Excel *sheet* name (`SCRF`, `SETFNIF50`,
+`SBI  Bluechip Fund`). Punctuation, casing and spacing drift between months is
+absorbed automatically by `db.normalize_scheme_name`, so a re-punctuated sheet
+keeps its existing `scheme_id` instead of forking the fund into two identities
+and manufacturing a phantom full exit plus a phantom new fund in the deltas.
 
-Use an existing database populated by the monthly pipeline. For a safe local
-trial, copy the database first:
+A *real* rename (`SCRF` -> `SBI Credit Risk Fund`) is a judgement call and is
+never guessed. Record it yourself:
 
 ```bash
-cp tracker.db /tmp/findit-narration.db
-
-# Read-only eligibility preview; no credentials, writes, or model calls.
-python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
-  --month 2026-08 --dry-run
-
-# Offline rule-based cache generation (the default).
-python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
-  --month 2026-08 --provider rules
-
-# Configure ZAI_API_KEY in your environment before this explicit network run.
-python3 -m findit.cli.narrate --db /tmp/findit-narration.db \
-  --month 2026-08 --provider zai --model glm-5.3
-
-# Read the resulting summaries without network calls or message delivery.
-python3 -m findit.cli.digest --db /tmp/findit-narration.db --month 2026-08
+python3 -m findit.cli.alias --db tracker.db --amc "SBI AMC" --list
+python3 -m findit.cli.alias --db tracker.db --add-alias SCRF --scheme-id 33
+python3 -m findit.cli.alias --db tracker.db --merge-from 214 --merge-into 33
 ```
 
-`--schemes 1 2` restricts the batch; `--force` regenerates eligible summaries.
-Start with one scheme when checking a new API key. Existing matching source and
-model versions are skipped. The provider uses Z.ai's
-[official Chat Completions API](https://docs.z.ai/api-reference/llm/chat-completion),
-a 60-second request timeout, at most two retries for transient failures, and a
-bounded response budget. Credentials and raw provider errors are not logged.
+`--merge-from` moves every holdings/delta/status/summary row onto the surviving
+`scheme_id`, keeps the old sheet name as a resolvable alias, then deletes the
+duplicate. It refuses to merge across AMCs, and refuses when both schemes hold a
+row for the same (isin, month) — that is a data conflict, not a rename, and
+dropping one side silently is exactly the invisible wrong number this project
+refuses to produce. Two schemes that already share a normalized key make
+ingestion raise `AmbiguousSchemeError` naming both IDs rather than picking one.
 
-The batch writes only the summary table. It does not rerun validation or change
-holdings, deltas, flow calculations, or consensus. Current data must have an
-`ok` or `validated` status and usable equity deltas. Quarantined current or
-referenced previous months, non-finite inputs, and missing data cannot produce
-an AI summary. Existing unvalidated data continues to use the ordinary rule
-fallback. Run the normal ingestion/validation process to update its status.
+### Testing the signal before building on it
 
-Cache freshness includes raw input rows, security/fund metadata, validation
-reports, trusted wording, and a narration policy version. A data change while
-an API request is running prevents that response from being saved. API errors
-and rejected model plans fall back to rules; a later AI batch can retry them.
+The project's claim -- stocks many AMCs are buying beat comparable stocks,
+more so with FII/DII agreement -- is a hypothesis, and everything downstream
+(ranking, dashboard) is only worth building if it holds. Four rules keep the
+measurement honest:
 
-The real provider adapter is covered by mocked HTTP tests. A live GLM request
-was not run during implementation because `ZAI_API_KEY` was not configured.
+1. **Only use what was public.** A month's portfolios are public on the SEBI
+   deadline (month end + 10 days), a company's shareholding pattern when BSE
+   broadcast it (`published_at`, recorded for every filing) -- or its 21-day
+   deadline when that was never observed, which the output counts. Positions
+   are entered at the close of the first trading day *after* publication.
+   Before this, the backtest entered at the month-end close and the FII/DII
+   join admitted any quarter ending by month end: both used data nobody had.
+2. **Count managers' choices, not their inflows.** A fund with inflows buys
+   more of everything. `findit.core.active_weight` compares each stock's weight
+   now with the weight it would have had with no trading (last month's shares
+   at this month's prices). `net_active_amc_count` counts AMCs whose change
+   beats that drift. Splits and bonuses are detected from the holdings (every
+   holder's quantity on the same multiple, price on its inverse) so they are
+   not read as buying. It is reported beside `net_amc_count`; the ranking
+   still uses `net_amc_count` until the track record says otherwise.
+3. **Only active stock pickers vote.** Index funds, ETFs, arbitrage and
+   equity-savings funds, FoFs and debt funds are excluded -- decided from the
+   workbook's own scheme name ("SBI Arbitrage Fund"), not the sheet code
+   ("SAOF"), which the old heuristic could not read. New ingests record it
+   automatically; for an existing DB:
+
+   ```bash
+   python3 -m findit.cli.scheme_titles --db tracker.db --amc "SBI AMC" \
+     real_data/sbi_aug2026.xlsx --dry-run
+   ```
+4. **Months, not stocks, are the sample.** Stocks in one month move together,
+   so the track record reports each period's excess return per group and a
+   t-statistic *across periods*.
+
+#### Monthly: the signal this project actually ranks
+
+```bash
+python3 -m findit.cli.prices --db tracker.db --date 2026-09-11 --date 2026-10-11
+python3 -m findit.cli.backtest --db tracker.db --from 2026-07 --to 2026-08
+```
+
+`findit.cli.prices` is the only command that downloads prices. `--month`
+stores month-end closes; `--date D` stores the first trading day on or after
+D (both NSE bhavcopy formats: UDiFF from July 2024, legacy before), and the
+backtests print the exact `--date` list they are missing. A holding period
+that has not ended is marked `*`, valued at the latest stored close, and kept
+out of the pooled line. `run_pipeline.py` prints the same track record under
+each month's ranking, and the web dashboard ranks with the same
+`compute_consensus` and FII/DII join -- one implementation, so the two can
+never disagree, and an older month never shows filings published after it.
+
+Deltas compare only schemes present in both months. A fund launched this
+month, or one whose previous file was not loaded, is listed as "no
+comparison" rather than counted as buying (or selling) its whole portfolio.
+
+The first measurement changed under rule 1. With a month-end entry, August's
+MF-only buying beat the universe by +1.26%; entering after publication
+(2026-09-11, first 7 trading days only) it is -0.98%. Neither number is
+evidence -- one partial month -- but the difference shows how much of a
+one-month result the look-ahead can manufacture.
+
+#### Quarterly: ten years, every company
+
+Monthly AMC files here cover a few months; they cannot settle the question.
+Every listed company's shareholding pattern can: one format, back to 2015,
+with mutual-fund ownership (`mf_pct`) and FPI ownership as separate lines.
+
+```bash
+python3 fetch_shareholding.py --db tracker.db --history 0          # every filing
+python3 -m findit.cli.backtest_quarterly --db tracker.db           # lists missing closes
+python3 -m findit.cli.prices --db tracker.db --date ... --date ... # as printed
+python3 -m findit.cli.backtest_quarterly --db tracker.db
+```
+
+The fetcher reads both BSE formats (inline-XBRL HTML for recent quarters,
+XBRL instance XML for 2016-2025), keeps a stored filing unless it predates
+`mf_pct`, and fills `published_at` from BSE's filing index. `--universe nse`
+fetches every NSE-listed equity instead of those tracked schemes hold -- a
+broader universe, at roughly 45 requests per company. The backtest decides
+30 days after quarter end (`--decision-lag-days`), uses a filing only if it
+was published by then (late filers sit that quarter out), and groups stocks
+by the change in MF ownership (`mf_up_fii_up`, `mf_up_only`, `mf_flat`,
+`mf_down`, top/bottom fifth). Its caveats print with every run: survivorship
+(delisted firms are missing) and no size/sector matching yet.
+
+### Re-validation (`findit.cli.revalidate`)
+
+Statuses in `scheme_month_status` are whatever the gate's rules said on the day
+the data was ingested. When those rules change, a database can carry quarantines
+the current code would never produce — and the consensus filter and summary
+eligibility still read them, withholding good data. Re-run the gate over stored
+holdings, with no CSVs and no network:
+
+```bash
+python3 -m findit.cli.revalidate --db tracker.db --dry-run
+python3 -m findit.cli.revalidate --db tracker.db
+```
+
+`--dry-run` reports the status changes from a temporary copy and never opens
+`--db` for writing. `--month` (repeatable) and `--schemes` restrict the run.
+Source hashes and drop provenance are carried over from the existing status
+rows, so re-validating never invents provenance the ingest did not record.
+
+## Summaries (rule-based, no LLM)
+
+`fallback_summary.build_summary` turns one scheme's computed deltas into a
+plain-English paragraph. `findit.summary.get_summary` wraps it with the
+data-safety checks the summary API and digest rely on:
+
+- a quarantined current **or referenced previous** month is withheld, with
+  wording that says so explicitly — a delta is a comparison, so bad data on
+  either side makes it unsafe to describe;
+- non-finite numbers or an unrecognised action are withheld the same way;
+- "no data" is always reported as no data, never as no activity.
+
+Neither consumer writes, calls a network service, or caches anything.
+
+```bash
+python3 -m findit.cli.digest --db tracker.db --month 2026-08 --schemes 1 2
+```
+
+### Why the GLM narration layer was removed
+
+An earlier phase put a constrained GLM editor over these summaries: Python
+computed every number and wrote every sentence, and the model returned only
+`{"fact_id", "variant_index"}` pairs, which a strict renderer validated.
+
+The containment was sound and the idea was defensible, but the model's entire
+authority came down to reordering pre-written sentences and choosing between
+wordings like "Added to" and "Increased holdings in". That is not worth ~1,000
+lines, a provider adapter, a cache with hash-based invalidation, and a live API
+dependency that was never actually exercised — `ZAI_API_KEY` was never
+configured, so the real provider path only ever ran against mocks.
+
+It was removed rather than left dormant. The output is unchanged, because the
+model never produced any of it. The eligibility logic it carried was the
+genuinely valuable part and was kept, in `findit/summary.py`.
+`docs/phase-2-plan.md` remains as the record of the design, and the code is in
+git history if the decision is ever revisited with a job worth the constraint
+budget — cross-fund synthesis, say, with the numbers still Python-computed.

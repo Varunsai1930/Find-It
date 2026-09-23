@@ -1,24 +1,66 @@
-"""Web read-only tests on a tmp DB copy. No network, never touches ./tracker.db."""
+"""Web read-only tests on a synthetic tmp DB. No network, never touches ./tracker.db.
+
+The DB is built here rather than copied from ./tracker.db, so the tests run
+on a fresh clone (the real DB is not committed) and never change meaning
+when the real data does.
+"""
 
 from __future__ import annotations
 
 import hashlib
 import math
-import shutil
 import sqlite3
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+import db as db_module
+import delta_calculator
 from findit.web.app import create_app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-TRACKER_DB = REPO_ROOT / "tracker.db"
+
+# Two AMCs, three active schemes; one equity everyone buys, one mixed, one
+# held unchanged, and a debt holding the equity filter must drop.
+_SCHEMES = [(1, "A AMC", "A Flexi Cap"), (2, "A AMC", "A Mid Cap"), (3, "B AMC", "B Value")]
+_STOCKS = [("INE002A01018", "Reliance Industries", "Oil", "equity"),
+           ("INE009A01021", "Infosys", "IT", "equity"),
+           ("INE040A01034", "HDFC Bank", "Banks", "equity"),
+           ("INE001A07PB6", "HDFC NCD", "Debt", "ncd")]
+_HOLDINGS = {  # (scheme, isin) -> (qty_jul, qty_aug)
+    (1, "INE002A01018"): (100, 150), (1, "INE009A01021"): (100, 80),
+    (1, "INE040A01034"): (50, 50), (1, "INE001A07PB6"): (10, 20),
+    (2, "INE002A01018"): (40, 60), (2, "INE009A01021"): (30, 30),
+    (3, "INE002A01018"): (70, 90), (3, "INE009A01021"): (60, 90),
+}
 
 
 def _copy_db(tmp_path: Path) -> Path:
+    """A small, complete tracker DB: holdings, deltas, statuses, filings."""
     dest = tmp_path / "web_test.db"
-    shutil.copy2(TRACKER_DB, dest)
+    conn = db_module.get_connection(str(dest))
+    conn.executemany("INSERT INTO schemes (scheme_id, amc_name, scheme_name, is_active_equity) "
+                     "VALUES (?, ?, ?, 1)", _SCHEMES)
+    conn.executemany("INSERT INTO stocks (isin, name, industry, instrument_type) "
+                     "VALUES (?, ?, ?, ?)", _STOCKS)
+    for (sid, isin), quantities in _HOLDINGS.items():
+        for month, qty in zip(("2026-07", "2026-08"), quantities):
+            conn.execute("INSERT INTO mf_holdings_monthly (scheme_id, isin, report_month, "
+                         "quantity, market_value_lakhs, pct_nav) VALUES (?, ?, ?, ?, ?, 10.0)",
+                         (sid, isin, month, qty, qty * 0.1))
+    for sid, _amc, _name in _SCHEMES:
+        for month in ("2026-07", "2026-08"):
+            conn.execute("INSERT INTO scheme_month_status (scheme_id, report_month, status) "
+                         "VALUES (?, ?, 'ok')", (sid, month))
+    delta_calculator.persist_deltas(
+        conn, delta_calculator.compute_deltas(conn, "2026-07", "2026-08"))
+    conn.executemany(
+        "INSERT INTO shareholding_quarterly (isin, quarter_end, promoter_pct, fii_pct, "
+        "dii_pct, public_pct, source, filing_type) VALUES (?, ?, 50, ?, 10, 50, 'test', "
+        "'quarterly')",
+        [("INE002A01018", "2026-03-31", 20.0), ("INE002A01018", "2026-06-30", 21.0)])
+    conn.commit()
+    conn.close()
     return dest
 
 

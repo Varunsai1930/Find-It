@@ -6,7 +6,7 @@ import pandas as pd
 
 import consensus_signals
 import fallback_summary
-from findit.narrate.template import render_summary
+from run_pipeline import _overlap_summary, build_overlap_view
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -212,27 +212,59 @@ def test_single_quarter_yields_no_data_not_decreased():
     conn.close()
 
 
-def test_future_quarter_excluded_by_as_of_month():
+def test_unpublished_quarter_excluded_by_as_of_month():
+    # The June MF month is knowable on its disclosure deadline (July 10).
+    # Without an observed broadcast date the June quarter counts as public
+    # only on its filing deadline (July 21), so it is not usable yet --
+    # quarter_end <= month end would have leaked it in.
     conn = _mem_conn()
     isin = "INE000A01001"
+    _add_sh(conn, isin, "2025-12-31", 9.0, 4.0)
     _add_sh(conn, isin, "2026-03-31", 10.0, 5.0)
     _add_sh(conn, isin, "2026-06-30", 12.0, 6.0)
     _add_sh(conn, isin, "2026-09-30", 20.0, 20.0)
     out = consensus_signals.join_shareholding_increase(
         conn, _consensus_row(isin), as_of_month="2026-06"
     )
-    assert out.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
-    assert out.iloc[0]["previous_shareholding_quarter_end"] == "2026-03-31"
+    assert out.iloc[0]["shareholding_quarter_end"] == "2026-03-31"
+    assert out.iloc[0]["previous_shareholding_quarter_end"] == "2025-12-31"
+    assert out.iloc[0]["shareholding_published_basis"] == "regulatory_deadline"
+    # By the July MF deadline (Aug 10) the June quarter is public.
     out2 = consensus_signals.join_shareholding_increase(
-        conn, _consensus_row(isin), as_of_month="2026-09"
+        conn, _consensus_row(isin), as_of_month="2026-07"
     )
-    assert out2.iloc[0]["shareholding_quarter_end"] == "2026-09-30"
-    # as_of April: only Q1 visible -> single quarter -> no_data.
+    assert out2.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
+    # as_of April: Q1's deadline (Apr 21) is before May 10 -> visible.
     out3 = consensus_signals.join_shareholding_increase(
         conn, _consensus_row(isin), as_of_month="2026-04"
     )
     assert out3.iloc[0]["shareholding_quarter_end"] == "2026-03-31"
-    assert out3.iloc[0]["fii_direction"] == "no_data"
+    conn.close()
+
+
+def test_observed_publication_date_overrides_deadline():
+    conn = _mem_conn()
+    conn.execute("ALTER TABLE shareholding_quarterly ADD COLUMN published_at TEXT")
+    isin = "INE000A01001"
+    _add_sh(conn, isin, "2026-03-31", 10.0, 5.0)
+    _add_sh(conn, isin, "2026-06-30", 12.0, 6.0)
+    # Filed early (July 5): usable for the June MF month (deadline July 10).
+    conn.execute("UPDATE shareholding_quarterly SET published_at = '2026-07-05T18:00' "
+                 "WHERE quarter_end = '2026-06-30'")
+    out = consensus_signals.join_shareholding_increase(
+        conn, _consensus_row(isin), as_of_month="2026-06")
+    assert out.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
+    assert out.iloc[0]["shareholding_published_basis"] == "observed"
+    # Filed late (Aug 20): not usable for the July MF month (deadline Aug 10)
+    # even though its filing deadline (July 21) had passed.
+    conn.execute("UPDATE shareholding_quarterly SET published_at = '2026-08-20T18:00' "
+                 "WHERE quarter_end = '2026-06-30'")
+    out2 = consensus_signals.join_shareholding_increase(
+        conn, _consensus_row(isin), as_of_month="2026-07")
+    assert out2.iloc[0]["shareholding_quarter_end"] == "2026-03-31"
+    out3 = consensus_signals.join_shareholding_increase(
+        conn, _consensus_row(isin), as_of_date="2026-08-21")
+    assert out3.iloc[0]["shareholding_quarter_end"] == "2026-06-30"
     conn.close()
 
 
@@ -456,22 +488,62 @@ def test_new_detail_stays_flow_plus_value():
     conn.close()
 
 
-# ---- narrate template --------------------------------------------------------
+# ---- Phase 1 pipeline overlap (build_overlap_view) ----------------------------
 
-def test_template_deterministic_and_validated():
-    payload = {
-        "scheme_name": "BLUECHIP", "amc_name": "ICICI Prudential AMC",
-        "report_month": "2026-08",
-        "new_count": 1, "new_largest_name": "BSE Ltd.",
-        "new_largest_value_cr": 531.4, "new_largest_flow_cr": 531.4,
-        "new_largest_nav_pct": 0.66,
-        "added_count": 0, "trimmed_count": 0,
-        "exited_names": ["A", "B", "C", "D", "E", "F", "G"],
+def test_pipeline_overlap_common_via_end_to_end_consensus():
+    conn = _mem_conn()
+    _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity",
+                            10, 100, 100, 0.5, "added")
+    _add_scheme_stock_delta(conn, 2, "SBI AMC", "Bluechip", "INEAAA01001", "AAA", "equity",
+                            10, 100, 100, 0.5, "added")
+    _add_sh(conn, "INEAAA01001", "2026-03-31", 10.0, 5.0)
+    _add_sh(conn, "INEAAA01001", "2026-06-30", 12.0, 4.0)  # FII up -> common
+    consensus = consensus_signals.compute_consensus(conn, "2026-08")
+    assert not consensus.empty
+    overlap = build_overlap_view(conn, consensus, "2026-08")
+    assert overlap["status"] == "ok"
+    assert len(overlap["common"]) == 1
+    assert overlap["common"].iloc[0]["isin"] == "INEAAA01001"
+    summary = _overlap_summary(overlap["joined"], overlap["common"], overlap["status"])
+    assert summary == {
+        "status": "ok", "common_count": 1, "consensus_count": 1,
+        "stale_count": 0, "missing_shareholding_count": 0,
     }
-    first = render_summary(payload)
-    second = render_summary(dict(payload))
-    assert first == second
-    assert "BSE Ltd." in first
-    assert "0.66%" in first
-    assert "and 2 more" in first
-    assert "+₹-" not in first
+    conn.close()
+
+
+def test_pipeline_overlap_no_lookahead():
+    conn = _mem_conn()
+    # Q2 shows an FII increase; a future Q3 filing reverses it. The July MF
+    # month is knowable on Aug 10: Q2 (deadline Jul 21) is public by then,
+    # Q3 is not, so the pipeline must rank Q2 (common).
+    _add_sh(conn, "INE000A01001", "2026-03-31", 10.0, 5.0)
+    _add_sh(conn, "INE000A01001", "2026-06-30", 12.0, 6.0)
+    _add_sh(conn, "INE000A01001", "2026-09-30", 1.0, 1.0)
+    overlap = build_overlap_view(conn, _consensus_row("INE000A01001"), "2026-07")
+    assert overlap["status"] == "ok"
+    assert overlap["joined"].iloc[0]["shareholding_quarter_end"] == "2026-06-30"
+    assert bool(overlap["common"].iloc[0]["is_common"]) is True
+    conn.close()
+
+
+def test_pipeline_overlap_empty_consensus_and_missing_table():
+    empty = pd.DataFrame([{
+        "isin": "INE000A01001", "stock_name": "X",
+        "amcs_buying": 0, "amcs_selling": 0,
+        "total_flow_lakhs": 0.0, "total_price_effect_lakhs": 0.0,
+        "net_amc_count": 0, "buying_ratio": 0.0,
+    }]).iloc[0:0]
+    conn = _mem_conn()
+    overlap = build_overlap_view(conn, empty, "2026-08")
+    assert overlap["status"] == "no_consensus"
+    conn.close()
+
+    # Legacy DB without the shareholding table: never raises, MF-only survives.
+    bare = sqlite3.connect(":memory:")
+    overlap2 = build_overlap_view(bare, _consensus_row("INE000A01001"), "2026-08")
+    assert overlap2["status"] == "unavailable"
+    assert overlap2["joined"].equals(_consensus_row("INE000A01001"))
+    summary = _overlap_summary(overlap2["joined"], overlap2["common"], overlap2["status"])
+    assert summary == {"status": "unavailable", "common_count": 0}
+    bare.close()

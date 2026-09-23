@@ -1,4 +1,15 @@
-"""Fetch the two newest BSE quarterly shareholding filings for MF-held equities.
+"""Fetch BSE quarterly shareholding filings for MF-held (or all NSE) equities.
+
+By default the two newest filings per stock are fetched, which is what the
+monthly MF+FII overlap needs. ``--history N`` fetches up to N filings back
+(to December 2015), which is what the quarterly signal backtest needs.
+Every record carries ``published_at``, BSE's own broadcast timestamp, so a
+backtest can use a filing only once it was actually public.
+
+Two document formats are handled: the inline-XBRL HTML BSE serves for recent
+quarters, and the plain XBRL instance XML it serves for 2016-2025 filings.
+Both yield the same fields, including ``mf_pct`` -- mutual-fund ownership on
+its own, which DII otherwise folds in with banks and insurers.
 
 The MF database contains several debt and other non-equity ISINs.  This script
 first runs the project's exact MF-holdings query, then uses NSE's public equity
@@ -21,6 +32,8 @@ import re
 import sqlite3
 import time
 import warnings
+import xml.etree.ElementTree as ET
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -31,6 +44,7 @@ import requests
 
 import consensus_signals
 import db
+from findit.core import publication
 
 
 NSE_EQUITY_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
@@ -55,22 +69,12 @@ DII_LABELS = {
     "insurance companies",
     "other financial institutions",
 }
-FII_LABELS = {
-    "foreign portfolio investors category i",
-    "foreign portfolio investors category ii",
-    "foreign portfolio investor (category - iii)",
-    "foreign institutional investors",  # older filings may use this label.
-}
-PCT_TAG = "shareholdingasapercentageoftotalnumberofshares"
 
 # Negative scrip-code lookups are retried after 7 days; positive mappings
 # are kept forever. JSON cache stays backward-compatible: old `None`
 # negatives and old {"bse_scrip_code": ...} positives still read correctly.
 NEGATIVE_CACHE_TTL_SECONDS = 7 * 86400
 
-# Quarter-end month-days that count as quarterly Reg. 31 filings; anything
-# else is an interim filing. Both are kept — never filtered, never invented.
-QUARTERLY_MONTH_DAYS = {"03-31", "06-30", "09-30", "12-31"}
 
 
 class ShareholdingFetchError(RuntimeError):
@@ -153,17 +157,8 @@ def classify_filing_type(quarter_end: str) -> str:
     Quarterly month-days are 03-31/06-30/09-30/12-31; anything else is
     interim. Both kinds are kept by the fetcher — this only labels them.
     """
-    md: str | None = None
-    try:
-        md = pd.Timestamp(quarter_end).strftime("%m-%d")
-    except Exception:
-        try:
-            md = str(quarter_end).strip()[5:10]
-        except Exception:
-            md = None
-    if md in QUARTERLY_MONTH_DAYS:
-        return "quarterly"
-    return "interim"
+    month_day = str(quarter_end).strip()[5:10]
+    return "quarterly" if month_day in publication.QUARTER_END_MONTH_DAYS else "interim"
 
 
 def _persist_ixbrl_attachment(cache_dir: Path, content: bytes) -> str:
@@ -284,11 +279,36 @@ def resolve_bse_scrip_code(
     return match.group("code")
 
 
-def get_bse_filings(session: PoliteSession, bse_scrip_code: str) -> list[dict[str, str]]:
-    """Get at most two newest usable iXBRL Reg. 31 filings for a BSE scrip.
+def filing_published_at(filing: dict) -> str | None:
+    """BSE's broadcast timestamp for a filing as ISO text, or None.
 
-    Each filing carries quarter_end, attachment and filing_type
-    (quarterly vs interim). Both types are kept in recency order.
+    ``D`` is ISO already; ``broadcastTime`` ("Jul 16 2026  7:24PM") is the
+    fallback. Unparseable or absent means unknown -- never guessed here.
+    """
+    raw = filing.get("D")
+    if raw:
+        try:
+            return datetime.fromisoformat(str(raw).strip()).isoformat(timespec="minutes")
+        except ValueError:
+            pass
+    raw = filing.get("broadcastTime")
+    if raw:
+        try:
+            return datetime.strptime(" ".join(str(raw).split()), "%b %d %Y %I:%M%p").isoformat(
+                timespec="minutes")
+        except ValueError:
+            pass
+    return None
+
+
+def get_bse_filings(
+    session: PoliteSession, bse_scrip_code: str, max_filings: int | None = 2,
+) -> list[dict[str, str]]:
+    """Get the newest usable XBRL Reg. 31 filings for a BSE scrip.
+
+    Each filing carries quarter_end, attachment, filing_type (quarterly vs
+    interim) and published_at. Both types are kept in recency order.
+    ``max_filings=None`` returns every usable filing.
     """
     response = session.get(
         f"{BSE_API_URL}/Corp_Shareholding_ng/w",
@@ -311,7 +331,8 @@ def get_bse_filings(session: PoliteSession, bse_scrip_code: str) -> list[dict[st
         reverse=True,
     ):
         attachment = filing.get("XBRLAttachment")
-        if not filing.get("IsXBRL") or not attachment:
+        # Some early entries point at a bare directory ("/XBRL1/").
+        if not filing.get("IsXBRL") or not attachment or str(attachment).endswith("/"):
             continue
         try:
             quarter_end = pd.Timestamp(filing["EndDate"]).date().isoformat()
@@ -324,10 +345,11 @@ def get_bse_filings(session: PoliteSession, bse_scrip_code: str) -> list[dict[st
                 "quarter_end": quarter_end,
                 "attachment": attachment,
                 "filing_type": classify_filing_type(quarter_end),
+                "published_at": filing_published_at(filing),
             }
         )
         seen_quarters.add(quarter_end)
-        if len(usable) == 2:
+        if max_filings is not None and len(usable) >= max_filings:
             break
     return usable
 
@@ -377,6 +399,7 @@ def parse_bse_shareholding(html: str) -> dict[str, float]:
     promoter_pct: float | None = None
     public_pct: float | None = None
     dii_pct = 0.0
+    mf_pct: float | None = None
     seen_dii: set[str] = set()
     # FII categories tracked separately so an aggregate row plus its
     # Category I/II/III sub-rows are never double-counted.
@@ -406,6 +429,8 @@ def parse_bse_shareholding(html: str) -> dict[str, float]:
             if label not in seen_dii:
                 dii_pct += percentage
                 seen_dii.add(label)
+                if label == "mutual funds":
+                    mf_pct = percentage
         row_cats: set[str] = set()
         for label in labels:
             cat = _fii_category(_normalize_fii_label(label))
@@ -437,7 +462,98 @@ def parse_bse_shareholding(html: str) -> dict[str, float]:
         "fii_pct": round(fii_pct, 4),
         "dii_pct": round(dii_pct, 4),
         "public_pct": public_pct,
+        "mf_pct": None if mf_pct is None else round(mf_pct, 4),
     }
+
+
+# Category contexts in BSE's XBRL instance documents (2016-2025). A context
+# id is the category name plus "I" (2016) or "_ContextI" (2020+) for the
+# quarter-end instant; numbered contexts ("..._Context15") are named holders.
+_XBRL_CATEGORY_CONTEXT_RE = re.compile(r"(.+?)(?:_Context)?I")
+_XBRL_PCT_ELEMENT = "ShareholdingAsAPercentageOfTotalNumberOfShares"
+_XBRL_PROMOTER = "ShareholdingOfPromoterAndPromoterGroup"
+_XBRL_PUBLIC = "PublicShareholding"
+_XBRL_TOTAL = "ShareholdingPattern"
+_XBRL_MF = "MutualFundsOrUti"
+# The taxonomy spells it "Catergory"; accept the correct spelling too.
+_XBRL_FPI_CATEGORY_RE = re.compile(
+    r"InstitutionsForeignPortfolioInvestorCate?r?gory(One|Two|Three)")
+_XBRL_FPI_AGGREGATE = "InstitutionsForeignPortfolioInvestor"
+_XBRL_FII_LEGACY_RE = re.compile(r"ForeignInstitutionalInvestors?")
+# Same conservative DII definition as DII_LABELS for the HTML format.
+_XBRL_DII = (_XBRL_MF, "Banks", "FinancialInstitutionOrBanks",
+             "InsuranceCompanies", "OtherFinancialInstitutions")
+
+
+def parse_bse_shareholding_xbrl(document: str | bytes) -> dict[str, float]:
+    """Extract ownership percentages from one BSE Reg. 31 XBRL instance document."""
+    if isinstance(document, str):
+        document = document.encode("utf-8")
+    try:
+        root = ET.fromstring(document.lstrip(b"\xef\xbb\xbf \r\n\t"))
+    except ET.ParseError as exc:
+        raise ShareholdingFetchError(f"BSE XBRL is not well-formed XML: {exc}") from exc
+
+    values: dict[str, float] = {}
+    for element in root.iter():
+        if element.tag.rsplit("}", 1)[-1] != _XBRL_PCT_ELEMENT:
+            continue
+        match = _XBRL_CATEGORY_CONTEXT_RE.fullmatch(element.get("contextRef") or "")
+        text = (element.text or "").strip().replace(",", "")
+        if not match or not text:
+            continue
+        try:
+            value = float(text)
+        except ValueError as exc:
+            raise ShareholdingFetchError(
+                f"Invalid percentage in BSE XBRL: {element.get('contextRef')}={text!r}"
+            ) from exc
+        name = match.group(1)
+        if name in values and values[name] != value:
+            raise ShareholdingFetchError(
+                f"Conflicting percentages for {name} in BSE XBRL: {values[name]} vs {value}")
+        values[name] = value
+
+    # A company with no promoter group (ITC, most banks) files no promoter
+    # line at all. Read that as 0 only when the filing itself says the public
+    # holds everything (the total line, or 100% where 2016 filings omit it);
+    # anything else stays a loud failure.
+    if (_XBRL_PROMOTER not in values and _XBRL_PUBLIC in values
+            and abs(values[_XBRL_PUBLIC] - values.get(_XBRL_TOTAL, 100.0)) <= 0.01):
+        values[_XBRL_PROMOTER] = 0.0
+    if _XBRL_PROMOTER not in values or _XBRL_PUBLIC not in values:
+        raise ShareholdingFetchError(
+            "BSE XBRL did not contain its aggregate promoter/public percentage contexts"
+        )
+    fpi_categories = [v for k, v in values.items() if _XBRL_FPI_CATEGORY_RE.fullmatch(k)]
+    if fpi_categories:
+        fii_pct = sum(fpi_categories)
+    elif _XBRL_FPI_AGGREGATE in values:
+        fii_pct = values[_XBRL_FPI_AGGREGATE]
+    else:
+        legacy = [v for k, v in values.items() if _XBRL_FII_LEGACY_RE.search(k)]
+        fii_pct = legacy[0] if legacy else 0.0
+    dii_pct = sum(values[k] for k in _XBRL_DII if k in values)
+    out = {
+        "promoter_pct": values[_XBRL_PROMOTER],
+        "fii_pct": round(fii_pct, 4),
+        "dii_pct": round(dii_pct, 4),
+        "public_pct": values[_XBRL_PUBLIC],
+        "mf_pct": round(values[_XBRL_MF], 4) if _XBRL_MF in values else None,
+    }
+    for key, value in out.items():
+        if value is not None and not 0.0 <= value <= 100.0:
+            raise ShareholdingFetchError(f"BSE XBRL {key}={value} is outside 0-100")
+    return out
+
+
+def parse_shareholding_document(document: str | bytes) -> dict[str, float]:
+    """Parse either BSE format: XBRL instance XML or inline-XBRL HTML."""
+    text = document.decode("utf-8", errors="replace") if isinstance(document, bytes) else document
+    head = text[:4000]
+    if "xbrli:xbrl" in head and "<tr" not in text:
+        return parse_bse_shareholding_xbrl(document)
+    return parse_bse_shareholding(text)
 
 
 def fetch_shareholding(
@@ -446,24 +562,46 @@ def fetch_shareholding(
     cache_dir: Path,
     limit: int | None = None,
     only_missing: bool = False,
+    history: int | None = 2,
+    universe: str = "held",
 ) -> FetchStats:
-    """Fetch and load quarterly records without refetching cached ISIN/quarters."""
-    stats = FetchStats()
-    holdings = get_mf_holding_isins(conn)
-    stats.holdings_query_isins = len(holdings)
+    """Fetch and load quarterly records without refetching cached ISIN/quarters.
 
+    ``history`` is the number of newest filings per stock (None = all).
+    ``universe`` is "held" (ISINs any tracked scheme holds) or "nse" (every
+    NSE-listed equity -- a broader, less selection-biased research universe).
+    A stored filing is re-downloaded only when it predates ``mf_pct``; a
+    missing ``published_at`` is filled from the filing index alone.
+    """
+    if universe not in ("held", "nse"):
+        raise ValueError(f"universe must be 'held' or 'nse', got {universe!r}")
+    present = {r[1] for r in conn.execute("PRAGMA table_info(shareholding_quarterly)")}
+    for column, ddl in (("mf_pct", "REAL"), ("published_at", "TEXT")):
+        if column not in present:
+            conn.execute(f"ALTER TABLE shareholding_quarterly ADD COLUMN {column} {ddl}")
+    stats = FetchStats()
     master = get_nse_equity_master(session, cache_dir / "nse_equity_master.csv")
-    holdings["isin"] = holdings["isin"].astype(str).str.strip().str.upper()
-    equities = holdings.merge(
-        master, left_on="isin", right_on="ISIN NUMBER", how="inner",
-    ).drop(columns="ISIN NUMBER")
+    if universe == "nse":
+        equities = master.rename(columns={"ISIN NUMBER": "isin"}).assign(name=None)
+        stats.holdings_query_isins = len(equities)
+    else:
+        holdings = get_mf_holding_isins(conn)
+        stats.holdings_query_isins = len(holdings)
+        holdings["isin"] = holdings["isin"].astype(str).str.strip().str.upper()
+        equities = holdings.merge(
+            master, left_on="isin", right_on="ISIN NUMBER", how="inner",
+        ).drop(columns="ISIN NUMBER")
     if only_missing:
+        wanted = history if history is not None else 1
         complete_isins = {
             row[0] for row in conn.execute(
                 """SELECT isin
                    FROM shareholding_quarterly
                    GROUP BY isin
-                   HAVING COUNT(*) >= 2"""
+                   HAVING COUNT(*) >= ?
+                      AND SUM(mf_pct IS NULL) = 0
+                      AND SUM(published_at IS NULL) = 0""",
+                (wanted,),
             )
         }
         equities = equities[~equities["isin"].isin(complete_isins)]
@@ -484,7 +622,7 @@ def fetch_shareholding(
                 continue
             stats.resolved += 1
 
-            filings = get_bse_filings(session, bse_scrip_code)
+            filings = get_bse_filings(session, bse_scrip_code, max_filings=history)
             if not filings:
                 stats.no_filings_isins.append(isin)
                 continue
@@ -496,25 +634,41 @@ def fetch_shareholding(
                 # or interim) — never synthesize a second zero row.
                 stats.no_filings_isins.append(isin)
 
-            existing_quarters = {
-                row[0] for row in conn.execute(
-                    "SELECT quarter_end FROM shareholding_quarterly WHERE isin = ?",
+            existing = {
+                row[0]: {"mf_pct": row[1], "published_at": row[2]}
+                for row in conn.execute(
+                    "SELECT quarter_end, mf_pct, published_at "
+                    "FROM shareholding_quarterly WHERE isin = ?",
                     (isin,),
                 )
             }
             for filing in filings:
-                if filing["quarter_end"] in existing_quarters:
+                stored = existing.get(filing["quarter_end"])
+                if stored is not None and stored["mf_pct"] is not None:
+                    if stored["published_at"] is None and filing.get("published_at"):
+                        conn.execute(
+                            "UPDATE shareholding_quarterly SET published_at = ? "
+                            "WHERE isin = ? AND quarter_end = ?",
+                            (filing["published_at"], isin, filing["quarter_end"]),
+                        )
+                        conn.commit()
                     stats.already_cached_records += 1
                     continue
-                response = session.get(f"{BSE_SITE_URL}{filing['attachment']}")
-                raw_bytes = getattr(response, "content", None)
-                if raw_bytes is None:
-                    raw_bytes = response.text.encode("utf-8")
-                if isinstance(raw_bytes, str):
-                    raw_bytes = raw_bytes.encode("utf-8")
-                # Persist raw iXBRL bytes before parsing and record sha256.
-                ixbrl_sha256 = _persist_ixbrl_attachment(cache_dir, bytes(raw_bytes))
-                parsed = parse_bse_shareholding(response.text)
+                # One missing or unreadable filing must not cost the stock
+                # its other quarters: record it and carry on.
+                try:
+                    response = session.get(f"{BSE_SITE_URL}{filing['attachment']}")
+                    raw_bytes = getattr(response, "content", None)
+                    if raw_bytes is None:
+                        raw_bytes = response.text.encode("utf-8")
+                    if isinstance(raw_bytes, str):
+                        raw_bytes = raw_bytes.encode("utf-8")
+                    # Persist raw iXBRL bytes before parsing and record sha256.
+                    ixbrl_sha256 = _persist_ixbrl_attachment(cache_dir, bytes(raw_bytes))
+                    parsed = parse_shareholding_document(bytes(raw_bytes))
+                except (requests.RequestException, ShareholdingFetchError) as exc:
+                    stats.failed_isins.append(f"{isin} {filing['quarter_end']}: {exc}")
+                    continue
                 record = {
                     "isin": isin,
                     "quarter_end": filing["quarter_end"],
@@ -525,6 +679,8 @@ def fetch_shareholding(
                         classify_filing_type(filing["quarter_end"]),
                     ),
                     "ixbrl_sha256": ixbrl_sha256,
+                    "source_url": f"{BSE_SITE_URL}{filing['attachment']}",
+                    "published_at": filing.get("published_at"),
                 }
                 # The database is the cache keyed by (isin, quarter_end).
                 # Persist immediately so an interrupted run never repeats a
@@ -532,7 +688,9 @@ def fetch_shareholding(
                 stats.loaded_records += db.load_shareholding_records(
                     conn, pd.DataFrame([record]),
                 )
-                existing_quarters.add(filing["quarter_end"])
+                existing[filing["quarter_end"]] = {
+                    "mf_pct": parsed.get("mf_pct"), "published_at": filing.get("published_at"),
+                }
         except (requests.RequestException, ShareholdingFetchError) as exc:
             stats.failed_isins.append(f"{isin}: {exc}")
 
@@ -574,6 +732,15 @@ def main() -> None:
         help="Skip ISINs that already have two or more cached quarterly filings",
     )
     parser.add_argument(
+        "--history", type=int, default=2, metavar="N",
+        help="Newest N filings per stock (default 2; 0 = every filing back to 2015)",
+    )
+    parser.add_argument(
+        "--universe", choices=("held", "nse"), default="held",
+        help="held = ISINs tracked schemes hold (default); nse = every NSE-listed "
+             "equity, the broader research universe for the quarterly backtest",
+    )
+    parser.add_argument(
         "--report-month",
         help="Also print MF + FII/DII common signals for this MF report month",
     )
@@ -582,6 +749,11 @@ def main() -> None:
         parser.error("--delay must not be negative")
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
+    if args.history < 0:
+        parser.error("--history must not be negative")
+    if args.only_missing and args.history == 0:
+        parser.error("--only-missing cannot tell which stocks have *every* filing without "
+                     "asking BSE; drop it -- stored filings are skipped anyway")
 
     db_path = Path(args.db)
     conn = db.get_connection(str(db_path))
@@ -589,12 +761,14 @@ def main() -> None:
     stats = fetch_shareholding(
         conn, PoliteSession(args.delay), cache_dir,
         limit=args.limit, only_missing=args.only_missing,
+        history=args.history or None, universe=args.universe,
     )
     _print_stats(stats)
 
     if args.report_month:
         joined = consensus_signals.join_shareholding_increase(
             conn, consensus_signals.compute_consensus(conn, args.report_month),
+            as_of_month=args.report_month,
         )
         common = joined[joined["is_common_with_fii_increase"]]
         print(f"\n=== MF + FII/DII common increases, {args.report_month} ===")

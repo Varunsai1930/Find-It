@@ -26,10 +26,22 @@ def _fetch_month(conn: sqlite3.Connection, report_month: str) -> pd.DataFrame:
     )
 
 
+def unmatched_schemes(conn: sqlite3.Connection, prev_month: str, curr_month: str) -> dict:
+    """{"only_prev": [...], "only_curr": [...]} scheme_ids held in just one month."""
+    prev = set(_fetch_month(conn, prev_month)["scheme_id"])
+    curr = set(_fetch_month(conn, curr_month)["scheme_id"])
+    return {"only_prev": sorted(prev - curr), "only_curr": sorted(curr - prev)}
+
+
 def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -> pd.DataFrame:
-    """Returns a DataFrame of deltas for every (scheme, isin) present in
-    either month, including flow_lakhs (trading flow), price_effect_lakhs
-    (residual) and value_change_lakhs.
+    """Returns a DataFrame of deltas for every (scheme, isin) of the schemes
+    present in *both* months, including flow_lakhs (trading flow),
+    price_effect_lakhs (residual) and value_change_lakhs.
+
+    A scheme with a snapshot in only one month is left out, not compared
+    against nothing: a newly launched fund would otherwise "buy" its whole
+    opening portfolio, and a month whose file was not loaded would "exit"
+    everything. No data is never activity. ``unmatched_schemes`` names them.
 
     Month-end-price convention: flow is valued at px_curr; monthly
     snapshots cannot see intra-month execution, so execution-vs-close
@@ -37,6 +49,9 @@ def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -
     """
     prev = _fetch_month(conn, prev_month)
     curr = _fetch_month(conn, curr_month)
+    both = set(prev["scheme_id"]) & set(curr["scheme_id"])
+    prev = prev[prev["scheme_id"].isin(both)]
+    curr = curr[curr["scheme_id"].isin(both)]
 
     if prev.empty and curr.empty:
         return pd.DataFrame(columns=[

@@ -1,3 +1,9 @@
+> **Superseded.** This phase was implemented and then removed: the model's
+> only authority was reordering pre-written sentences and swapping synonyms,
+> which did not justify a provider adapter, a hash-invalidated cache and a
+> live API dependency. The eligibility logic described here was kept, in
+> `findit/summary.py`. Retained as the record of the design.
+
 # Phase 2: cached AI-assisted fund summaries
 
 ## Outcome

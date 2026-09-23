@@ -89,6 +89,42 @@ NAV_FRACTION_RANGE = (0.95, 1.05)
 NAV_PERCENT_RANGE = (95.0, 105.0)
 
 
+# Title rows above the header that are not the scheme's name.
+_NOT_A_TITLE_RE = re.compile(
+    r"^(?:portfolio\b|monthly portfolio|back to index$|scheme name\s*:?$|"
+    r"(?:.*\s)?mutual fund$|as on\b|statement of|\d)",
+    re.IGNORECASE,
+)
+
+
+def extract_scheme_title(title_rows: pd.DataFrame):
+    """The scheme's full name from the rows above the holdings header, or None.
+
+    Sheets are often named by code ("SAOF", "NIF30DEX"); the header rows
+    carry the real name ("SBI Arbitrage Fund"), which is what tells an
+    index or arbitrage fund apart from an active one. Layouts seen:
+    SBI "SCHEME NAME :" | name; ICICI a bare name under the AMC line;
+    HDFC the name (with a SEBI description in brackets) in row 0.
+    """
+    cells_by_row = [
+        [str(v).strip() for v in row if pd.notna(v) and str(v).strip()
+         and not hasattr(v, "year")]
+        for row in title_rows.itertuples(index=False, name=None)
+    ]
+    for cells in cells_by_row:
+        for i, cell in enumerate(cells):
+            if re.match(r"^scheme\s*name\s*:?", cell, re.IGNORECASE):
+                rest = re.sub(r"^scheme\s*name\s*:?\s*", "", cell, flags=re.IGNORECASE)
+                if rest:
+                    return rest
+                return cells[i + 1] if i + 1 < len(cells) else None
+    for cells in cells_by_row:
+        for cell in cells:
+            if len(cell) > 3 and not _NOT_A_TITLE_RE.match(cell):
+                return " ".join(cell.split())
+    return None
+
+
 def normalize_col(col) -> str:
     return " ".join(str(col).strip().lower().split())
 
@@ -165,6 +201,27 @@ def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Serie
     return ~valid_mask & names.ne("") & ~summaries & numeric & ~after_portfolio
 
 
+def find_header_row(raw: pd.DataFrame):
+    """Index of the first row (within the first 10) naming an ISIN column."""
+    for i in range(min(10, len(raw))):
+        row_vals = [normalize_col(v) for v in raw.iloc[i].tolist()]
+        if any(syn in row_vals for syn in COLUMN_SYNONYMS["isin"]):
+            return i
+    return None
+
+
+def read_scheme_titles(path: Path) -> dict:
+    """{sheet name: full scheme title or None} for every holdings sheet."""
+    xls = pd.ExcelFile(path)
+    titles = {}
+    for sheet_name in xls.sheet_names:
+        raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=12)
+        header_row_idx = find_header_row(raw)
+        if header_row_idx is not None:
+            titles[sheet_name.strip()] = extract_scheme_title(raw.iloc[:header_row_idx])
+    return titles
+
+
 def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame:
     """Parse holdings and repeat exclusion provenance on each scheme's rows.
 
@@ -184,13 +241,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         # AMFI sheets usually have a few title/metadata rows before the
         # real header row. Find it by locating the first row containing
         # something that matches an ISIN column synonym.
-        header_row_idx = None
-        scan_rows = min(10, len(raw))
-        for i in range(scan_rows):
-            row_vals = [normalize_col(v) for v in raw.iloc[i].tolist()]
-            if any(syn in row_vals for syn in COLUMN_SYNONYMS["isin"]):
-                header_row_idx = i
-                break
+        header_row_idx = find_header_row(raw)
 
         if header_row_idx is None:
             print(
@@ -200,6 +251,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             )
             continue
 
+        scheme_title = extract_scheme_title(raw.iloc[:header_row_idx])
         header_vals = raw.iloc[header_row_idx].tolist()
         df = raw.iloc[header_row_idx + 1:].copy()
         df.columns = header_vals
@@ -260,6 +312,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
 
         clean = clean.copy()
         clean["scheme_name"] = sheet_name.strip()
+        clean["scheme_title"] = scheme_title
         clean["amc_name"] = amc_name
         clean["report_month"] = report_month
         all_rows.append(clean)

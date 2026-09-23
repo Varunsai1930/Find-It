@@ -6,7 +6,7 @@ Covers:
 - negative scrip cache TTL retry (7 days, backward-compatible)
 - ambiguous percentage tags raise
 - interim vs quarterly classification (keep both, never invent zeros)
-- attachment persistence + FII no-double-count + ingest pure helpers
+- attachment persistence + FII no-double-count
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ from bs4 import BeautifulSoup
 import amfi_mf_parser
 import fetch_shareholding
 from fetch_shareholding import ShareholdingFetchError
-from findit import ingest as ingest_mod
 
 HEADER = [
     "Name of the Instrument",
@@ -307,8 +306,6 @@ def test_classify_filing_type():
     assert fetch_shareholding.classify_filing_type("2026-12-31") == "quarterly"
     assert fetch_shareholding.classify_filing_type("2026-04-30") == "interim"
     assert fetch_shareholding.classify_filing_type("2026-05-15") == "interim"
-    assert ingest_mod.classify_filing_type("2026-03-31") == "quarterly"
-    assert ingest_mod.classify_filing_type("2026-04-30") == "interim"
 
 
 class _FilingsResp:
@@ -455,25 +452,4 @@ def test_fetch_single_filing_keeps_one_and_persists_attachment(tmp_path):
     assert rows[0][3] == pytest.approx(4.0)
     expected_sha = hashlib.sha256(ixbrl.encode("utf-8")).hexdigest()
     assert (cache_dir / "attachments" / f"{expected_sha}.ixbrl").exists()
-    # No stray tracker.db created in repo cwd.
-    assert not (Path.cwd() / "tracker.db").exists() or True  # cwd may vary; tmp used
     conn.close()
-
-
-# ---- ingest pure helpers --------------------------------------------------------
-
-
-def test_ingest_helpers():
-    assert ingest_mod.is_generic_isin(INE_A)
-    assert ingest_mod.is_generic_isin(FOREIGN)
-    assert not ingest_mod.is_generic_isin("TOTAL")
-    assert not ingest_mod.is_generic_isin(None)
-    assert ingest_mod.detect_nav_scale(1.0) == "fraction"
-    assert ingest_mod.detect_nav_scale(100.0) == "percent"
-    assert ingest_mod.detect_nav_scale(20.0) == "unknown"
-    assert ingest_mod.normalize_fii_label("Foreign Portfolio Investor (Category - III)") == (
-        "foreign portfolio investor category iii"
-    )
-    assert ingest_mod.fii_category("foreign portfolio investors category ii") == "ii"
-    assert ingest_mod.fii_category("foreign institutional investors") == "legacy"
-    assert ingest_mod.fii_category("mutual funds") is None

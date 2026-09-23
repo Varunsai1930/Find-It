@@ -85,3 +85,56 @@ def test_legacy_reload_clears_dropped_row_provenance(tmp_path, monkeypatch, caps
     assert report["nav_sum"] == 4
     assert report["dropped_non_isin_count"] is None
     assert report["dropped_non_isin_pct_nav"] is None
+
+
+def test_pipeline_classifies_fresh_schemes_and_reports_overlap(tmp_path, monkeypatch, capsys):
+    """Fresh schemes must reach consensus in the same run (no NULL active flag).
+
+    Regression: backfill ran only at connect time, so newly loaded schemes
+    stayed NULL and the ``is_active_equity = 1`` consensus filter silently
+    emptied the consensus (and the MF+FII overlap with it).
+    """
+    import pandas as pd
+
+    def _row(amc, scheme, month, qty, val, nav):
+        return {
+            "isin": "INE002A01018", "instrument_name": "Reliance Industries Ltd.",
+            "quantity": qty, "market_value_lakhs": val, "pct_nav": nav,
+            "amc_name": amc, "scheme_name": scheme, "report_month": month,
+        }
+
+    prev = tmp_path / "prev.csv"
+    curr_a = tmp_path / "curr_a.csv"
+    curr_b = tmp_path / "curr_b.csv"
+    pd.DataFrame([
+        _row("HDFC AMC", "Alpha Growth Fund", "2026-03", 1000, 380.0, 6.0),
+        _row("SBI AMC", "Beta Growth Fund", "2026-03", 500, 190.0, 5.0),
+    ]).to_csv(prev, index=False)
+    pd.DataFrame([_row("HDFC AMC", "Alpha Growth Fund", "2026-04", 1200, 460.0, 6.5)]).to_csv(
+        curr_a, index=False)
+    pd.DataFrame([_row("SBI AMC", "Beta Growth Fund", "2026-04", 600, 230.0, 5.5)]).to_csv(
+        curr_b, index=False)
+    db_path = tmp_path / "tracker.db"
+    monkeypatch.setattr(sys, "argv", [
+        "run_pipeline.py", "--db", str(db_path),
+        "--load", str(prev), "--load", str(curr_a), str(curr_b),
+        "--prev", "2026-03", "--curr", "2026-04",
+    ])
+    run_pipeline.main()
+    output = capsys.readouterr().out
+    # Both AMCs added to Reliance: MF consensus must be non-empty in this run.
+    assert "INE002A01018" in output
+    assert "=== MF + FII/DII overlap, 2026-04 ===" in output
+    # No shareholding loaded yet: honestly empty, never zero-filled.
+    assert "(no MF+FII/DII common increases this month)" in output
+    with sqlite3.connect(db_path) as conn:
+        flags = conn.execute("SELECT DISTINCT is_active_equity FROM schemes").fetchall()
+        assert flags == [(1,)]
+        raw = conn.execute(
+            "SELECT validation_report_json FROM ingest_runs"
+        ).fetchone()[0]
+        overlap = json.loads(raw)["mf_fii_overlap"]
+        assert overlap["status"] == "ok"
+        assert overlap["consensus_count"] >= 1
+        assert overlap["common_count"] == 0
+        assert overlap["missing_shareholding_count"] == overlap["consensus_count"]

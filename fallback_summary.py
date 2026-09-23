@@ -1,10 +1,9 @@
 """
 fallback_summary.py — rule-based plain-English monthly summary, with NO
-LLM involved. This is the baseline the AI narration layer sits on top of
-(build plan §4/§7): build and trust this first, since the app must never
-depend on the LLM call succeeding. When GLM 5.3 is wired in later, it
-narrates exactly these same pre-computed numbers — it never computes
-them itself.
+LLM involved. This is the only summary path. A constrained GLM narration
+layer was built on top of it and then removed (see the README): the model
+could only reorder these sentences, so it earned none of its complexity.
+findit.summary wraps this with the withhold-on-bad-data checks.
 """
 import sqlite3
 import pandas as pd
@@ -156,16 +155,17 @@ def build_summary(
         raise ValueError(f"No scheme with scheme_id={scheme_id}")
     amc_name, scheme_name = scheme
 
-    # A quarantined month must never feed a fund's summary silently.
-    # Guarded for legacy DBs predating scheme_month_status.
-    try:
+    # A quarantined month must never feed a fund's summary silently. Only a
+    # legacy DB with no status table skips the check; any other error
+    # propagates, because treating it as "not quarantined" would publish it.
+    status_row = None
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' "
+                    "AND name = 'scheme_month_status'").fetchone():
         status_row = conn.execute(
             "SELECT status, validation_report_json FROM scheme_month_status "
             "WHERE scheme_id = ? AND report_month = ?",
             (scheme_id, report_month),
         ).fetchone()
-    except Exception:
-        status_row = None
     if status_row is not None and status_row[0] == "quarantined":
         return (
             f"{scheme_name} ({amc_name}) — {report_month} data withheld: "
@@ -173,10 +173,7 @@ def build_summary(
             f"Not zero activity — the numbers did not pass checks."
         )
 
-    try:
-        stock_cols = [r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()]
-    except Exception:
-        stock_cols = []
+    stock_cols = [r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()]
     has_instrument = "instrument_type" in stock_cols
 
     if has_instrument:

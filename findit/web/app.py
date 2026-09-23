@@ -7,6 +7,7 @@ holdings signals at request time.
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from pathlib import Path
@@ -16,12 +17,11 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from findit.narrate.service import get_summary
+import consensus_signals
+from findit.summary import get_summary
 
 _WEB_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-BUY_ACTIONS = ("new", "added")
-SELL_ACTIONS = ("trimmed", "exited")
 
 
 def _sanitize(value: Any) -> Any:
@@ -78,19 +78,12 @@ def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
         return set()
 
 
-def _quarterly_predicate(conn: sqlite3.Connection, alias: str = "") -> str:
-    """SQL fragment restricting shareholding rows to quarterly filings.
 
-    NULL-safe for legacy rows predating filing_type: those fall back to
-    calendar quarter-end matching. Interim filings are always excluded.
-    """
-    prefix = f"{alias}." if alias else ""
-    if "filing_type" in _table_columns(conn, "shareholding_quarterly"):
-        return (
-            f"({prefix}filing_type = 'quarterly' OR ({prefix}filing_type IS NULL AND "
-            f"substr({prefix}quarter_end,6,5) IN ('03-31','06-30','09-30','12-31')))"
-        )
-    return f"substr({prefix}quarter_end,6,5) IN ('03-31','06-30','09-30','12-31')"
+
+def _quarterly_predicate(conn: sqlite3.Connection, alias: str = "") -> str:
+    """Quarterly-filing filter, shared with the consensus FII/DII join."""
+    return consensus_signals.quarterly_filing_sql(
+        _table_columns(conn, "shareholding_quarterly"), alias)
 
 
 def _quarantined_pairs(conn: sqlite3.Connection) -> set[tuple[int, str]]:
@@ -116,16 +109,6 @@ def _has_status_table(conn: sqlite3.Connection) -> bool:
     return True
 
 
-def _direction(change: Any) -> str:
-    try:
-        if change is None or (isinstance(change, float) and not math.isfinite(change)):
-            return "no_data"
-        v = float(change)
-    except (TypeError, ValueError):
-        return "no_data"
-    if math.isnan(v):
-        return "no_data"
-    return "increased" if v > 0 else "decreased"
 
 
 def _shareholding_rows(conn: sqlite3.Connection, isin: str) -> list[dict[str, Any]]:
@@ -143,81 +126,28 @@ def _shareholding_rows(conn: sqlite3.Connection, isin: str) -> list[dict[str, An
     return _sanitize(rows)
 
 
-def _shareholding_summary(conn: sqlite3.Connection, isins: list[str]) -> dict[str, dict[str, Any]]:
-    if not isins:
-        return {}
-    placeholders = ",".join("?" for _ in isins)
-    try:
-        pred = _quarterly_predicate(conn)
-        cur = conn.execute(
-            f"""SELECT isin, quarter_end, fii_pct, dii_pct
-                FROM shareholding_quarterly WHERE isin IN ({placeholders})
-                AND {pred}
-                ORDER BY isin, quarter_end DESC""",
-            isins,
-        )
-        grouped: dict[str, list[dict[str, Any]]] = {}
-        for r in cur.fetchall():
-            grouped.setdefault(str(r["isin"]), []).append(dict(r))
-    except sqlite3.Error:
-        return {}
-    out: dict[str, dict[str, Any]] = {}
-    for isin in isins:
-        quarters = grouped.get(isin, [])
-        if not quarters:
-            out[isin] = {
-                "status": "missing",
-                "latest_quarter": None,
-                "previous_quarter": None,
-                "fii_pct": None,
-                "dii_pct": None,
-                "fii_pct_change": None,
-                "dii_pct_change": None,
-                "fii_direction": "no_data",
-                "dii_direction": "no_data",
-                "fii_increased": False,
-                "dii_increased": False,
-            }
-        elif len(quarters) == 1:
-            q = quarters[0]
-            out[isin] = {
-                "status": "single_quarter",
-                "latest_quarter": q["quarter_end"],
-                "previous_quarter": None,
-                "fii_pct": q["fii_pct"],
-                "dii_pct": q["dii_pct"],
-                "fii_pct_change": None,
-                "dii_pct_change": None,
-                "fii_direction": "no_data",
-                "dii_direction": "no_data",
-                "fii_increased": False,
-                "dii_increased": False,
-            }
-        else:
-            latest, prev = quarters[0], quarters[1]
-            fii_ch = None
-            dii_ch = None
-            try:
-                if latest["fii_pct"] is not None and prev["fii_pct"] is not None:
-                    fii_ch = float(latest["fii_pct"]) - float(prev["fii_pct"])
-                if latest["dii_pct"] is not None and prev["dii_pct"] is not None:
-                    dii_ch = float(latest["dii_pct"]) - float(prev["dii_pct"])
-            except (TypeError, ValueError):
-                pass
-            out[isin] = {
-                "status": "available",
-                "latest_quarter": latest["quarter_end"],
-                "previous_quarter": prev["quarter_end"],
-                "fii_pct": latest["fii_pct"],
-                "dii_pct": latest["dii_pct"],
-                "fii_pct_change": fii_ch,
-                "dii_pct_change": dii_ch,
-                "fii_direction": _direction(fii_ch),
-                "dii_direction": _direction(dii_ch),
-                "fii_increased": bool(fii_ch is not None and fii_ch > 0),
-                "dii_increased": bool(dii_ch is not None and dii_ch > 0),
-            }
-    return _sanitize(out)
+def _ranked_consensus(conn: sqlite3.Connection, month: str, equity_only: bool = True,
+                      active_only: bool = True) -> list[dict[str, Any]]:
+    """The CLI's ranking for one month, as JSON-ready rows.
+
+    Same function the pipeline and backtests use -- compute_consensus plus the
+    FII/DII join with its publication cutoff -- so the dashboard can never
+    disagree with them, and an older month never shows filings published
+    after it. Stocks no fund bought or sold carry no signal and are dropped.
+    """
+    consensus = consensus_signals.compute_consensus(
+        conn, month, "equity" if equity_only else None, active_only)
+    consensus = consensus[consensus["schemes_buying"] + consensus["schemes_selling"] > 0]
+    if consensus.empty:
+        return []
+    joined = consensus_signals.join_shareholding_increase(conn, consensus, as_of_month=month)
+    # The join orders by FII agreement; keep the consensus ranking.
+    joined = joined.set_index("isin").loc[consensus["isin"]].reset_index()
+    joined["shareholding_status"] = "available"
+    joined.loc[joined["previous_shareholding_quarter_end"].isna(),
+               "shareholding_status"] = "single_quarter"
+    joined.loc[joined["shareholding_quarter_end"].isna(), "shareholding_status"] = "missing"
+    return json.loads(joined.to_json(orient="records"))
 
 
 def create_app(db_path: str | Path | None = None) -> FastAPI:
@@ -357,185 +287,45 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     # -- consensus --------------------------------------------------------
     @app.get("/api/consensus/{month}")
-    def api_consensus(month: str, equity_only: int = 1) -> Any:
+    def api_consensus(month: str, equity_only: int = 1, active_only: int = 1) -> Any:
         conn = _ro_connect(resolved_db)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
             equity_filter = equity_only == 1
+            # Index/ETF/debt schemes track a benchmark rather than express a
+            # view; active_only=0 opts back in to the wider view.
+            active_filter = active_only == 1
             quarantined_schemes = sorted(
                 {sid for (sid, m) in _quarantined_pairs(conn) if m == month}
             )
-            # price_effect_lakhs is added PRAGMA-guarded by Worker A; legacy
-            # DBs lack it, so detect upfront and fall back to a price-less
-            # SELECT rather than 500ing.
-            has_price = "price_effect_lakhs" in _table_columns(conn, "mf_holding_deltas")
-
-            def _consensus_sql(include_price: bool) -> tuple[str, list[Any]]:
-                price_select = (
-                    "d.price_effect_lakhs AS price_effect_lakhs, "
-                    if include_price
-                    else ""
-                )
-                sql = (
-                    "SELECT d.isin AS isin, s.name AS stock_name, s.industry AS industry, "
-                    "s.instrument_type AS instrument_type, d.scheme_id AS scheme_id, "
-                    "sch.amc_name AS amc_name, d.action AS action, "
-                    "d.qty_change AS qty_change, d.value_change_lakhs AS value_change_lakhs, "
-                    f"{price_select}"
-                    "d.flow_lakhs AS flow_lakhs "
-                    "FROM mf_holding_deltas d "
-                    "JOIN stocks s ON s.isin = d.isin "
-                    "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-                    "WHERE d.report_month = ?"
-                )
-                params: list[Any] = [month]
-                if equity_filter:
-                    sql += " AND s.instrument_type = ?"
-                    params.append("equity")
-                if quarantined_schemes:
-                    placeholders = ",".join("?" for _ in quarantined_schemes)
-                    sql += f" AND d.scheme_id NOT IN ({placeholders})"
-                    params.extend(quarantined_schemes)
-                return sql, params
-
-            sql, params = _consensus_sql(has_price)
-            try:
-                rows = conn.execute(sql, params).fetchall()
-            except sqlite3.Error as exc:
-                if has_price and "price_effect" in str(exc).lower():
-                    has_price = False
-                    sql, params = _consensus_sql(False)
-                    rows = conn.execute(sql, params).fetchall()
-                else:
-                    raise
-            if not rows:
-                return _sanitize(
-                    {
-                        "month": month,
-                        "equity_only": bool(equity_filter),
-                        "count": 0,
-                        "results": [],
-                        "message": (
-                            f"No holding-change data available for {month} yet "
-                            "(data may not have been ingested for this month, "
-                            "or this is the first month tracked)."
-                        ),
-                    }
-                )
-            grouped: dict[str, dict[str, Any]] = {}
-            for r in rows:
-                isin = str(r["isin"])
-                g = grouped.setdefault(
-                    isin,
-                    {
-                        "isin": isin,
-                        "stock_name": r["stock_name"],
-                        "industry": r["industry"],
-                        "instrument_type": r["instrument_type"],
-                        "buy_schemes": set(),
-                        "sell_schemes": set(),
-                        "buy_amcs": set(),
-                        "sell_amcs": set(),
-                        "total_flow_lakhs": 0.0,
-                        "total_price_effect_lakhs": 0.0,
-                    },
-                )
-                action = str(r["action"])
-                try:
-                    flow = float(r["flow_lakhs"]) if r["flow_lakhs"] is not None else 0.0
-                except (TypeError, ValueError):
-                    flow = 0.0
-                try:
-                    price = (
-                        float(r["price_effect_lakhs"])
-                        if (has_price and r["price_effect_lakhs"] is not None)
-                        else 0.0
-                    )
-                except (TypeError, ValueError, IndexError, KeyError):
-                    price = 0.0
-                if not math.isfinite(flow):
-                    flow = 0.0
-                if not math.isfinite(price):
-                    price = 0.0
-                if action in BUY_ACTIONS:
-                    g["buy_schemes"].add(int(r["scheme_id"]))
-                    g["buy_amcs"].add(str(r["amc_name"]))
-                    g["total_flow_lakhs"] += flow
-                    g["total_price_effect_lakhs"] += price
-                elif action in SELL_ACTIONS:
-                    g["sell_schemes"].add(int(r["scheme_id"]))
-                    g["sell_amcs"].add(str(r["amc_name"]))
-                    g["total_flow_lakhs"] += flow
-                    g["total_price_effect_lakhs"] += price
-                # 'unchanged' rows contribute no signal and are skipped.
-            # Exclude no-signal names: only names with at least one buy or sell.
-            ranked: list[dict[str, Any]] = []
-            for g in grouped.values():
-                nb = len(g["buy_schemes"])
-                ns = len(g["sell_schemes"])
-                if nb + ns == 0:
-                    continue
-                ab = len(g["buy_amcs"])
-                as_ = len(g["sell_amcs"])
-                denom = nb + ns
-                buying_ratio = (nb / denom) if denom else 0.0
-                ranked.append(
-                    {
-                        "isin": g["isin"],
-                        "stock_name": g["stock_name"],
-                        "industry": g["industry"],
-                        "instrument_type": g["instrument_type"],
-                        "schemes_buying": nb,
-                        "schemes_selling": ns,
-                        "amcs_buying": ab,
-                        "amcs_selling": as_,
-                        "net_scheme_count": nb - ns,
-                        "net_amc_count": ab - as_,
-                        "buying_ratio": buying_ratio,
-                        "total_flow_lakhs": g["total_flow_lakhs"],
-                        "total_price_effect_lakhs": g["total_price_effect_lakhs"],
-                    }
-                )
+            ranked = _ranked_consensus(conn, month, equity_filter, active_filter)
             if not ranked:
+                has_deltas = conn.execute(
+                    "SELECT 1 FROM mf_holding_deltas WHERE report_month = ? LIMIT 1",
+                    (month,)).fetchone() is not None
                 return _sanitize(
                     {
                         "month": month,
                         "equity_only": bool(equity_filter),
+                        "active_equity_only": bool(active_filter),
                         "count": 0,
                         "results": [],
                         "message": (
                             f"No MF buying or selling signals for {month} "
                             "under the current filter; stocks with no "
                             "monthly change are not ranked as buys."
+                            if has_deltas else
+                            f"No holding-change data available for {month} yet "
+                            "(data may not have been ingested for this month, "
+                            "or this is the first month tracked)."
                         ),
                     }
                 )
-            ranked.sort(
-                key=lambda x: (
-                    x["net_amc_count"],
-                    x["net_scheme_count"],
-                    x["total_flow_lakhs"],
-                ),
-                reverse=True,
-            )
-            summaries = _shareholding_summary(conn, [r["isin"] for r in ranked])
-            for r in ranked:
-                s = summaries.get(r["isin"], {})
-                r["shareholding_status"] = s.get("status", "missing")
-                r["shareholding_quarter_end"] = s.get("latest_quarter")
-                r["previous_shareholding_quarter_end"] = s.get("previous_quarter")
-                r["fii_pct"] = s.get("fii_pct")
-                r["dii_pct"] = s.get("dii_pct")
-                r["fii_direction"] = s.get("fii_direction", "no_data")
-                r["dii_direction"] = s.get("dii_direction", "no_data")
-                r["fii_pct_change"] = s.get("fii_pct_change")
-                r["dii_pct_change"] = s.get("dii_pct_change")
-                r["fii_increased"] = bool(s.get("fii_increased", False))
-                r["dii_increased"] = bool(s.get("dii_increased", False))
             payload: dict[str, Any] = {
                 "month": month,
                 "equity_only": bool(equity_filter),
+                "active_equity_only": bool(active_filter),
                 "count": len(ranked),
                 "results": ranked,
             }
@@ -741,132 +531,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             consensus_message = "No consensus data available yet."
             if latest_month is not None:
                 try:
-                    has_price = "price_effect_lakhs" in _table_columns(
-                        conn, "mf_holding_deltas"
-                    )
-                    price_select = (
-                        ", d.price_effect_lakhs AS price_effect_lakhs"
-                        if has_price
-                        else ""
-                    )
-                    dashboard_sql = (
-                        "SELECT d.isin AS isin, s.name AS stock_name, "
-                        "d.scheme_id AS scheme_id, sch.amc_name AS amc_name, "
-                        "d.action AS action, "
-                        f"d.flow_lakhs AS flow_lakhs{price_select}, "
-                        "d.value_change_lakhs AS value_change_lakhs "
-                        "FROM mf_holding_deltas d "
-                        "JOIN stocks s ON s.isin = d.isin "
-                        "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-                        "WHERE d.report_month = ? AND s.instrument_type = 'equity'"
-                    )
-                    try:
-                        rows = conn.execute(
-                            dashboard_sql, (latest_month,)
-                        ).fetchall()
-                    except sqlite3.Error as exc:
-                        # Legacy DBs predate price_effect_lakhs: retry without it.
-                        if has_price and "price_effect" in str(exc).lower():
-                            has_price = False
-                            dashboard_sql = dashboard_sql.replace(
-                                ", d.price_effect_lakhs AS price_effect_lakhs", ""
-                            )
-                            rows = conn.execute(
-                                dashboard_sql, (latest_month,)
-                            ).fetchall()
-                        else:
-                            raise
-                    agg: dict[str, dict[str, Any]] = {}
-                    for r in rows:
-                        isin = str(r["isin"])
-                        g = agg.setdefault(
-                            isin,
-                            {
-                                "isin": isin,
-                                "stock_name": r["stock_name"],
-                                "buy_s": set(),
-                                "sell_s": set(),
-                                "buy_a": set(),
-                                "sell_a": set(),
-                                "flow": 0.0,
-                                "price": 0.0,
-                            },
-                        )
-                        act = str(r["action"])
-                        try:
-                            fl = (
-                                float(r["flow_lakhs"])
-                                if r["flow_lakhs"] is not None
-                                else 0.0
-                            )
-                        except (TypeError, ValueError):
-                            fl = 0.0
-                        if not math.isfinite(fl):
-                            fl = 0.0
-                        try:
-                            pr = (
-                                float(r["price_effect_lakhs"])
-                                if (has_price and r["price_effect_lakhs"] is not None)
-                                else 0.0
-                            )
-                        except (TypeError, ValueError, IndexError, KeyError):
-                            pr = 0.0
-                        if not math.isfinite(pr):
-                            pr = 0.0
-                        if act in BUY_ACTIONS:
-                            g["buy_s"].add(int(r["scheme_id"]))
-                            g["buy_a"].add(str(r["amc_name"]))
-                            g["flow"] += fl
-                            g["price"] += pr
-                        elif act in SELL_ACTIONS:
-                            g["sell_s"].add(int(r["scheme_id"]))
-                            g["sell_a"].add(str(r["amc_name"]))
-                            g["flow"] += fl
-                            g["price"] += pr
-                    ranked_all = []
-                    for g in agg.values():
-                        nb, ns = len(g["buy_s"]), len(g["sell_s"])
-                        if nb + ns == 0:
-                            continue
-                        ab, as_ = len(g["buy_a"]), len(g["sell_a"])
-                        denom = nb + ns
-                        ranked_all.append(
-                            {
-                                "isin": g["isin"],
-                                "stock_name": g["stock_name"],
-                                "schemes_buying": nb,
-                                "schemes_selling": ns,
-                                "amcs_buying": ab,
-                                "amcs_selling": as_,
-                                "net_amc_count": ab - as_,
-                                "net_scheme_count": nb - ns,
-                                "buying_ratio": (nb / denom) if denom else 0.0,
-                                "total_flow_lakhs": g["flow"],
-                                "total_price_effect_lakhs": g["price"],
-                            }
-                        )
-                    ranked_all.sort(
-                        key=lambda x: (
-                            x["net_amc_count"],
-                            x["net_scheme_count"],
-                            x["total_flow_lakhs"],
-                        ),
-                        reverse=True,
-                    )
-                    consensus_top = _sanitize(ranked_all[:15])
-                    if consensus_top:
-                        sh_top = _shareholding_summary(
-                            conn, [r["isin"] for r in consensus_top]
-                        )
-                        for r in consensus_top:
-                            s = sh_top.get(r["isin"], {})
-                            r["shareholding_status"] = s.get("status", "missing")
-                            r["shareholding_quarter_end"] = s.get("latest_quarter")
-                            r["fii_direction"] = s.get("fii_direction", "no_data")
-                            r["dii_direction"] = s.get("dii_direction", "no_data")
-                        consensus_message = ""
+                    consensus_top = _ranked_consensus(conn, latest_month)[:15]
                 except sqlite3.Error:
                     consensus_top = []
+                if consensus_top:
+                    consensus_message = ""
             ctx = _sanitize(
                 {
                     "months": months,

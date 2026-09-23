@@ -10,17 +10,20 @@ USAGE (after parsing each AMC's file with amfi_mf_parser.py):
 
 This loads every given CSV into tracker.db, computes deltas between
 --prev and --curr, prints the cross-fund consensus table (the "who's
-buying the same thing" signal), and prints a fallback summary for
-every scheme that has data for --curr.
+buying the same thing" signal), joins it against quarterly FII/DII
+shareholding on ISIN for the full MF+FII overlap view (Phase 1), and
+prints a fallback summary for every scheme that has data for --curr.
 
-Nothing here calls an LLM. This is the fully rule-based baseline —
-wire GLM 5.3 in afterwards to narrate on top of build_summary()'s
+Nothing here calls an LLM, and nothing in this project does any more —
+the narration layer was removed. This is the rule-based path on
 underlying numbers (build plan §7), not to replace this file.
 """
 import argparse
 import hashlib
 import json
 import math
+import sqlite3
+import sys
 from statistics import median
 import uuid
 from datetime import datetime, timezone
@@ -31,8 +34,8 @@ import pandas as pd
 import db
 import delta_calculator
 import consensus_signals
-import fallback_summary
 from findit.core.corporate_actions import detect_candidate
+from findit.summary import get_summary
 from findit.store.validation_gate import (
     validate_holdings_month,
     validate_implied_price_cv,
@@ -135,6 +138,73 @@ def _record_candidates(conn, issues, prev_df, curr_df, month: str) -> list[dict]
     return candidates
 
 
+def build_overlap_view(conn, consensus: pd.DataFrame, curr: str) -> dict:
+    """Join MF consensus against quarterly FII/DII shareholding (Phase 1).
+
+    Uses ``curr`` as a no-lookahead cutoff: only filings published by the
+    day ``curr``'s MF portfolios became public are ranked. Missing filings stay
+    ``no_data`` (never zero); stale quarters are flagged by the join.
+    Never raises on missing/empty shareholding data — returns the
+    consensus unchanged with an ``unavailable`` status instead.
+    """
+    if consensus is None or consensus.empty:
+        return {"joined": consensus, "common": consensus, "status": "no_consensus"}
+    try:
+        joined = consensus_signals.join_shareholding_increase(
+            conn, consensus, as_of_month=curr,
+        )
+    except Exception as exc:  # noqa: BLE001 - reported, not swallowed
+        return {"joined": consensus, "common": consensus.iloc[0:0],
+                "status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+    try:
+        common = joined[joined["is_common_with_fii_increase"]]
+    except (KeyError, TypeError) as exc:
+        return {"joined": joined, "common": joined.iloc[0:0],
+                "status": "unavailable", "error": f"{type(exc).__name__}: {exc}"}
+    return {"joined": joined, "common": common, "status": "ok", "error": None}
+
+
+def _format_overlap_row(row) -> str:
+    isin = row.get("isin", "?")
+    name = row.get("stock_name", "")
+    mf_net = row.get("net_amc_count", 0)
+    fii_dir = row.get("fii_direction", "no_data")
+    dii_dir = row.get("dii_direction", "no_data")
+    qend = row.get("shareholding_quarter_end")
+    prev_qend = row.get("previous_shareholding_quarter_end")
+    stale = bool(row.get("shareholding_stale", False))
+    stale_mark = " [stale]" if stale else ""
+    return (
+        f"  {name} | {isin} | MF net {mf_net} | "
+        f"FII {fii_dir} / DII {dii_dir} | "
+        f"as-of {qend} (prev {prev_qend}){stale_mark}"
+    )
+
+
+def _overlap_summary(joined, common, status: str, error: str | None = None) -> dict:
+    """Auditable counts for the ingest_runs report (JSON-safe)."""
+    if status != "ok" or joined is None or getattr(joined, "empty", True):
+        summary = {"status": status, "common_count": 0}
+        if error:
+            summary["error"] = error
+        return summary
+    try:
+        stale_count = int(joined["shareholding_stale"].fillna(True).sum())
+    except (KeyError, TypeError, ValueError):
+        stale_count = 0
+    try:
+        missing_count = int((joined["shareholding_quarter_end"].isna()).sum())
+    except (KeyError, TypeError, AttributeError):
+        missing_count = 0
+    return {
+        "status": status,
+        "common_count": int(len(common)),
+        "consensus_count": int(len(joined)),
+        "stale_count": stale_count,
+        "missing_shareholding_count": missing_count,
+    }
+
+
 def run_validation_gate(conn, touched: dict) -> dict:
     """Validate touched scheme-months and persist reports, including provenance.
 
@@ -230,13 +300,17 @@ def run_validation_gate(conn, touched: dict) -> dict:
 
 def _track_source(touched: dict, conn, df: pd.DataFrame, path: Path, file_hash: str):
     """Collect repeated per-scheme CSV metadata once, not once per holding."""
-    id_map = dict(conn.execute(
-        "SELECT amc_name || '||' || scheme_name, scheme_id FROM schemes"
-    ).fetchall())
     for (amc, scheme, month), group in df.groupby(
         ["amc_name", "scheme_name", "report_month"]
     ):
-        sid = id_map[f"{amc}||{scheme}"]
+        # Same resolution the loader used: an aliased/re-punctuated sheet
+        # name must land on the scheme_id its holdings were just written to.
+        sid = db.resolve_scheme_id(conn, amc, scheme, create=False)
+        if sid is None:
+            raise RuntimeError(
+                f"no scheme_id for {amc} | {scheme} | {month} after loading -- "
+                "this shouldn't happen"
+            )
         entry = touched.setdefault((int(sid), str(month)), {"files": [], "hashes": []})
         entry["files"].append(str(path))
         entry["hashes"].append(file_hash)
@@ -252,6 +326,35 @@ def _track_source(touched: dict, conn, df: pd.DataFrame, path: Path, file_hash: 
                 raise ValueError(f"Non-finite {column} for {amc} | {scheme} | {month}")
             # A reloaded scheme snapshot replaces earlier provenance, not sums it.
             entry[column] = int(value) if column.endswith("count") and value is not None else value
+
+
+def signal_track_record(db_path: str, conn) -> str:
+    """The signal's own history, printed next to the signal it ranks.
+
+    A ranking with no record of how its past picks did asks for trust it has
+    not earned. Months without the needed closes are listed, not skipped
+    silently; iterations=0 keeps this fast (no permutation p).
+    """
+    from findit.cli import backtest
+
+    months = [r[0] for r in conn.execute(
+        "SELECT DISTINCT report_month FROM mf_holding_deltas ORDER BY 1")]
+    results, unscored = [], []
+    for month in months:
+        try:
+            results.append(backtest.run(db_path, month, iterations=0))
+        except SystemExit as exc:
+            unscored.append(f"  {month}: {str(exc).splitlines()[0]}")
+            unscored += [f"    {line.strip()}" for line in str(exc).splitlines()[1:]]
+    lines = []
+    if results:
+        lines.append(backtest.track_record(results))
+    else:
+        lines.append("(no signal month has entry/exit closes stored yet)")
+    if unscored:
+        lines.append("Not scored:")
+        lines += unscored
+    return "\n".join(lines)
 
 
 def main():
@@ -278,6 +381,11 @@ def main():
             file_hash = _file_sha256(path)
             df = pd.read_csv(path)
             _track_source(touched, conn, df, path, file_hash)
+
+    # Classify freshly loaded schemes: backfill only runs at connect time
+    # (before these inserts), so without this every new scheme stays NULL
+    # and the consensus filter (is_active_equity = 1) silently drops it.
+    db.backfill_is_active_equity(conn)
 
     # Validation gate: the second gate after the parser's fail-loud column
     # check. A file that parses fine can still produce numbers that don't
@@ -317,13 +425,65 @@ def main():
     deltas = delta_calculator.compute_deltas(conn, args.prev, args.curr)
     delta_calculator.persist_deltas(conn, deltas)
     print(f"\nComputed {len(deltas)} deltas for {args.prev} -> {args.curr}")
+    unmatched = delta_calculator.unmatched_schemes(conn, args.prev, args.curr)
+    for side, month in (("only_curr", args.curr), ("only_prev", args.prev)):
+        for sid in unmatched[side]:
+            amc, scheme = conn.execute(
+                "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?", (sid,)
+            ).fetchone()
+            print(f"  [no comparison] {amc} | {scheme}: holdings only in {month}; "
+                  "not counted as buying or selling")
 
     print(f"\n=== Cross-fund consensus, {args.curr} (active equity only) ===")
+    print("Ranked by raw breadth (net_amc_count). net_active_amc_count counts only AMCs that\n"
+          "raised a stock's weight beyond what inflows explain; it is shown alongside, not\n"
+          "used for ranking, until the track record below shows which one earns it.")
     consensus = consensus_signals.compute_consensus(conn, args.curr)
     if consensus.empty:
         print("(no signals yet)")
     else:
         print(consensus.to_string(index=False))
+
+    # Phase 1: MF+FII/DII overlap on ISIN. Missing filings stay no_data
+    # (never zero); quarterly filings may be stale relative to the MF month.
+    print(f"\n=== MF + FII/DII overlap, {args.curr} ===")
+    overlap = build_overlap_view(conn, consensus, args.curr)
+    joined, common, overlap_status = (
+        overlap["joined"], overlap["common"], overlap["status"],
+    )
+    overlap_error = overlap.get("error")
+    if overlap_status == "no_consensus":
+        print("(no MF signals, so no overlap to report)")
+    elif overlap_status == "unavailable":
+        print("(shareholding data unavailable — showing MF-only consensus above)")
+        if overlap_error:
+            print(f"  reason: {overlap_error}")
+    elif common.empty:
+        print("(no MF+FII/DII common increases this month)")
+    else:
+        print("(MF net buying + FII-or-DII quarterly increase; stale quarters flagged)")
+        for _, row in common.iterrows():
+            print(_format_overlap_row(row))
+    # The run report is the audit trail for this month. If it cannot be
+    # written, say so loudly rather than leaving a silently incomplete record.
+    try:
+        current_report = json.loads(conn.execute(
+            "SELECT validation_report_json FROM ingest_runs WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()[0])
+        current_report["mf_fii_overlap"] = _overlap_summary(
+            joined, common, overlap_status, overlap_error)
+        conn.execute(
+            "UPDATE ingest_runs SET validation_report_json = ? WHERE run_id = ?",
+            (json.dumps(current_report), run_id),
+        )
+        conn.commit()
+    except (sqlite3.DatabaseError, TypeError, ValueError) as exc:
+        print(
+            f"  [warn] could not record the MF+FII overlap in ingest_runs "
+            f"{run_id}: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
     try:
         passive = conn.execute(
             "SELECT DISTINCT s.amc_name, s.scheme_name FROM schemes s "
@@ -332,19 +492,32 @@ def main():
             "ORDER BY 1, 2",
             (args.curr,),
         ).fetchall()
-    except Exception:
+    except sqlite3.DatabaseError as exc:
+        # The consensus filter already excluded these; not being able to
+        # list them makes the exclusion unauditable, so it must be visible.
         passive = []
+        print(f"  [warn] could not list excluded passive schemes: {exc}",
+              file=sys.stderr)
     if passive:
-        print(f"\nExcluded {len(passive)} passive/debt scheme(s) from consensus "
-              f"(pattern heuristic, still shown in own summaries):")
+        print(f"\nExcluded {len(passive)} passive/hedged/FoF/debt scheme(s) from consensus "
+              f"(by full scheme name where the sheet has one; still shown in own summaries):")
         for amc, scheme in passive:
             print(f"  - {amc} | {scheme}")
+
+    print("\n=== Signal track record (entry after publication; see findit.cli.backtest) ===")
+    try:
+        print(signal_track_record(args.db, conn))
+    except (sqlite3.DatabaseError, ValueError) as exc:
+        print(f"  [warn] track record unavailable: {type(exc).__name__}: {exc}",
+              file=sys.stderr)
 
     print(f"\n=== Monthly summaries, {args.curr} ===")
     scheme_ids = conn.execute("SELECT DISTINCT scheme_id FROM mf_holding_deltas WHERE report_month = ?", (args.curr,)).fetchall()
     for (scheme_id,) in scheme_ids:
         print()
-        print(fallback_summary.build_summary(conn, scheme_id, args.curr))
+        # get_summary also withholds a delta whose *previous* month is
+        # quarantined -- the same check the dashboard and digest apply.
+        print(get_summary(conn, scheme_id, args.curr)["text"])
 
     print("\n=== Corporate-action candidates (unconfirmed; no flow adjustments) ===")
     if not report["corporate_action_candidates"]:
