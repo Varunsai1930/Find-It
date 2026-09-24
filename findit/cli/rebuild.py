@@ -31,7 +31,7 @@ def rebuild_copy(src_db: str | Path, dst_copy: str | Path, prev: str, curr: str)
     conn = db.get_connection(str(dst))
     try:
         deltas = delta_calculator.compute_deltas(conn, prev, curr)
-        return int(delta_calculator.persist_deltas(conn, deltas))
+        return int(delta_calculator.persist_deltas(conn, deltas, report_month=curr))
     finally:
         conn.close()
 
@@ -41,7 +41,7 @@ def rebuild_copy_in_place(copy_db: str | Path, prev: str, curr: str) -> int:
     conn = db.get_connection(str(copy_db))
     try:
         deltas = delta_calculator.compute_deltas(conn, prev, curr)
-        return int(delta_calculator.persist_deltas(conn, deltas))
+        return int(delta_calculator.persist_deltas(conn, deltas, report_month=curr))
     finally:
         conn.close()
 

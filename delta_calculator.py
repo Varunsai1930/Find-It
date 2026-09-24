@@ -129,8 +129,20 @@ def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -
     return m[cols]
 
 
-def persist_deltas(conn: sqlite3.Connection, deltas: pd.DataFrame) -> int:
-    if deltas.empty:
+def persist_deltas(conn: sqlite3.Connection, deltas: pd.DataFrame,
+                   report_month: str | None = None) -> int:
+    """Store a month's deltas, *replacing* whatever that month held before.
+
+    An upsert alone leaves rows the new computation no longer produces -- a
+    scheme now excluded, a holding reloaded away -- still counted as buying
+    or selling. The months in ``deltas`` (plus ``report_month``, so an empty
+    result still clears its month) are deleted and rewritten in one
+    transaction.
+    """
+    months = set(deltas["report_month"].astype(str)) if not deltas.empty else set()
+    if report_month is not None:
+        months.add(str(report_month))
+    if not months:
         return 0
     # PRAGMA-guarded ALTER fallback for legacy DBs lacking the column.
     try:
@@ -140,6 +152,8 @@ def persist_deltas(conn: sqlite3.Connection, deltas: pd.DataFrame) -> int:
     except sqlite3.DatabaseError:
         pass
     cur = conn.cursor()
+    cur.executemany("DELETE FROM mf_holding_deltas WHERE report_month = ?",
+                    [(m,) for m in sorted(months)])
     has_flow = "flow_lakhs" in deltas.columns
     has_price = "price_effect_lakhs" in deltas.columns
     rows = [

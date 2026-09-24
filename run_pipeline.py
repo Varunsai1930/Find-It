@@ -423,7 +423,7 @@ def main():
         print("All loaded scheme-months passed.")
 
     deltas = delta_calculator.compute_deltas(conn, args.prev, args.curr)
-    delta_calculator.persist_deltas(conn, deltas)
+    delta_calculator.persist_deltas(conn, deltas, report_month=args.curr)
     print(f"\nComputed {len(deltas)} deltas for {args.prev} -> {args.curr}")
     unmatched = delta_calculator.unmatched_schemes(conn, args.prev, args.curr)
     for side, month in (("only_curr", args.curr), ("only_prev", args.prev)):

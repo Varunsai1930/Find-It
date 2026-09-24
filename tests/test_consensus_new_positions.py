@@ -129,3 +129,19 @@ def test_a_fund_missing_from_either_month_is_not_compared(tmp_path):
     assert delta_calculator.unmatched_schemes(conn, "2026-07", "2026-08") == {
         "only_prev": [3], "only_curr": [2]}
     conn.close()
+
+
+def test_recomputing_a_month_replaces_it_instead_of_leaving_stale_rows(tmp_path):
+    import db
+    import delta_calculator
+
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    conn.execute("INSERT INTO mf_holding_deltas (scheme_id, isin, report_month, prev_month, "
+                 "qty_change, value_change_lakhs, pct_nav_change, action) VALUES "
+                 "(9, 'INEOLD01001', '2026-08', '2026-07', 5, 5, 1, 'new')")
+    conn.commit()
+    empty = delta_calculator.compute_deltas(conn, "2026-07", "2026-08")
+    assert empty.empty
+    delta_calculator.persist_deltas(conn, empty, report_month="2026-08")
+    assert conn.execute("SELECT COUNT(*) FROM mf_holding_deltas").fetchone()[0] == 0
+    conn.close()
