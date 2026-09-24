@@ -194,3 +194,29 @@ def test_too_few_stocks_leave_the_fifths_empty_without_failing():
     scored = bq.score_quarter(panel, prices, prices)
     assert scored["groups"]["mf_top_q"] == {"n": 0}
     assert scored["groups"]["mf_up_only"]["n"] == 1
+
+
+def test_size_neutral_view_removes_a_pure_size_effect():
+    # 30 stocks: the ten smallest (by turnover) all rose 10%, the rest were flat,
+    # and MF buying happened to be concentrated in those small stocks. Raw excess
+    # makes "mf_up_only" look good; against same-size peers it is zero.
+    isins = [f"S{i:02d}" for i in range(30)]
+    panel = pd.DataFrame({"isin": isins, "d_mf": [1.0] * 10 + [0.0] * 20,
+                          "d_fii": [0.0] * 30,
+                          "group": ["mf_up_only"] * 10 + ["mf_flat"] * 20})
+    entry = pd.DataFrame({"isin": isins, "close_price": [100.0] * 30,
+                          "traded_value": [1e5 * (i + 1) for i in range(30)]})
+    exit_ = pd.DataFrame({"isin": isins, "close_price": [110.0] * 10 + [100.0] * 20})
+    scored = bq.score_quarter(panel, entry, exit_)
+    up = scored["groups"]["mf_up_only"]
+    assert up["excess_mean"] == pytest.approx(0.10 - 1 / 30)
+    assert up["excess_size"] == pytest.approx(0.0)
+    assert bq.size_neutral([dict(scored, signal_quarter="q", price_dates=("a", "b"))])[0][
+        "groups"]["mf_up_only"] == {"n": 10, "excess_mean": pytest.approx(0.0)}
+
+
+def test_without_turnover_there_is_no_size_neutral_figure():
+    panel = pd.DataFrame({"isin": ["A", "B"], "d_mf": [1.0, 0.0], "d_fii": [0.0, 0.0],
+                          "group": ["mf_up_only", "mf_flat"]})
+    prices = pd.DataFrame({"isin": ["A", "B"], "close_price": [100.0, 100.0]})
+    assert "excess_size" not in bq.score_quarter(panel, prices, prices)["groups"]["mf_up_only"]

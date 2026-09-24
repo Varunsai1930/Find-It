@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS security_prices_daily (
     isin TEXT NOT NULL,
     trade_date TEXT NOT NULL,
     close_price REAL,
+    traded_value REAL,
     series TEXT,
     symbol TEXT,
     source TEXT,
@@ -461,6 +462,8 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
         # only reliable input for the passive/arbitrage filter when sheets
         # are named by code ("SAOF").
         ("schemes", "scheme_title", "scheme_title TEXT"),
+        # Rupee turnover on the day: the backtests' size proxy.
+        ("security_prices_daily", "traded_value", "traded_value REAL"),
     ):
         _existing = [r[1] for r in conn.execute(f"PRAGMA table_info({_table})").fetchall()]
         if _col not in _existing:

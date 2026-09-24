@@ -153,9 +153,11 @@ def _close_on_or_after(conn: sqlite3.Connection, target: date,
         day = conn.execute("SELECT MAX(trade_date) FROM security_prices_daily").fetchone()[0]
     if day is None:
         return None
+    has_value = "traded_value" in consensus_signals._table_columns(conn, "security_prices_daily")
     return str(day), pd.read_sql_query(
-        "SELECT isin, close_price, trade_date FROM security_prices_daily WHERE trade_date = ?",
-        conn, params=(day,))
+        "SELECT isin, close_price, trade_date"
+        + (", traded_value" if has_value else "")
+        + " FROM security_prices_daily WHERE trade_date = ?", conn, params=(day,))
 
 
 def _next_month(month: str) -> str:

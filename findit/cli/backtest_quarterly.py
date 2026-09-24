@@ -46,6 +46,10 @@ from findit.core import publication
 GROUPS = ("mf_up_fii_up", "mf_up_only", "mf_flat", "mf_down", "mf_top_q", "mf_bottom_q")
 DEFAULT_LAG_DAYS = 30
 DEFAULT_THRESHOLD_PP = 0.25
+# Size control: each quarter's universe splits into this many turnover bands,
+# and needs at least this many stocks with a turnover before it is applied.
+SIZE_BANDS = 3
+MIN_SIZED = 15
 
 
 def previous_quarter_end(quarter_end: str) -> str:
@@ -121,9 +125,17 @@ def signal_panel(filings: pd.DataFrame, quarter_end: str, decision: date,
 
 
 def score_quarter(panel: pd.DataFrame, entry: pd.DataFrame, exit_: pd.DataFrame) -> dict:
-    """Per-group mean return and excess vs the universe for one quarter."""
-    priced = panel.merge(entry.rename(columns={"close_price": "px_in"}), on="isin")
-    priced = priced.merge(exit_.rename(columns={"close_price": "px_out"}), on="isin")
+    """Per-group mean return and excess vs the universe for one quarter.
+
+    With entry-day turnover available, each group also gets ``excess_size``:
+    its mean return minus that of stocks in the same turnover band -- the
+    comparison that removes a size effect (MF ownership swings are larger in
+    smaller, riskier stocks, so a raw difference can be size, not signal).
+    """
+    entry_cols = ["isin", "close_price"] + (["traded_value"] if "traded_value" in entry else [])
+    priced = panel.merge(entry[entry_cols].rename(columns={"close_price": "px_in"}), on="isin")
+    priced = priced.merge(exit_[["isin", "close_price"]].rename(
+        columns={"close_price": "px_out"}), on="isin")
     priced = priced[(priced["px_in"] > 0) & (priced["px_out"] > 0)].copy()
     out = {"universe": {"n": int(len(priced))}, "groups": {}, "unpriced": len(panel) - len(priced)}
     if priced.empty:
@@ -135,11 +147,34 @@ def score_quarter(panel: pd.DataFrame, entry: pd.DataFrame, exit_: pd.DataFrame)
     priced["quintile"] = (pd.qcut(priced["d_mf"].rank(method="first"), 5, labels=False)
                           if len(priced) >= 5 else -1)
     members = {"mf_top_q": priced["quintile"] == 4, "mf_bottom_q": priced["quintile"] == 0}
+    if "traded_value" in priced:
+        sized = priced["traded_value"] > 0
+    else:
+        sized = pd.Series(False, index=priced.index)
+    if sized.sum() >= MIN_SIZED:
+        bands = pd.qcut(priced.loc[sized, "traded_value"].rank(method="first"),
+                        SIZE_BANDS, labels=False)
+        priced.loc[sized, "size_band"] = bands
+        priced["ret_size_adj"] = priced["ret"] - priced.groupby("size_band")["ret"].transform("mean")
     for name in GROUPS:
-        values = priced.loc[members.get(name, priced["group"] == name), "ret"].tolist()
-        out["groups"][name] = ({"n": len(values), "mean": mean(values),
-                                "excess_mean": mean(values) - base} if values else {"n": 0})
+        mask = members.get(name, priced["group"] == name)
+        values = priced.loc[mask, "ret"].tolist()
+        group = ({"n": len(values), "mean": mean(values), "excess_mean": mean(values) - base}
+                 if values else {"n": 0})
+        if "ret_size_adj" in priced:
+            adjusted = priced.loc[mask, "ret_size_adj"].dropna()
+            if len(adjusted):
+                group.update(n_size=int(len(adjusted)), excess_size=float(adjusted.mean()))
+        out["groups"][name] = group
     return out
+
+
+def size_neutral(results: list[dict]) -> list[dict]:
+    """The same results with each group's excess replaced by its size-adjusted one."""
+    return [{**r, "groups": {
+        name: ({"n": g["n_size"], "excess_mean": g["excess_size"]} if "excess_size" in g
+               else {"n": 0})
+        for name, g in r["groups"].items()}} for r in results]
 
 
 def run(db_path: str, quarters: list[str] | None = None, lag_days: int = DEFAULT_LAG_DAYS,
@@ -206,11 +241,22 @@ def report(outcome: dict, db_path: str, lag_days: int, threshold_pp: float) -> s
         lines.append(f"{r['signal_quarter']:<11}{a['filed']:>7}{a['public_by_decision']:>8}"
                      f"{a['late_excluded']:>6}{a['deadline_basis']:>9}"
                      f"{r['universe']['n']:>8}{_pct(r['universe'].get('mean')):>10}")
-    lines += ["", track_record(results, GROUPS, period="quarter", label_key="signal_quarter"), "",
+    lines += ["", track_record(results, GROUPS, period="quarter", label_key="signal_quarter")]
+    adjusted = size_neutral(results)
+    if any(g.get("n") for r in adjusted for g in r["groups"].values()):
+        lines += ["", "SIZE-NEUTRAL: each stock measured against stocks in the same third of that",
+                  "quarter's universe by entry-day rupee turnover (a size proxy)",
+                  track_record(adjusted, GROUPS, period="quarter", label_key="signal_quarter")]
+    else:
+        lines += ["", "(no size-neutral view: entry closes carry no turnover -- re-run "
+                  "findit.cli.prices for those --date values to store it)"]
+    lines += ["",
               "READ THIS BEFORE BELIEVING ANY NUMBER ABOVE",
               "  Universe = companies with filings on record today: firms delisted since are",
-              "  missing (survivorship bias). No size or sector matching yet, and MF buying",
-              "  leans towards certain sizes and sectors, so a difference can be a size effect.",
+              "  missing (survivorship bias). The universe grows from Sep 2021, where NSE's",
+              "  filings (which begin then) fill stocks BSE did not serve. Size is proxied by",
+              "  one day's turnover and there is no sector matching; six groups are tested,",
+              "  so one |t| near 2 is expected by chance.",
               "  'deadline' counts filings whose publication date was never observed and was",
               "  assumed to be the 21-day deadline; --require-observed drops them.",
               "  Cross-sectional comparison, not a strategy: no costs, liquidity or sizing."]

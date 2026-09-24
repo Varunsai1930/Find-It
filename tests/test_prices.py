@@ -161,3 +161,13 @@ def test_load_daily_prices(tmp_path):
     assert P.load_daily_prices(conn, frame) == 1
     assert conn.execute("SELECT trade_date FROM security_prices_daily").fetchone()[0] == "2026-09-14"
     conn.close()
+
+
+def test_traded_value_is_kept_in_both_formats():
+    udiff = P.parse_bhavcopy(_zip([dict(ROW, TtlTrfVal=12345.5)]), None, date(2026, 9, 14))
+    assert udiff["traded_value"].tolist() == [12345.5]
+    legacy = P.parse_bhavcopy(_legacy_zip([
+        {"SYMBOL": "RELIANCE", "SERIES": "EQ", "CLOSE": 1162.4, "TOTTRDQTY": 100,
+         "TOTTRDVAL": 116240.0, "TIMESTAMP": "31-JUL-2019", "ISIN": "INE002A01018"}]),
+        None, date(2019, 7, 31))
+    assert legacy["traded_value"].tolist() == [116240.0]

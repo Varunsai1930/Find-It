@@ -55,9 +55,10 @@ class PriceFetchError(RuntimeError):
     """A bhavcopy could not be retrieved or read as prices."""
 
 
-# Column names per bhavcopy format: (ISIN, symbol, series, close, volume).
-_UDIFF_COLUMNS = ("ISIN", "TckrSymb", "SctySrs", "ClsPric", "TtlTradgVol")
-_LEGACY_COLUMNS = ("ISIN", "SYMBOL", "SERIES", "CLOSE", "TOTTRDQTY")
+# Column names per bhavcopy format: (ISIN, symbol, series, close, volume,
+# traded value in rupees -- the backtests' size proxy).
+_UDIFF_COLUMNS = ("ISIN", "TckrSymb", "SctySrs", "ClsPric", "TtlTradgVol", "TtlTrfVal")
+_LEGACY_COLUMNS = ("ISIN", "SYMBOL", "SERIES", "CLOSE", "TOTTRDQTY", "TOTTRDVAL")
 
 
 def parse_bhavcopy(content: bytes, report_month: str | None, trade_date: date,
@@ -75,7 +76,7 @@ def parse_bhavcopy(content: bytes, report_month: str | None, trade_date: date,
     frame.columns = [str(c).strip() for c in frame.columns]
     for layout in (_UDIFF_COLUMNS, _LEGACY_COLUMNS):
         if set(layout[:4]) <= set(frame.columns):
-            isin_col, symbol_col, series_col, close_col, volume_col = layout
+            isin_col, symbol_col, series_col, close_col, volume_col, value_col = layout
             break
     else:
         raise PriceFetchError(
@@ -99,6 +100,8 @@ def parse_bhavcopy(content: bytes, report_month: str | None, trade_date: date,
         "report_month": report_month,
         "trade_date": trade_date.isoformat(),
         "close_price": frame["close_price"],
+        "traded_value": (pd.to_numeric(frame[value_col], errors="coerce")
+                         if value_col in frame.columns else None),
         "series": frame[series_col].astype(str).str.strip(),
         "symbol": frame[symbol_col].astype(str).str.strip(),
         "source": "nse_bhavcopy",
@@ -232,8 +235,8 @@ def load_daily_prices(conn, prices: pd.DataFrame) -> int:
     """Upsert one trading day's closes into security_prices_daily."""
     if prices is None or prices.empty:
         return 0
-    columns = ["isin", "trade_date", "close_price", "series", "symbol", "source",
-               "source_url", "fetched_at"]
+    columns = ["isin", "trade_date", "close_price", "traded_value", "series", "symbol",
+               "source", "source_url", "fetched_at"]
     missing = set(columns) - set(prices.columns)
     if missing:
         raise ValueError(f"price rows are missing expected columns: {sorted(missing)}")
