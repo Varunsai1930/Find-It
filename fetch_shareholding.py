@@ -50,6 +50,10 @@ from findit.core import publication
 NSE_EQUITY_MASTER_URL = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
 BSE_API_URL = "https://api.bseindia.com/BseIndiaAPI/api"
 BSE_SITE_URL = "https://www.bseindia.com"
+# NSE carries the same Reg. 31 filings (from Sep 2021) with its own index and
+# an XBRL archive -- a second source when BSE's API is unavailable.
+NSE_SHAREHOLDING_API_URL = "https://www.nseindia.com/api/corporate-share-holdings-master"
+SOURCES = ("bse", "nse")
 BROWSER_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -112,14 +116,14 @@ class FetchStats:
 
 
 class PoliteSession:
-    """One browser-shaped BSE session with a delay before every request."""
+    """One browser-shaped session with a delay before every request."""
 
-    def __init__(self, delay_seconds: float) -> None:
+    def __init__(self, delay_seconds: float, referer: str = f"{BSE_SITE_URL}/") -> None:
         self.delay_seconds = delay_seconds
         self.next_request_at = 0.0
         self.session = requests.Session()
         # Do not add Origin: BSE's API returns an HTML error shell when it is set.
-        self.session.headers.update(BROWSER_HEADERS)
+        self.session.headers.update({**BROWSER_HEADERS, "Referer": referer})
 
     def get(self, url: str, **kwargs: Any) -> requests.Response:
         remaining = self.next_request_at - time.monotonic()
@@ -323,7 +327,7 @@ def get_bse_filings(
 ) -> list[dict[str, str]]:
     """Get the newest usable XBRL Reg. 31 filings for a BSE scrip.
 
-    Each filing carries quarter_end, attachment, filing_type (quarterly vs
+    Each filing carries quarter_end, url, filing_type (quarterly vs
     interim) and published_at. Both types are kept in recency order.
     ``max_filings=None`` returns every usable filing.
     """
@@ -360,7 +364,7 @@ def get_bse_filings(
         usable.append(
             {
                 "quarter_end": quarter_end,
-                "attachment": attachment,
+                "url": f"{BSE_SITE_URL}{attachment}",
                 "filing_type": classify_filing_type(quarter_end),
                 "published_at": filing_published_at(filing),
             }
@@ -369,6 +373,44 @@ def get_bse_filings(
         if max_filings is not None and len(usable) >= max_filings:
             break
     return usable
+
+
+def get_nse_filings(
+    session: PoliteSession, symbol: str, max_filings: int | None = 2,
+) -> list[dict[str, str]]:
+    """The newest XBRL shareholding filings for one NSE symbol, like get_bse_filings.
+
+    A quarter can appear more than once (revisions); the *earliest* broadcast
+    is kept, because that is what the market saw first -- a later revision's
+    numbers were not public on the original date.
+    """
+    response = session.get(NSE_SHAREHOLDING_API_URL,
+                           params={"index": "equities", "symbol": symbol})
+    try:
+        rows = response.json()
+    except requests.JSONDecodeError as exc:
+        raise ShareholdingFetchError("NSE filing index did not return JSON") from exc
+    if not isinstance(rows, list):
+        raise ShareholdingFetchError("NSE filing index is not a list")
+
+    earliest: dict[str, dict[str, str]] = {}
+    for row in rows:
+        url = row.get("xbrl") if isinstance(row, dict) else None
+        if not url or not str(url).startswith("http"):
+            continue
+        try:
+            quarter_end = datetime.strptime(str(row["date"]).strip(), "%d-%b-%Y").date().isoformat()
+            published = datetime.strptime(" ".join(str(row["broadcastDate"]).split()),
+                                          "%d-%b-%Y %H:%M:%S").isoformat(timespec="minutes")
+        except (KeyError, ValueError):
+            continue  # unknown dates: never guessed
+        known = earliest.get(quarter_end)
+        if known is None or published < known["published_at"]:
+            earliest[quarter_end] = {"quarter_end": quarter_end, "url": str(url),
+                                     "filing_type": classify_filing_type(quarter_end),
+                                     "published_at": published}
+    filings = [earliest[q] for q in sorted(earliest, reverse=True)]
+    return filings if max_filings is None else filings[:max_filings]
 
 
 def _row_percentage(row: Any) -> float | None:
@@ -483,27 +525,30 @@ def parse_bse_shareholding(html: str) -> dict[str, float]:
     }
 
 
-# Category contexts in BSE's XBRL instance documents (2016-2025). A context
-# id is the category name plus "I" (2016) or "_ContextI" (2020+) for the
-# quarter-end instant; numbered contexts ("..._Context15") are named holders.
+# Category contexts in SEBI shareholding-pattern XBRL instance documents, as
+# BSE (2016-2025) and NSE archives serve them. A context id is the category
+# name plus "I" (2016) or "_ContextI" (2020+) for the quarter-end instant;
+# numbered contexts ("..._Context15") are named holders. Names are matched
+# case-insensitively: the 2025 taxonomy writes "MutualFundsOrUTI" where
+# earlier ones wrote "MutualFundsOrUti".
 _XBRL_CATEGORY_CONTEXT_RE = re.compile(r"(.+?)(?:_Context)?I")
 _XBRL_PCT_ELEMENT = "ShareholdingAsAPercentageOfTotalNumberOfShares"
-_XBRL_PROMOTER = "ShareholdingOfPromoterAndPromoterGroup"
-_XBRL_PUBLIC = "PublicShareholding"
-_XBRL_TOTAL = "ShareholdingPattern"
+_XBRL_PROMOTER = "shareholdingofpromoterandpromotergroup"
+_XBRL_PUBLIC = "publicshareholding"
+_XBRL_TOTAL = "shareholdingpattern"
 # Non-promoter non-public holders (SEBI category C): an aggregate line in
 # 2016 filings, only its parts later.
-_XBRL_NPNP = "SharesHeldByNonPromoterNonPublicShareholders"
-_XBRL_NPNP_PARTS = ("EmployeeBenefitsTrusts", "CustodianOrDRHolder")
-_XBRL_MF = "MutualFundsOrUti"
-# The taxonomy spells it "Catergory"; accept the correct spelling too.
+_XBRL_NPNP = "sharesheldbynonpromoternonpublicshareholders"
+_XBRL_NPNP_PARTS = ("employeebenefitstrusts", "custodianordrholder")
+_XBRL_MF = "mutualfundsoruti"
+# Older taxonomies spell it "Catergory"; accept both.
 _XBRL_FPI_CATEGORY_RE = re.compile(
-    r"InstitutionsForeignPortfolioInvestorCate?r?gory(One|Two|Three)")
-_XBRL_FPI_AGGREGATE = "InstitutionsForeignPortfolioInvestor"
-_XBRL_FII_LEGACY_RE = re.compile(r"ForeignInstitutionalInvestors?")
+    r"institutionsforeignportfolioinvestorcate?r?gory(one|two|three)")
+_XBRL_FPI_AGGREGATE = "institutionsforeignportfolioinvestor"
+_XBRL_FII_LEGACY_RE = re.compile(r"foreigninstitutionalinvestors?")
 # Same conservative DII definition as DII_LABELS for the HTML format.
-_XBRL_DII = (_XBRL_MF, "Banks", "FinancialInstitutionOrBanks",
-             "InsuranceCompanies", "OtherFinancialInstitutions")
+_XBRL_DII = (_XBRL_MF, "banks", "financialinstitutionorbanks",
+             "insurancecompanies", "otherfinancialinstitutions")
 
 
 def parse_bse_shareholding_xbrl(document: str | bytes) -> dict[str, float]:
@@ -513,7 +558,7 @@ def parse_bse_shareholding_xbrl(document: str | bytes) -> dict[str, float]:
     try:
         root = ET.fromstring(document.lstrip(b"\xef\xbb\xbf \r\n\t"))
     except ET.ParseError as exc:
-        raise ShareholdingFetchError(f"BSE XBRL is not well-formed XML: {exc}") from exc
+        raise ShareholdingFetchError(f"XBRL is not well-formed XML: {exc}") from exc
 
     values: dict[str, float] = {}
     for element in root.iter():
@@ -527,26 +572,42 @@ def parse_bse_shareholding_xbrl(document: str | bytes) -> dict[str, float]:
             value = float(text)
         except ValueError as exc:
             raise ShareholdingFetchError(
-                f"Invalid percentage in BSE XBRL: {element.get('contextRef')}={text!r}"
+                f"Invalid percentage in XBRL: {element.get('contextRef')}={text!r}"
             ) from exc
-        name = match.group(1)
+        name = match.group(1).lower()
         if name in values and values[name] != value:
             raise ShareholdingFetchError(
-                f"Conflicting percentages for {name} in BSE XBRL: {values[name]} vs {value}")
+                f"Conflicting percentages for {name} in XBRL: {values[name]} vs {value}")
         values[name] = value
+
+    # The 2025 taxonomy (NSE archives) states shares as fractions of 1, not
+    # percentages. Read the scale off the filing's own total line, or its
+    # promoter + public split where 2016 filings omit the total; anything
+    # that is neither ~1 nor ~100 is a filing we do not understand.
+    npnp = values.get(_XBRL_NPNP, sum(values.get(k, 0.0) for k in _XBRL_NPNP_PARTS))
+    total = values.get(_XBRL_TOTAL)
+    if total is not None and not (abs(total - 1.0) <= 0.001 or 99.0 <= total <= 101.0):
+        raise ShareholdingFetchError(
+            f"XBRL shareholding total is {total}, neither a fraction nor a percentage")
+    split = values.get(_XBRL_PUBLIC, 0.0) + values.get(_XBRL_PROMOTER, npnp)
+    if abs((total if total is not None else split) - 1.0) <= 0.001:
+        values = {k: v * 100.0 for k, v in values.items()}
+        npnp *= 100.0
 
     # A company with no promoter group (ITC, IEX, most banks) files no
     # promoter line at all. Read that as 0 only when the filing itself
-    # accounts for every share without one: public + non-promoter non-public
-    # = the total (100% where 2016 filings omit the total line). Anything
-    # else stays a loud failure.
+    # accounts for every share without one: public, or public + non-promoter
+    # non-public, equals the total (100% where 2016 filings omit the total
+    # line). 2016 filings state the non-promoter non-public line outside the
+    # 100% (Reliance: 46.49 + 53.51, plus 3.03); later ones inside it (IEX).
+    # Anything else stays a loud failure.
     if _XBRL_PROMOTER not in values and _XBRL_PUBLIC in values:
-        npnp = values.get(_XBRL_NPNP, sum(values.get(k, 0.0) for k in _XBRL_NPNP_PARTS))
-        if abs(values[_XBRL_PUBLIC] + npnp - values.get(_XBRL_TOTAL, 100.0)) <= 0.01:
+        whole = values.get(_XBRL_TOTAL, 100.0)
+        if any(abs(values[_XBRL_PUBLIC] + extra - whole) <= 0.01 for extra in (0.0, npnp)):
             values[_XBRL_PROMOTER] = 0.0
     if _XBRL_PROMOTER not in values or _XBRL_PUBLIC not in values:
         raise ShareholdingFetchError(
-            "BSE XBRL did not contain its aggregate promoter/public percentage contexts"
+            "XBRL did not contain its aggregate promoter/public percentage contexts"
         )
     fpi_categories = [v for k, v in values.items() if _XBRL_FPI_CATEGORY_RE.fullmatch(k)]
     if fpi_categories:
@@ -558,15 +619,15 @@ def parse_bse_shareholding_xbrl(document: str | bytes) -> dict[str, float]:
         fii_pct = legacy[0] if legacy else 0.0
     dii_pct = sum(values[k] for k in _XBRL_DII if k in values)
     out = {
-        "promoter_pct": values[_XBRL_PROMOTER],
+        "promoter_pct": round(values[_XBRL_PROMOTER], 4),
         "fii_pct": round(fii_pct, 4),
         "dii_pct": round(dii_pct, 4),
-        "public_pct": values[_XBRL_PUBLIC],
+        "public_pct": round(values[_XBRL_PUBLIC], 4),
         "mf_pct": round(values[_XBRL_MF], 4) if _XBRL_MF in values else None,
     }
     for key, value in out.items():
         if value is not None and not 0.0 <= value <= 100.0:
-            raise ShareholdingFetchError(f"BSE XBRL {key}={value} is outside 0-100")
+            raise ShareholdingFetchError(f"XBRL {key}={value} is outside 0-100")
     return out
 
 
@@ -587,6 +648,7 @@ def fetch_shareholding(
     only_missing: bool = False,
     history: int | None = 2,
     universe: str = "held",
+    source: str = "bse",
 ) -> FetchStats:
     """Fetch and load quarterly records without refetching cached ISIN/quarters.
 
@@ -595,9 +657,13 @@ def fetch_shareholding(
     NSE-listed equity -- a broader, less selection-biased research universe).
     A stored filing is re-downloaded only when it predates ``mf_pct``; a
     missing ``published_at`` is filled from the filing index alone.
+    ``source`` is "bse" (history from 2016) or "nse" (from Sep 2021; needs
+    no BSE scrip code). Both yield the same fields from the same parser.
     """
     if universe not in ("held", "nse"):
         raise ValueError(f"universe must be 'held' or 'nse', got {universe!r}")
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {SOURCES}, got {source!r}")
     present = {r[1] for r in conn.execute("PRAGMA table_info(shareholding_quarterly)")}
     for column, ddl in (("mf_pct", "REAL"), ("published_at", "TEXT")):
         if column not in present:
@@ -640,14 +706,16 @@ def fetch_shareholding(
         stats.attempted += 1
         outage_this_stock = False
         try:
-            bse_scrip_code = resolve_bse_scrip_code(session, isin, scrip_cache)
-            _write_json_cache(scrip_cache_path, scrip_cache)
-            if bse_scrip_code is None:
-                stats.unresolved_isins.append(isin)
-                continue
-            stats.resolved += 1
-
-            filings = get_bse_filings(session, bse_scrip_code, max_filings=history)
+            if source == "nse":
+                filings = get_nse_filings(session, str(stock["SYMBOL"]), max_filings=history)
+            else:
+                bse_scrip_code = resolve_bse_scrip_code(session, isin, scrip_cache)
+                _write_json_cache(scrip_cache_path, scrip_cache)
+                if bse_scrip_code is None:
+                    stats.unresolved_isins.append(isin)
+                    continue
+                stats.resolved += 1
+                filings = get_bse_filings(session, bse_scrip_code, max_filings=history)
             if not filings:
                 stats.no_filings_isins.append(isin)
                 continue
@@ -682,7 +750,7 @@ def fetch_shareholding(
                 # One missing or unreadable filing must not cost the stock
                 # its other quarters: record it and carry on.
                 try:
-                    response = session.get(f"{BSE_SITE_URL}{filing['attachment']}")
+                    response = session.get(filing["url"])
                     raw_bytes = getattr(response, "content", None)
                     if raw_bytes is None:
                         raw_bytes = response.text.encode("utf-8")
@@ -701,13 +769,13 @@ def fetch_shareholding(
                     "isin": isin,
                     "quarter_end": filing["quarter_end"],
                     **parsed,
-                    "source": "bse_xbrl",
+                    "source": f"{source}_xbrl",
                     "filing_type": filing.get(
                         "filing_type",
                         classify_filing_type(filing["quarter_end"]),
                     ),
                     "ixbrl_sha256": ixbrl_sha256,
-                    "source_url": f"{BSE_SITE_URL}{filing['attachment']}",
+                    "source_url": filing["url"],
                     "published_at": filing.get("published_at"),
                 }
                 # The database is the cache keyed by (isin, quarter_end).
@@ -782,6 +850,11 @@ def main() -> None:
         help="Newest N filings per stock (default 2; 0 = every filing back to 2015)",
     )
     parser.add_argument(
+        "--source", choices=SOURCES, default="bse",
+        help="bse = BSE index + archive, history from 2016 (default); nse = NSE index + "
+             "archive, from Sep 2021 -- use when BSE's API is unavailable",
+    )
+    parser.add_argument(
         "--universe", choices=("held", "nse"), default="held",
         help="held = ISINs tracked schemes hold (default); nse = every NSE-listed "
              "equity, the broader research universe for the quarterly backtest",
@@ -805,9 +878,11 @@ def main() -> None:
     conn = db.get_connection(str(db_path))
     cache_dir = db_path.parent / ".shareholding_cache"
     stats = fetch_shareholding(
-        conn, PoliteSession(args.delay), cache_dir,
-        limit=args.limit, only_missing=args.only_missing,
-        history=args.history or None, universe=args.universe,
+        conn,
+        PoliteSession(args.delay, referer="https://www.nseindia.com/" if args.source == "nse"
+                      else f"{BSE_SITE_URL}/"),
+        cache_dir, limit=args.limit, only_missing=args.only_missing,
+        history=args.history or None, universe=args.universe, source=args.source,
     )
     _print_stats(stats)
     if stats.stopped_early:

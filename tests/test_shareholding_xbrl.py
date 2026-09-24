@@ -164,3 +164,71 @@ def test_no_promoter_group_reads_as_zero_only_when_public_holds_everything():
         fs.parse_bse_shareholding_xbrl(_xbrl(widely_held))
     widely_held["EmployeeBenefitsTrusts"] = "40.00"  # ...unless trusts hold it (IEX)
     assert fs.parse_bse_shareholding_xbrl(_xbrl(widely_held))["promoter_pct"] == 0.0
+
+
+def test_2025_taxonomy_states_shares_as_fractions():
+    # NSE archive layout: fractions of 1, "UTI" capitalised, "Category" spelled right.
+    facts = {"ShareholdingOfPromoterAndPromoterGroup": "0.5048", "PublicShareholding": "0.4952",
+             "ShareholdingPattern": "1", "MutualFundsOrUTI": "0.1011", "Banks": "0.0005",
+             "InsuranceCompanies": "0.092", "OtherFinancialInstitutions": "0",
+             "InstitutionsForeignPortfolioInvestorCategoryOne": "0.1652",
+             "InstitutionsForeignPortfolioInvestorCategoryTwo": "0.0054"}
+    assert fs.parse_bse_shareholding_xbrl(_xbrl(facts)) == {
+        "promoter_pct": 50.48, "public_pct": 49.52, "mf_pct": 10.11,
+        "fii_pct": 17.06, "dii_pct": 19.36}
+
+
+def test_a_total_that_is_neither_fraction_nor_percent_fails_loudly():
+    with pytest.raises(fs.ShareholdingFetchError, match="neither a fraction"):
+        fs.parse_bse_shareholding_xbrl(_xbrl(dict(RECENT, ShareholdingPattern="50")))
+
+
+def test_2016_no_promoter_filing_with_non_public_holders_outside_the_total():
+    # ITC, June 2016: public is the whole 100%, and the DR/trust line (0.22)
+    # is stated outside it, as 2016 filings did.
+    facts = {"PublicShareholding": "100", "MutualFundsOrUti": "2.51",
+             "SharesHeldByNonPromoterNonPublicShareholders": "0.22",
+             "InstitutionsForeignPortfolioInvestor": "20.6"}
+    out = fs.parse_bse_shareholding_xbrl(_xbrl(facts, style="I"))
+    assert out["promoter_pct"] == 0.0 and out["mf_pct"] == 2.51
+
+
+class _NseSession(_IndexSession):
+    """NSE's index is a bare list, not BSE's {"Table": [...]}."""
+
+    def get(self, url, **kwargs):
+        rows = self.table
+
+        class R:
+            def json(self):
+                return rows
+        return R()
+
+
+def _nse_row(date, broadcast, xbrl="https://nsearchives.nseindia.com/corporate/xbrl/SHP_1_WEB.xml"):
+    return {"date": date, "broadcastDate": broadcast, "xbrl": xbrl}
+
+
+def test_nse_index_keeps_the_original_filing_of_a_revised_quarter():
+    rows = [
+        _nse_row("30-JUN-2026", "16-JUL-2026 19:24:44", "https://x/original.xml"),
+        _nse_row("30-JUN-2026", "02-SEP-2026 10:00:00", "https://x/revised.xml"),
+        _nse_row("31-MAR-2026", "21-APR-2026 13:25:14"),
+        _nse_row("31-DEC-2025", "not a date"),          # never guessed
+        _nse_row("30-SEP-2025", "20-OCT-2025 18:00:00", xbrl="-"),  # no XBRL file
+    ]
+    filings = fs.get_nse_filings(_NseSession(rows), "X", max_filings=None)
+    assert [(f["quarter_end"], f["published_at"]) for f in filings] == [
+        ("2026-06-30", "2026-07-16T19:24"), ("2026-03-31", "2026-04-21T13:25")]
+    assert filings[0]["url"] == "https://x/original.xml"
+    assert len(fs.get_nse_filings(_NseSession(rows), "X")) == 2
+
+
+def test_unknown_source_is_rejected(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(str(tmp_path / "t.db"))
+    conn.execute("CREATE TABLE shareholding_quarterly (isin TEXT, quarter_end TEXT)")
+    with pytest.raises(ValueError, match="source must be one of"):
+        fs.fetch_shareholding(conn, None, tmp_path, source="yahoo")
+    conn.close()
