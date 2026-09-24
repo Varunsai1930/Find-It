@@ -1,0 +1,135 @@
+{#- One month: three coverage facts, the expandable data coverage, and the
+    consensus table. Rendered into the page on first load and re-rendered by
+    /fragments/month when a filter changes. -#}
+{%- from "_macros.html" import holder_change, filing_status, scope -%}
+{%- set all_cols = cols == 'all' -%}
+{%- set side_title = 'Broadest selling' if side == 'sell' else 'Broadest buying' -%}
+
+<dl class="facts" aria-label="Coverage for {{ month|month_label }}">
+  <div class="fact">
+    <dt class="fact__label">Schemes compared</dt>
+    <dd class="fact__value">{{ coverage.compared }}</dd>
+    <dd class="fact__sub">{% if coverage.prev_month %}{{ coverage.compared_amcs }} AMC{{ 's' if coverage.compared_amcs != 1 }} · vs {{ coverage.prev_month|month_label }}{% else %}no earlier month to compare{% endif %}</dd>
+  </div>
+  <div class="fact{% if coverage.withheld %} fact--warn{% endif %}">
+    <dt class="fact__label">Withheld</dt>
+    {% if coverage.validated %}
+    <dd class="fact__value">{{ coverage.withheld }}</dd>
+    <dd class="fact__sub">{% if coverage.withheld %}failed validation · excluded, not zero{% else %}none of {{ coverage.in_scope }} {{ 'active ' if active_only }}scheme{{ 's' if coverage.in_scope != 1 }} failed validation{% endif %}</dd>
+    {% else %}
+    <dd class="fact__value">–</dd>
+    <dd class="fact__sub">validation not run on this database</dd>
+    {% endif %}
+  </div>
+  <div class="fact">
+    <dt class="fact__label">Portfolios public</dt>
+    <dd class="fact__value">{{ coverage.public_on|month_label(true) }}</dd>
+    <dd class="fact__sub">filings published later are not used</dd>
+  </div>
+</dl>
+
+<details class="coverage" id="coverage-details">
+  <summary>Data coverage <span class="muted">· freshness and method for {{ month|month_label }}</span></summary>
+  <div class="coverage__body">
+    <dl class="coverage__list">
+      <div>
+        <dt>Comparison</dt>
+        <dd>{% if coverage.prev_month %}{{ month|month_label }} holdings against {{ coverage.prev_month|month_label }}{% else %}No earlier month is loaded, so nothing can be compared{% endif %}.</dd>
+      </div>
+      <div>
+        <dt>Schemes</dt>
+        <dd>{{ coverage.loaded }} loaded for {{ month|month_label }}{% if active_only %}, {{ coverage.in_scope }} of them active stock-pickers{% endif %}.
+          <strong>{{ coverage.compared }}</strong> compared{% if coverage.no_previous %}; {{ coverage.no_previous }} loaded without a previous month to compare{% endif %}{% if coverage.no_equity %}; {{ coverage.no_equity }} hold nothing the equity filter keeps{% endif %}{% if coverage.withheld %}; {{ coverage.withheld }} withheld{% endif %}.</dd>
+      </div>
+      <div>
+        <dt>Validation</dt>
+        <dd>{% if coverage.validated %}{{ coverage.passed }} passed · {{ coverage.withheld }} withheld · {{ coverage.not_validated }} not validated{% if active_only %} (active stock-pickers){% endif %}.{% else %}The validation gate has not been run on this database: nothing is withheld, and nothing has been checked.{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Shareholding filings</dt>
+        <dd>{% if total %}Latest quarter used: {{ filings.latest_quarter|month_label if filings.latest_quarter else 'none' }}. Of {{ total }} ranked stocks, {{ filings.missing }} missing · {{ filings.single_quarter }} no prior quarter · {{ filings.stale }} stale · {{ filings.deadline_basis }} with the filing date assumed from the deadline.{% else %}No stocks ranked this month.{% endif %}</dd>
+      </div>
+      <div>
+        <dt>Last ingest run</dt>
+        <dd>{{ coverage.last_ingest|month_label(true) if coverage.last_ingest else 'None recorded' }} · whole database, not specific to {{ month|month_label }}.</dd>
+      </div>
+    </dl>
+    <ul class="coverage__method">
+      <li>A scheme is compared when its {{ month|month_label }} holdings match a previous month. Schemes without one, and schemes withheld by validation, are not counted.</li>
+      <li>Counting {{ scope(view) }}.{% if active_only %} Index funds, ETFs, arbitrage, FoFs and debt funds are excluded.{% endif %}</li>
+      <li>Ranked by AMCs net {{ 'selling' if side == 'sell' else 'buying' }}, then by flow into positions funds already held.</li>
+      <li>FII and DII changes use only quarterly filings published by {{ coverage.public_on|month_label(true) }}.</li>
+    </ul>
+  </div>
+</details>
+
+<section class="panel" id="consensus" aria-labelledby="consensus-title">
+  <div class="panel__head">
+    <div class="panel__bar">
+      <h2 id="consensus-title" tabindex="-1">{{ side_title }} <span class="muted">· {{ month|month_label }}</span></h2>
+      {% if rows %}
+      <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, cols='core' if all_cols else 'all')|urlencode }}">{{ 'Fewer columns' if all_cols else 'More columns' }}</a>
+      {% endif %}
+    </div>
+    {% if rows %}
+    <p class="panel__meta">{{ rows|length }} of {{ total }} stocks a counted fund bought or sold. A record of fund activity, not a buy recommendation.</p>
+    {% endif %}
+  </div>
+  {% if rows %}
+  <div class="table-wrap" tabindex="0" role="region" aria-labelledby="consensus-title">
+  <table class="data data--cards" id="consensus-table">
+    <caption class="visually-hidden">{{ side_title }} for {{ month|month_label }}: monthly change in mutual fund holdings{% if not all_cols %}. More columns adds discretionary net, new positions and FII/DII changes{% endif %}</caption>
+    <thead>
+      <tr>
+        <th scope="col" class="col-stock">Stock</th>
+        <th scope="col" class="n" title="AMCs buying minus AMCs selling. This is the ranking key.">AMCs net</th>
+        {% if all_cols %}<th scope="col" class="n" title="Net AMCs whose change beats the drift from price moves alone">Discretionary<br>net</th>{% endif %}
+        <th scope="col" class="col-breadth" title="Schemes buying / selling; the bar is the share of schemes buying">Schemes<br>buy / sell</th>
+        <th scope="col" class="n" title="Net money into positions funds already held, Rs crore">Existing-position<br>flow ₹ Cr</th>
+        {% if all_cols %}
+        <th scope="col" class="n" title="Value of positions opened this month, Rs crore">New positions<br>₹ Cr</th>
+        <th scope="col" class="n" title="Change in FII holding over the latest filed quarter, percentage points">FII Δ pp</th>
+        <th scope="col" class="n" title="Change in DII (MF+banks+insurance) holding over the latest filed quarter, percentage points">DII Δ pp</th>
+        {% endif %}
+        <th scope="col" title="Quarterly shareholding filing available when the portfolios became public">Filing</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <th scope="row" class="col-stock">
+          <div class="stock-cell">
+            <span class="rank">{{ loop.index }}</span>
+            <div>
+              <button type="button" class="stock-link" data-isin="{{ row.isin }}" aria-haspopup="dialog">{{ row.stock_name }}</button>
+              <span class="sub">{{ row.isin }}{% if row.industry %} · {{ row.industry }}{% endif %}{% if row.universe_status == 'new_listing' %} · <span class="tag tag--info">new listing</span>{% endif %}</span>
+            </div>
+          </div>
+        </th>
+        <td class="n" data-label="AMCs net"><span class="num strong">{{ row.net_amc_count|signed }}</span><span class="sub">{{ row.amcs_buying }} buy · {{ row.amcs_selling }} sell</span></td>
+        {% if all_cols %}<td class="n" data-label="Discretionary net"><span class="num">{{ row.net_active_amc_count|signed }}</span></td>{% endif %}
+        <td class="col-breadth" data-label="Schemes buy / sell">
+          <span class="num">{{ row.schemes_buying }} / {{ row.schemes_selling }}</span>
+          <span class="bar" aria-hidden="true"><span style="width: {{ '%.0f'|format((row.buying_ratio or 0) * 100) }}%"></span></span>
+        </td>
+        <td class="n" data-label="Existing-position flow ₹ Cr"><span class="num">{{ row.accumulation_flow_lakhs|crore }}</span></td>
+        {% if all_cols %}
+        <td class="n" data-label="New positions ₹ Cr"><span class="num muted">{{ row.new_position_flow_lakhs|crore }}</span></td>
+        <td class="n" data-label="FII Δ pp">{{ holder_change(row, 'fii') }}</td>
+        <td class="n" data-label="DII Δ pp">{{ holder_change(row, 'dii') }}</td>
+        {% endif %}
+        <td data-label="Filing">{{ filing_status(row, coverage.public_on) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if rows|length < total %}
+  <div class="panel__foot">
+    <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, limit=0)|urlencode }}">Show all {{ total }}</a>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="state state--empty" role="status">{{ message }}</p>
+  {% endif %}
+</section>

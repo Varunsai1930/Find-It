@@ -160,6 +160,47 @@ def compute_active_consensus(
     return active_weight.aggregate_by_stock(changes, scheme_amc)
 
 
+def _eligible_deltas(conn: sqlite3.Connection, report_month: str,
+                     instrument_type: str | None,
+                     active_equity_only: bool) -> tuple[str, list]:
+    """FROM/WHERE (aliases d, s, sch) and params for the delta rows that vote in a month."""
+    sql = ("FROM mf_holding_deltas d "
+           "JOIN stocks s ON s.isin = d.isin "
+           "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
+           "WHERE d.report_month = ?")
+    params: list = [report_month]
+    if instrument_type is not None:
+        sql += " AND s.instrument_type = ?"
+        params.append(instrument_type)
+    # Passive/debt schemes never count toward market-wide conviction.
+    # Guarded for legacy DBs whose schemes table predates the column.
+    if active_equity_only and "is_active_equity" in _table_columns(conn, "schemes"):
+        sql += " AND sch.is_active_equity = 1"
+    quarantined = _quarantined_scheme_ids(conn, report_month)
+    if quarantined:
+        sql += f" AND d.scheme_id NOT IN ({','.join('?' for _ in quarantined)})"
+        params.extend(quarantined)
+    return sql, params
+
+
+def voting_schemes(
+    conn: sqlite3.Connection,
+    report_month: str,
+    instrument_type: str | None = "equity",
+    active_equity_only: bool = True,
+) -> dict[int, str]:
+    """scheme_id -> AMC for every scheme compute_consensus counts in report_month.
+
+    A scheme is in the comparison when it has a delta row (it was compared
+    with a previous month) on an in-scope stock and is neither filtered out
+    nor quarantined. Coverage counts come from here so they cannot drift from
+    the ranking.
+    """
+    source, params = _eligible_deltas(conn, report_month, instrument_type, active_equity_only)
+    rows = conn.execute(f"SELECT DISTINCT d.scheme_id, sch.amc_name {source}", params).fetchall()
+    return {int(r[0]): str(r[1]) for r in rows}
+
+
 def compute_consensus(
     conn: sqlite3.Connection,
     report_month: str,
@@ -176,27 +217,12 @@ def compute_consensus(
     # Legacy DBs predate price_effect_lakhs; PRAGMA is authoritative.
     has_price = "price_effect_lakhs" in _delta_columns(conn)
     price_select = "d.price_effect_lakhs, " if has_price else ""
+    source, params = _eligible_deltas(conn, report_month, instrument_type, active_equity_only)
     sql = (
         "SELECT d.isin, d.scheme_id, s.name AS stock_name, s.industry, "
         "       s.instrument_type, d.action, d.value_change_lakhs, "
-        f"       d.flow_lakhs, {price_select}d.prev_month, sch.amc_name "
-        "FROM mf_holding_deltas d "
-        "JOIN stocks s ON s.isin = d.isin "
-        "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
-        "WHERE d.report_month = ?"
+        f"       d.flow_lakhs, {price_select}d.prev_month, sch.amc_name {source}"
     )
-    params: list = [report_month]
-    if instrument_type is not None:
-        sql += " AND s.instrument_type = ?"
-        params.append(instrument_type)
-    # Passive/debt schemes never count toward market-wide conviction.
-    # Guarded for legacy DBs whose schemes table predates the column.
-    if active_equity_only and "is_active_equity" in _table_columns(conn, "schemes"):
-        sql += " AND sch.is_active_equity = 1"
-    quarantined = _quarantined_scheme_ids(conn, report_month)
-    if quarantined:
-        sql += f" AND d.scheme_id NOT IN ({','.join('?' for _ in quarantined)})"
-        params.extend(quarantined)
     deltas = pd.read_sql_query(sql, conn, params=params)
 
     if deltas.empty:
@@ -497,3 +523,12 @@ def ranked_consensus(
                "shareholding_status"] = "single_quarter"
     joined.loc[joined["shareholding_quarter_end"].isna(), "shareholding_status"] = "missing"
     return joined
+
+
+def broadest_selling(ranked: pd.DataFrame) -> pd.DataFrame:
+    """ranked_consensus rows in selling order: most AMCs net selling first.
+
+    Ties go to the largest outflow from existing positions. The dashboard and
+    the monthly report both use this, so their selling lists cannot differ.
+    """
+    return ranked.sort_values(["net_amc_count", "accumulation_flow_lakhs"])

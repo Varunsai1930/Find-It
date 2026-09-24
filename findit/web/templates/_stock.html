@@ -1,0 +1,100 @@
+{#- Stock detail, rendered by /fragments/stock into the page's stock dialog. -#}
+{%- from "_macros.html" import holder_change, filing_status, scope -%}
+{%- if stock -%}
+<div class="stock-head" data-stock-isin="{{ stock.isin }}">
+  <h3 tabindex="-1">{{ stock.name }}</h3>
+  <p class="sub">{{ stock.isin }}{% if stock.industry %} · {{ stock.industry }}{% endif %}{% if stock.instrument_type %} · {{ stock.instrument_type }}{% endif %}</p>
+</div>
+
+{% if stock.month %}
+<h4>Fund activity · {{ stock.month|month_label }} <span class="muted">({{ scope(view) }})</span></h4>
+{% if activity %}
+<dl class="activity">
+  <div><dt>AMCs net</dt><dd><span class="num strong">{{ activity.net_amc_count|signed }}</span><span class="sub">{{ activity.amcs_buying }} buy · {{ activity.amcs_selling }} sell</span></dd></div>
+  <div><dt>Discretionary net</dt><dd><span class="num">{{ activity.net_active_amc_count|signed }}</span><span class="sub">beats price drift</span></dd></div>
+  <div><dt>Schemes buy / sell</dt><dd><span class="num">{{ activity.schemes_buying }} / {{ activity.schemes_selling }}</span></dd></div>
+  <div><dt>Existing-position flow</dt><dd><span class="num">₹ {{ activity.accumulation_flow_lakhs|crore }} Cr</span></dd></div>
+  <div><dt>New positions</dt><dd><span class="num">₹ {{ activity.new_position_flow_lakhs|crore }} Cr</span><span class="sub">{{ activity.amcs_opening or 0 }} AMC{{ 's' if activity.amcs_opening != 1 }} opening</span></dd></div>
+  <div><dt>FII Δ pp</dt><dd>{{ holder_change(activity, 'fii') }}</dd></div>
+  <div><dt>DII Δ pp <span class="muted">(MF+banks+insurance)</span></dt><dd>{{ holder_change(activity, 'dii') }}</dd></div>
+  <div><dt>Filing</dt><dd>{{ filing_status(activity, stock.portfolios_public_on) }}</dd></div>
+</dl>
+{% else %}
+<p class="state state--empty">Not in the {{ stock.month|month_label }} ranking: {% if view.equity_only and stock.instrument_type != 'equity' %}it is not equity, and the equity-only filter is on{% else %}no counted scheme bought or sold it{% endif %}. The holdings below list every scheme, counted or not.</p>
+{% endif %}
+{% endif %}
+
+<h4>Fund holdings · {{ stock.month|month_label }} <span class="muted">({{ stock.holdings_count }} schemes, all types)</span></h4>
+{% if stock.holdings %}
+<div class="table-wrap" tabindex="0" role="region" aria-label="Fund holdings">
+<table class="data data--compact">
+  <thead>
+    <tr>
+      <th scope="col">Scheme</th>
+      <th scope="col">Change</th>
+      <th scope="col" class="n">Qty change</th>
+      <th scope="col" class="n">Holding ₹ Cr</th>
+      <th scope="col" class="n">% of NAV</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for h in stock.holdings %}
+    <tr>
+      <td>{{ h|scheme_label }}<span class="sub">{{ h.amc_name }} · {{ h.scheme_name }}</span></td>
+      <td>{% if h.action %}<span class="tag tag--{{ h.action }}">{{ h.action }}</span>{% else %}<span class="tag tag--missing" title="No delta row: the scheme was not compared with a previous month">no comparison</span>{% endif %}</td>
+      <td class="n num">{{ h.qty_change|signed }}</td>
+      <td class="n num">{{ h.market_value_lakhs|crore }}</td>
+      <td class="n num">{{ '%.2f'|format(h.pct_nav) if h.pct_nav is not none else '–' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="state state--empty">{{ stock.holdings_message }}</p>
+{% endif %}
+
+<h4>Quarterly shareholding filings</h4>
+{% if stock.shareholding %}
+<div class="table-wrap" tabindex="0" role="region" aria-label="Quarterly shareholding filings">
+<table class="data data--compact">
+  <thead>
+    <tr>
+      <th scope="col">Quarter</th>
+      <th scope="col">Published</th>
+      <th scope="col" class="n">FII %</th>
+      <th scope="col" class="n">DII %</th>
+      <th scope="col" class="n">Promoter %</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for q in stock.shareholding[:8] %}
+    <tr>
+      <td class="num">{{ q.quarter_end|month_label }}</td>
+      <td>
+        <span class="num">{{ q.published_on|month_label(true) }}</span>
+        {%- if q.published_basis == 'regulatory_deadline' %} <span class="muted" title="Broadcast date not recorded; the filing deadline is assumed">(deadline)</span>{% endif -%}
+        {%- if stock.portfolios_public_on and q.published_on > stock.portfolios_public_on %} <span class="tag tag--stale" title="Published after {{ stock.month }} portfolios were public; the ranking for that month does not use it">after {{ stock.month|month_label }}</span>{% endif -%}
+      </td>
+      <td class="n num">{{ '%.2f'|format(q.fii_pct) if q.fii_pct is not none else 'missing' }}</td>
+      <td class="n num">{{ '%.2f'|format(q.dii_pct) if q.dii_pct is not none else 'missing' }}</td>
+      <td class="n num">{{ '%.2f'|format(q.promoter_pct) if q.promoter_pct is not none else 'missing' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="state state--empty">{{ stock.shareholding_message }}</p>
+{% endif %}
+
+{%- elif matches -%}
+<p class="state state--empty" role="status">{{ matches|length }} stocks match “{{ query }}”. Pick one:</p>
+<ul class="matches">
+  {% for m in matches %}
+  <li><button type="button" class="stock-link" data-isin="{{ m.isin }}">{{ m.name }}</button> <span class="sub">{{ m.isin }}{% if m.industry %} · {{ m.industry }}{% endif %}{% if view.month %} · held by {{ m.schemes_holding }} scheme{{ 's' if m.schemes_holding != 1 }} in {{ view.month|month_label }}{% endif %}</span></li>
+  {% endfor %}
+</ul>
+{%- else -%}
+<p class="state state--empty" role="status">No stock matches “{{ query }}”. Enter an ISIN or part of a company name.</p>
+{%- endif -%}

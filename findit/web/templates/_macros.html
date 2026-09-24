@@ -1,0 +1,32 @@
+{#- Cells shared by the consensus table and the stock detail, so a missing
+    filing, no increase, no prior quarter and stale read the same everywhere. -#}
+
+{%- macro holder_change(row, who) -%}
+{%- set direction = row[who ~ '_direction'] -%}
+{%- set level = row[who ~ '_pct'] -%}
+{%- if row.shareholding_status == 'missing' -%}
+<span class="tag tag--missing">missing</span>
+{%- elif direction == 'increased' or direction == 'decreased' -%}
+<span class="num {{ 'pos' if direction == 'increased' else 'flat' }}">{{ row[who ~ '_pct_change']|signed(2) }}</span>
+<span class="sub">{{ 'increase' if direction == 'increased' else 'no increase' }} · {{ '%.1f'|format(level) }}%</span>
+{%- else -%}
+<span class="num flat">{{ '%.1f'|format(level) ~ '%' if level is not none else '–' }}</span>
+<span class="sub">no prior quarter</span>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro filing_status(row, public_on) -%}
+{%- if row.shareholding_status == 'missing' -%}
+<span class="tag tag--missing">missing</span><span class="sub">none published by {{ public_on|month_label(true) }}</span>
+{%- else -%}
+<span class="num">{{ row.shareholding_quarter_end|month_label }} qtr</span>
+<span class="sub">
+  {%- if row.shareholding_stale %}<span class="tag tag--stale">stale</span> {% endif -%}
+  {%- if row.shareholding_status == 'single_quarter' %}no prior quarter · {% endif -%}
+  {{ row.staleness_days|int }} days old{% if row.shareholding_published_basis == 'regulatory_deadline' %} · date assumed{% endif %}</span>
+{%- endif -%}
+{%- endmacro -%}
+
+{%- macro scope(view) -%}
+{{ 'active stock-pickers' if view.active_only else 'all scheme types' }}, {{ 'equity holdings' if view.equity_only else 'all holdings' }}
+{%- endmacro -%}

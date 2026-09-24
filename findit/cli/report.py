@@ -124,7 +124,7 @@ def build(db_path: str, month: str) -> str:
         cover = coverage(conn, month, prev)
     finally:
         conn.close()
-    selling = ranked.sort_values(["net_amc_count", "accumulation_flow_lakhs"]).head(TOP_N)
+    selling = consensus_signals.broadest_selling(ranked).head(TOP_N)
     public_on = publication.mf_disclosure_deadline(month)
     lines = [
         f"# Mutual fund activity report — {month}",

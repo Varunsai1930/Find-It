@@ -258,6 +258,41 @@ above restated from the live data, and the monthly signal's own track record.
 It uses `consensus_signals.ranked_consensus`, the same ranking the dashboard
 serves, so the two cannot disagree.
 
+### Dashboard (`findit.web`)
+
+```bash
+uvicorn findit.web.app:create_app --factory
+```
+
+Read-only view of `./tracker.db` at http://127.0.0.1:8000.
+
+- **Month** and **Buying / Selling** pick the view; rows, *Equity only* and
+  *Active stock-pickers only* refine it. Every choice is kept in the URL, so a
+  link reopens the same view.
+- Three facts sit above the table: **schemes compared** (exactly the schemes
+  the ranking counts under the current filters — a scheme loaded without a
+  previous month, or withheld by validation, is never among them), **withheld**
+  and the date the month's **portfolios became public**. **Data coverage**
+  expands to the rest: schemes loaded and not compared, validation counts,
+  filing freshness, the method, and the last ingest run (database-wide; the
+  ingest log does not record every load, so it is never shown as the month's).
+- The table is the same `ranked_consensus` ranking as the report (selling uses
+  `broadest_selling`) and shows stock, AMCs net, schemes buying/selling,
+  existing-position flow and filing status. **More columns** adds
+  discretionary net, new-position flow and the FII/DII changes. Filters
+  re-render the one table via `/fragments/month/{month}`.
+- **Find a stock** suggests companies as you type (name or ISIN prefix, via
+  `/api/stocks/search`; arrow keys and Enter choose). Choosing one, or a stock
+  in the table, opens its detail for the selected month and filters: the
+  month's activity including the hidden columns, every scheme's holding, and
+  its quarterly filings. Filings published after that month's portfolios went
+  public are flagged, never silently used. Escape closes it.
+- **Scheme summary** takes a typed scheme or AMC name (↓ browses the list) and
+  follows the selected month.
+
+The ranking behind a month is cached in memory until the database file
+changes, so switching views and opening stocks does not recompute it.
+
 ### Re-validation (`findit.cli.revalidate`)
 
 Statuses in `scheme_month_status` are whatever the gate's rules said on the day

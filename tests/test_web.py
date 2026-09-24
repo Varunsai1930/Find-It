@@ -389,3 +389,310 @@ def test_dashboard_server_rendered_requirements(tmp_path):
     assert 'src="http' not in low
     forbidden = "tot" + "al ret" + "urn"
     assert forbidden not in low
+
+
+# -- month view fragment and stock lookup -------------------------------------
+
+
+def test_month_fragment_is_one_table_in_ranking_order(tmp_path):
+    import consensus_signals
+
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    conn = _ro_conn(db)
+    try:
+        ranked = consensus_signals.ranked_consensus(conn, "2026-08")
+    finally:
+        conn.close()
+    for side, expected in (("buy", ranked),
+                           ("sell", consensus_signals.broadest_selling(ranked))):
+        res = client.get("/fragments/month/2026-08", params={"side": side})
+        assert res.status_code == 200
+        html = res.text
+        # The fragment replaces the table; it must never carry a second one.
+        assert html.count("<table") == 1
+        positions = [html.index(f'data-isin="{isin}"') for isin in expected["isin"]]
+        assert positions == sorted(positions), side
+    assert client.get("/fragments/month/1900-01").status_code == 404
+
+
+def _row(html: str, isin: str) -> str:
+    row = html[html.index(f'data-isin="{isin}"'):]
+    return row[:row.index("</tr>")]
+
+
+def test_month_fragment_keeps_missing_distinct_from_no_increase(tmp_path):
+    db = _copy_db(tmp_path)
+    html = TestClient(create_app(str(db))).get("/fragments/month/2026-08",
+                                               params={"cols": "all"}).text
+    # Infosys has no filing: missing, never "no increase". Reliance has two.
+    infosys = _row(html, "INE009A01021")
+    assert "missing" in infosys and "no increase" not in infosys
+    reliance = _row(html, "INE002A01018")
+    assert "+1.00" in reliance and "missing" not in reliance
+
+
+def test_default_table_is_the_scannable_columns(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    core = client.get("/fragments/month/2026-08").text
+    for heading in ("AMCs net", "Schemes<br>buy / sell", "Existing-position<br>flow ₹ Cr", ">Filing<"):
+        assert heading in core
+    for heading in ("Discretionary", "New positions", "FII Δ pp", "DII Δ pp"):
+        assert heading not in core
+    # The filing column alone still separates missing from filed.
+    assert "missing" in _row(core, "INE009A01021")
+    assert "Jun 2026 qtr" in _row(core, "INE002A01018")
+    wide = client.get("/fragments/month/2026-08", params={"cols": "all"}).text
+    for heading in ("Discretionary", "New positions", "FII Δ pp", "DII Δ pp"):
+        assert heading in wide
+    # Each view links to the other, keeping every other parameter.
+    assert 'href="/?month=2026-08&amp;side=buy&amp;limit=25&amp;cols=all&amp;' in core
+    assert "cols=core" in wide
+
+
+def test_dashboard_reflects_query_filters(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    html = client.get("/", params={"side": "sell", "equity_only": 0}).text
+    assert "Broadest selling" in html
+    assert 'id="equity-only" value="1" checked' not in html
+    # An unknown month falls back to the latest rather than failing the page.
+    assert "Aug 2026" in client.get("/", params={"month": "1900-01"}).text
+
+
+def test_stock_fragment_by_isin_and_name(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    by_isin = client.get("/fragments/stock", params={"q": "ine002a01018"}).text
+    assert "Reliance Industries" in by_isin and "Fund holdings" in by_isin
+    # One name match opens the stock directly; several list the candidates.
+    assert "Fund holdings" in client.get("/fragments/stock", params={"q": "infos"}).text
+    several = client.get("/fragments/stock", params={"q": "HDFC"}).text
+    assert "2 stocks match" in several
+    assert "No stock matches" in client.get("/fragments/stock", params={"q": "zzz"}).text
+
+
+def test_stock_flags_filings_published_after_the_month(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    # July portfolios were public 10 Aug; the June-quarter filing's deadline is 21 Jul.
+    body = client.get("/api/stock/INE002A01018", params={"month": "2026-07"}).json()
+    june = next(q for q in body["shareholding"] if q["quarter_end"] == "2026-06-30")
+    assert (june["published_on"], june["published_basis"]) == ("2026-07-21", "regulatory_deadline")
+    html = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-07"}).text
+    assert "after Jul 2026" not in html
+    # Broadcast observed after 10 Aug: July's ranking could not have used it.
+    w = sqlite3.connect(str(db))
+    w.execute("UPDATE shareholding_quarterly SET published_at = '2026-08-20T18:00:00'"
+              " WHERE quarter_end = '2026-06-30'")
+    w.commit()
+    w.close()
+    html = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-07"}).text
+    assert "after Jul 2026" in html
+
+
+def _fact(html: str, label: str) -> str:
+    fact = html[html.index(f'<dt class="fact__label">{label}</dt>'):]
+    return fact[:fact.index("</div>")]
+
+
+def _add_scheme(conn, sid, amc, name, active, holdings):
+    conn.execute("INSERT INTO schemes (scheme_id, amc_name, scheme_name, is_active_equity) "
+                 "VALUES (?, ?, ?, ?)", (sid, amc, name, active))
+    for isin, month, qty in holdings:
+        conn.execute("INSERT INTO mf_holdings_monthly (scheme_id, isin, report_month, quantity, "
+                     "market_value_lakhs, pct_nav) VALUES (?, ?, ?, ?, ?, 1)",
+                     (sid, isin, month, qty, qty * 0.1))
+
+
+def _coverage_db(tmp_path) -> Path:
+    """The base DB plus one scheme in each state the coverage counts separate."""
+    db = _copy_db(tmp_path)
+    w = sqlite3.connect(str(db))
+    # Loaded for August only: no July to compare, so it cannot be compared.
+    _add_scheme(w, 4, "C AMC", "C New Fund", 1, [("INE002A01018", "2026-08", 5)])
+    # A debt fund: compared, but on nothing the equity or active filters keep.
+    _add_scheme(w, 5, "D AMC", "D Liquid", 0, [("INE001A07PB6", "2026-07", 10),
+                                              ("INE001A07PB6", "2026-08", 30)])
+    # A compared fund quarantined for August is withheld, not counted.
+    w.execute("UPDATE scheme_month_status SET status = 'quarantined' "
+              "WHERE scheme_id = 3 AND report_month = '2026-08'")
+    delta_calculator.persist_deltas(w, delta_calculator.compute_deltas(w, "2026-07", "2026-08"))
+    w.commit()
+    w.close()
+    return db
+
+
+def test_compared_count_is_the_set_the_ranking_counts(tmp_path):
+    import consensus_signals
+
+    db = _coverage_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    conn = _ro_conn(db)
+    try:
+        for equity, active, expected in ((1, 1, {1, 2}), (1, 0, {1, 2}), (0, 0, {1, 2, 5})):
+            voters = consensus_signals.voting_schemes(
+                conn, "2026-08", "equity" if equity else None, bool(active))
+            assert set(voters) == expected, (equity, active)
+            html = client.get("/fragments/month/2026-08",
+                              params={"equity_only": equity, "active_only": active}).text
+            compared = _fact(html, "Schemes compared")
+            assert f'<dd class="fact__value">{len(expected)}</dd>' in compared
+            assert "1 AMC · vs Jul 2026" in compared if expected == {1, 2} else "2 AMCs" in compared
+            # Scheme 3 is quarantined: withheld under every filter.
+            assert '<dd class="fact__value">1</dd>' in _fact(html, "Withheld")
+    finally:
+        conn.close()
+    html = client.get("/fragments/month/2026-08").text
+    # Active filter: 4 active schemes loaded of 5; one had no July, one was withheld.
+    assert "5 loaded for Aug 2026, 4 of them active stock-pickers" in html
+    assert "1 loaded without a previous month to compare" in html
+    assert "hold nothing the equity filter keeps" not in html
+    wide = client.get("/fragments/month/2026-08", params={"active_only": 0}).text
+    assert "1 hold nothing the equity filter keeps" in wide
+
+
+def test_validation_wording_never_assumes_a_pass(tmp_path):
+    db = _coverage_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    html = client.get("/fragments/month/2026-08").text
+    # Scheme 4 has holdings but no status row: counted as not validated.
+    assert "2 passed · 1 withheld · 1 not validated" in html
+    assert "all loaded schemes passed" not in html
+    # A failure outside the active filter is not withheld from this view, and the
+    # "none failed" note names the schemes it covers.
+    w = sqlite3.connect(str(db))
+    w.execute("INSERT INTO scheme_month_status (scheme_id, report_month, status) "
+              "VALUES (5, '2026-08', 'quarantined')")
+    w.execute("UPDATE scheme_month_status SET status = 'ok' "
+              "WHERE scheme_id = 3 AND report_month = '2026-08'")
+    w.commit()
+    w.close()
+    html = client.get("/fragments/month/2026-08").text
+    assert "none of 4 active schemes failed validation" in _fact(html, "Withheld")
+    html = client.get("/fragments/month/2026-08", params={"active_only": 0}).text
+    assert '<dd class="fact__value">1</dd>' in _fact(html, "Withheld")
+    w = sqlite3.connect(str(db))
+    w.execute("DROP TABLE scheme_month_status")
+    w.commit()
+    w.close()
+    html = client.get("/fragments/month/2026-08").text
+    withheld = _fact(html, "Withheld")
+    assert '<dd class="fact__value">–</dd>' in withheld and "validation not run" in withheld
+    assert "nothing has been checked" in html
+
+
+def test_last_ingest_is_labelled_database_wide(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    assert "None recorded · whole database" in client.get("/fragments/month/2026-08").text
+    w = sqlite3.connect(str(db))
+    w.execute("INSERT INTO ingest_runs (run_id, started_at, status) "
+              "VALUES ('r1', '2026-09-17T12:00:00+00:00', 'completed')")
+    w.commit()
+    w.close()
+    html = client.get("/fragments/month/2026-07").text
+    assert "17 Sep 2026 · whole database, not specific to Jul 2026" in html
+
+
+# -- stock search, detail and month continuity -----------------------------------
+
+
+def test_stock_search_suggestions(tmp_path):
+    db = _copy_db(tmp_path)
+    w = sqlite3.connect(str(db))
+    w.execute("INSERT INTO stocks (isin, name, industry, instrument_type) "
+              "VALUES ('INE999Z01011', 'Bank of Test', 'Banks', 'equity')")
+    w.commit()
+    w.close()
+    client = TestClient(create_app(str(db)))
+
+    def names(**params):
+        res = client.get("/api/stocks/search", params=params)
+        assert res.status_code == 200
+        return [r["name"] for r in res.json()["results"]]
+
+    assert names(q="relia") == ["Reliance Industries"]
+    assert names(q="ine009") == ["Infosys"]  # ISIN prefix, case-insensitive
+    # Names starting with the query lead; then the most widely held.
+    assert names(q="bank") == ["Bank of Test", "HDFC Bank"]
+    assert names(q="hdfc") == ["HDFC Bank", "HDFC NCD"]
+    # Too short, or only LIKE wildcards: nothing rather than everything.
+    assert names(q="r") == [] and names(q="%_") == [] and names(q="  ") == []
+    assert names(q="zzz") == []
+    held = client.get("/api/stocks/search", params={"q": "reliance", "month": "2026-08"}).json()
+    assert held["results"][0]["schemes_holding"] == 3
+    assert names(q="bank", limit=1) == ["Bank of Test"]
+    assert client.get("/api/stocks/search", params={"q": "rel", "month": "1900-01"}).status_code == 404
+
+
+def test_stock_detail_follows_the_selected_month_and_filters(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    aug = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-08"}).text
+    assert "Fund holdings · Aug 2026" in aug and "Fund activity · Aug 2026" in aug
+    # The detail adds the columns the default table hides.
+    for label in ("Discretionary net", "New positions", "FII Δ pp", "DII Δ pp"):
+        assert label in aug
+    assert "+2" in aug and "2 buy · 0 sell" in aug  # schemes 1-2 are one AMC
+    assert "(active stock-pickers, equity holdings)" in aug
+    # July is the first month: holdings but nothing compared, so not ranked.
+    jul = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-07"}).text
+    assert "Fund holdings · Jul 2026" in jul
+    assert "Not in the Jul 2026 ranking: no counted scheme bought or sold it" in jul
+    # Filters carry through: the NCD is ranked only without the equity filter.
+    ncd = {"q": "INE001A07PB6", "month": "2026-08"}
+    assert "it is not equity" in client.get("/fragments/stock", params=ncd).text
+    wide = client.get("/fragments/stock", params={**ncd, "equity_only": 0}).text
+    assert "Fund activity · Aug 2026" in wide and "all holdings" in wide
+    assert "Not in the" not in wide
+    # A name that matches several stocks lists them with their month's holdings.
+    several = client.get("/fragments/stock", params={"q": "HDFC", "month": "2026-08"}).text
+    assert "2 stocks match" in several and "held by 1 scheme in Aug 2026" in several
+
+
+def test_page_keeps_the_selected_month_everywhere(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    html = client.get("/", params={"month": "2026-07", "side": "sell", "cols": "all"}).text
+    assert '<option value="2026-07" selected>' in html
+    assert 'id="cols-input" value="all"' in html
+    assert "Broadest selling" in html
+    # The first-render table is exactly the fragment for the same view.
+    frag = client.get("/fragments/month/2026-07", params={"side": "sell", "cols": "all"}).text
+    assert frag.strip() in html
+    # Server-rendered links keep month, side and filters.
+    page = client.get("/", params={"month": "2026-08", "side": "sell", "active_only": 0}).text
+    assert "/?month=2026-08&amp;side=sell&amp;limit=25&amp;cols=all&amp;equity_only=1&amp;active_only=0" in page
+    assert page.count("<table") == 1
+
+
+def test_empty_and_error_states(tmp_path):
+    empty = tmp_path / "empty.db"
+    db_module.get_connection(str(empty)).close()
+    client = TestClient(create_app(str(empty)))
+    html = client.get("/").text
+    assert "No coverage data available yet" in html and "<table" not in html
+    assert client.get("/api/stocks/search", params={"q": "rel"}).json()["results"] == []
+
+    client = TestClient(create_app(str(_copy_db(tmp_path))))
+    # The first month has holdings but no earlier month to compare.
+    jul = client.get("/fragments/month/2026-07").text
+    assert "No holding-change data available for 2026-07" in jul
+    assert "no earlier month to compare" in jul and "<table" not in jul
+    assert client.get("/fragments/month/1900-01").status_code == 404
+    assert client.get("/fragments/stock", params={"q": "INE002A01018",
+                                                  "month": "1900-01"}).status_code == 404
+    assert "No stock matches" in client.get("/fragments/stock", params={"q": "zzz"}).text
+
+
+def test_ranking_cache_sees_database_changes(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    assert "Infosys" in client.get("/fragments/month/2026-08").text
+    w = sqlite3.connect(str(db))
+    w.execute("DELETE FROM mf_holding_deltas WHERE isin = 'INE009A01021'")
+    w.commit()
+    w.close()
+    assert "Infosys" not in client.get("/fragments/month/2026-08").text
