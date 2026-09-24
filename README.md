@@ -226,8 +226,37 @@ broader universe, at roughly 45 requests per company. The backtest decides
 30 days after quarter end (`--decision-lag-days`), uses a filing only if it
 was published by then (late filers sit that quarter out), and groups stocks
 by the change in MF ownership (`mf_up_fii_up`, `mf_up_only`, `mf_flat`,
-`mf_down`, top/bottom fifth). Its caveats print with every run: survivorship
-(delisted firms are missing) and no size/sector matching yet.
+`mf_down`, top/bottom fifth). It prints two track records: raw, and
+size-neutral -- each stock against stocks in the same third of that quarter's
+universe by entry-day turnover, because MF ownership swings are larger in
+smaller, riskier stocks. Survivorship (delisted firms are missing) is printed
+with every run.
+
+**Two sources.** BSE's filing API rate-limits heavy use (a full history run
+was blocked for over a day). `--source nse` reads the same filings from NSE's
+index and XBRL archive, from September 2021, through the same parser; per
+quarter the earliest broadcast is kept, since a later revision was not public
+on the original date. The fetcher stops after five stocks in a row fail on the
+network rather than failing the rest in seconds, and summarises failures by
+reason; re-running any fetch resumes, because stored filings are skipped.
+
+**What it found** (774 stocks, 40 quarters, 2016-2026): no group beats
+comparable stocks reliably once size is controlled. MF ownership up with FII
+also up: +0.63% a quarter size-neutral (t=1.18); MF up alone: -0.42% (t=-1.56);
+MF down: -0.51% (t=-1.70). The monthly lists below are a record of what funds
+did, not a buy list, until more evidence says otherwise.
+
+#### The monthly report
+
+```bash
+python3 -m findit.cli.report --db tracker.db --month 2026-08 --out report_2026-08.md
+```
+
+One page: coverage (who voted, who was excluded and why), the broadest buying
+and selling with the discretionary count and FII/DII direction, the evidence
+above restated from the live data, and the monthly signal's own track record.
+It uses `consensus_signals.ranked_consensus`, the same ranking the dashboard
+serves, so the two cannot disagree.
 
 ### Re-validation (`findit.cli.revalidate`)
 

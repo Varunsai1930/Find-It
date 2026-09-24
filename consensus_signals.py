@@ -471,3 +471,29 @@ def join_shareholding_increase(
         ["is_common_with_fii_increase", "net_amc_count"],
         ascending=[False, False],
     ).reset_index(drop=True)
+
+
+def ranked_consensus(
+    conn: sqlite3.Connection,
+    report_month: str,
+    instrument_type: str | None = "equity",
+    active_equity_only: bool = True,
+) -> pd.DataFrame:
+    """The month's ranking as shown to people: consensus plus FII/DII, in rank order.
+
+    Stocks no fund bought or sold carry no signal and are dropped. FII/DII
+    directions use only filings public when the month's portfolios were
+    (see join_shareholding_increase); the join re-sorts, so rank order is
+    restored. The dashboard and the monthly report both use this.
+    """
+    consensus = compute_consensus(conn, report_month, instrument_type, active_equity_only)
+    consensus = consensus[consensus["schemes_buying"] + consensus["schemes_selling"] > 0]
+    if consensus.empty:
+        return consensus
+    joined = join_shareholding_increase(conn, consensus, as_of_month=report_month)
+    joined = joined.set_index("isin").loc[consensus["isin"]].reset_index()
+    joined["shareholding_status"] = "available"
+    joined.loc[joined["previous_shareholding_quarter_end"].isna(),
+               "shareholding_status"] = "single_quarter"
+    joined.loc[joined["shareholding_quarter_end"].isna(), "shareholding_status"] = "missing"
+    return joined

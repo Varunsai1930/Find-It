@@ -172,15 +172,13 @@ def test_quarterly_run_lists_missing_price_dates(tmp_path):
     assert "--date 2026-01-31 --date 2026-05-01" in bq.report(outcome, path, 30, 0.25)
 
 
-def test_pipeline_track_record_lists_months_it_could_not_score(tmp_path):
-    import run_pipeline
-
+def test_track_record_lists_months_it_could_not_score(tmp_path):
     path = str(tmp_path / "t.db")
     conn = db.get_connection(path)
     conn.execute("INSERT INTO mf_holding_deltas (scheme_id, isin, report_month, prev_month, "
                  "action) VALUES (1, 'INEAAA01001', '2026-07', '2026-06', 'added')")
     conn.commit()
-    text = run_pipeline.signal_track_record(path, conn)
+    text = backtest.db_track_record(path)
     assert "no signal month has entry/exit closes stored yet" in text
     assert "2026-07: no stored close" in text
     assert "--date 2026-08-11" in text

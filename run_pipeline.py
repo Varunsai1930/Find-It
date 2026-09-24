@@ -328,35 +328,6 @@ def _track_source(touched: dict, conn, df: pd.DataFrame, path: Path, file_hash: 
             entry[column] = int(value) if column.endswith("count") and value is not None else value
 
 
-def signal_track_record(db_path: str, conn) -> str:
-    """The signal's own history, printed next to the signal it ranks.
-
-    A ranking with no record of how its past picks did asks for trust it has
-    not earned. Months without the needed closes are listed, not skipped
-    silently; iterations=0 keeps this fast (no permutation p).
-    """
-    from findit.cli import backtest
-
-    months = [r[0] for r in conn.execute(
-        "SELECT DISTINCT report_month FROM mf_holding_deltas ORDER BY 1")]
-    results, unscored = [], []
-    for month in months:
-        try:
-            results.append(backtest.run(db_path, month, iterations=0))
-        except SystemExit as exc:
-            unscored.append(f"  {month}: {str(exc).splitlines()[0]}")
-            unscored += [f"    {line.strip()}" for line in str(exc).splitlines()[1:]]
-    lines = []
-    if results:
-        lines.append(backtest.track_record(results))
-    else:
-        lines.append("(no signal month has entry/exit closes stored yet)")
-    if unscored:
-        lines.append("Not scored:")
-        lines += unscored
-    return "\n".join(lines)
-
-
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -506,7 +477,9 @@ def main():
 
     print("\n=== Signal track record (entry after publication; see findit.cli.backtest) ===")
     try:
-        print(signal_track_record(args.db, conn))
+        from findit.cli import backtest
+
+        print(backtest.db_track_record(args.db))
     except (sqlite3.DatabaseError, ValueError) as exc:
         print(f"  [warn] track record unavailable: {type(exc).__name__}: {exc}",
               file=sys.stderr)

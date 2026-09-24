@@ -282,6 +282,34 @@ def run_many(db_path: str, signal_months: list[str], iterations: int = 2000) -> 
     return [run(db_path, m, iterations=iterations) for m in signal_months]
 
 
+def db_track_record(db_path: str) -> str:
+    """The signal's own history for every month with deltas, as text.
+
+    A ranking with no record of how its past picks did asks for trust it has
+    not earned, so the pipeline and the monthly report print this under
+    theirs. Months without the needed closes are listed, not skipped
+    silently; iterations=0 keeps it fast (no permutation p).
+    """
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        months = [r[0] for r in conn.execute(
+            "SELECT DISTINCT report_month FROM mf_holding_deltas ORDER BY 1")]
+    finally:
+        conn.close()
+    results, unscored = [], []
+    for month in months:
+        try:
+            results.append(run(db_path, month, iterations=0))
+        except SystemExit as exc:
+            unscored.append(f"  {month}: {str(exc).splitlines()[0]}")
+            unscored += [f"    {line.strip()}" for line in str(exc).splitlines()[1:]]
+    lines = [track_record(results) if results
+             else "(no signal month has entry/exit closes stored yet)"]
+    if unscored:
+        lines += ["Not scored:", *unscored]
+    return "\n".join(lines)
+
+
 def month_range(first: str, last: str) -> list[str]:
     months, current = [], first
     while current <= last:

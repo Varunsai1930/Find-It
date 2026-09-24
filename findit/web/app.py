@@ -128,26 +128,15 @@ def _shareholding_rows(conn: sqlite3.Connection, isin: str) -> list[dict[str, An
 
 def _ranked_consensus(conn: sqlite3.Connection, month: str, equity_only: bool = True,
                       active_only: bool = True) -> list[dict[str, Any]]:
-    """The CLI's ranking for one month, as JSON-ready rows.
+    """consensus_signals.ranked_consensus as JSON-ready rows.
 
-    Same function the pipeline and backtests use -- compute_consensus plus the
-    FII/DII join with its publication cutoff -- so the dashboard can never
-    disagree with them, and an older month never shows filings published
-    after it. Stocks no fund bought or sold carry no signal and are dropped.
+    The same ranking the pipeline, report and backtests use, so the dashboard
+    can never disagree with them, and an older month never shows filings
+    published after it.
     """
-    consensus = consensus_signals.compute_consensus(
+    ranked = consensus_signals.ranked_consensus(
         conn, month, "equity" if equity_only else None, active_only)
-    consensus = consensus[consensus["schemes_buying"] + consensus["schemes_selling"] > 0]
-    if consensus.empty:
-        return []
-    joined = consensus_signals.join_shareholding_increase(conn, consensus, as_of_month=month)
-    # The join orders by FII agreement; keep the consensus ranking.
-    joined = joined.set_index("isin").loc[consensus["isin"]].reset_index()
-    joined["shareholding_status"] = "available"
-    joined.loc[joined["previous_shareholding_quarter_end"].isna(),
-               "shareholding_status"] = "single_quarter"
-    joined.loc[joined["shareholding_quarter_end"].isna(), "shareholding_status"] = "missing"
-    return json.loads(joined.to_json(orient="records"))
+    return json.loads(ranked.to_json(orient="records")) if not ranked.empty else []
 
 
 def create_app(db_path: str | Path | None = None) -> FastAPI:
