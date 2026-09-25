@@ -696,3 +696,85 @@ def test_ranking_cache_sees_database_changes(tmp_path):
     w.commit()
     w.close()
     assert "Infosys" not in client.get("/fragments/month/2026-08").text
+
+
+# -- stock detail validation status ----------------------------------------------
+
+
+def _holding_row(html: str, scheme: str) -> str:
+    row = html[:html.index(scheme)]
+    row = html[row.rindex("<tr"):]
+    return row[:row.index("</tr>")]
+
+
+def test_stock_detail_marks_withheld_and_unvalidated_rows(tmp_path):
+    db = _copy_db(tmp_path)
+    w = sqlite3.connect(str(db))
+    # Scheme 3 (B Value, which bought Reliance) fails validation for August;
+    # scheme 2 (A Mid Cap) has no validation result at all.
+    w.execute("UPDATE scheme_month_status SET status = 'quarantined' "
+              "WHERE scheme_id = 3 AND report_month = '2026-08'")
+    w.execute("DELETE FROM scheme_month_status WHERE scheme_id = 2 AND report_month = '2026-08'")
+    w.commit()
+    w.close()
+    client = TestClient(create_app(str(db)))
+
+    body = client.get("/api/stock/INE002A01018", params={"month": "2026-08"}).json()
+    statuses = {h["scheme_id"]: h["validation_status"] for h in body["holdings"]}
+    assert statuses == {1: "ok", 2: "not_validated", 3: "quarantined"}
+    assert (body["withheld_count"], body["not_validated_count"], body["validation"]) == (1, 1, "checked")
+    # The raw withheld row stays available for inspection.
+    withheld = next(h for h in body["holdings"] if h["scheme_id"] == 3)
+    assert (withheld["quantity"], withheld["action"]) == (90, "added")
+
+    html = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-08"}).text
+    row = _holding_row(html, "B Value")
+    assert 'class="is-withheld"' in row and ">withheld<" in row
+    assert "raw: added · not validated" in row
+    assert "tag--added" not in row  # never styled as validated activity
+    assert "1 scheme failed validation for Aug 2026: its row is shown for inspection only" in html
+    assert "1 has no validation result for this month." in html
+    unvalidated = _holding_row(html, "A Mid Cap")
+    assert "tag--added" in unvalidated and "not validated" in unvalidated
+    assert "not validated" not in _holding_row(html, "A Flexi Cap")
+    # The activity block is the ranking's, which leaves scheme 3 out: one AMC buys.
+    activity = html[html.index("Fund activity"):html.index("Fund holdings")]
+    assert "1 buy · 0 sell" in activity
+
+
+def test_stock_detail_without_a_status_table_says_validation_never_ran(tmp_path):
+    db = _copy_db(tmp_path)
+    w = sqlite3.connect(str(db))
+    w.execute("DROP TABLE scheme_month_status")
+    w.commit()
+    w.close()
+    client = TestClient(create_app(str(db)))
+    body = client.get("/api/stock/INE002A01018", params={"month": "2026-08"}).json()
+    # Holdings still load; each row says validation never ran, not that it passed.
+    assert len(body["holdings"]) == 3
+    assert {h["validation_status"] for h in body["holdings"]} == {"not_run"}
+    assert (body["withheld_count"], body["validation"]) == (0, "not_run")
+    html = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-08"}).text
+    assert "Validation has not been run on this database" in html
+    assert "is-withheld" not in html
+
+
+def test_stock_detail_with_every_row_validated_has_no_warning(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    html = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-08"}).text
+    assert "state--warn" not in html and "not validated" not in html
+    body = client.get("/api/stock/INE002A01018", params={"month": "2026-08"}).json()
+    assert {h["validation_status"] for h in body["holdings"]} == {"ok"}
+
+
+def test_missing_database_is_reported_not_a_server_error(tmp_path):
+    missing = tmp_path / "absent.db"
+    client = TestClient(create_app(str(missing)))
+    page = client.get("/")
+    assert page.status_code == 503
+    assert f"No database at {missing}" in page.text and "run_pipeline.py" in page.text
+    for url in ("/api/coverage", "/api/stocks/search?q=rel", "/fragments/month/2026-08"):
+        res = client.get(url)
+        assert res.status_code == 503 and "No database at" in res.json()["detail"]
+    assert not missing.exists()  # read-only: nothing is created

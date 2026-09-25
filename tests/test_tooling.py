@@ -96,7 +96,7 @@ def test_pyproject_parses():
     proj = data["project"]
     assert proj["name"] == "findit"
     assert proj["version"] == "0.2.0"
-    assert proj["requires-python"] == ">=3.10"
+    assert proj["requires-python"] == ">=3.12"  # the pinned numpy needs 3.12
     deps = set(proj["dependencies"])
     for pinned in [
         "pandas==3.0.5",
@@ -115,7 +115,7 @@ def test_pyproject_parses():
     assert "pytest==8.4.2" in dev
     assert "ruff==0.16.5" in dev
     ruff = data["tool"]["ruff"]
-    assert ruff["target-version"] == "py310"
+    assert ruff["target-version"] == "py312"
     assert ruff["line-length"] == 100
     select = set(ruff.get("select", []))
     lint_select = set(ruff.get("lint", {}).get("select", []))

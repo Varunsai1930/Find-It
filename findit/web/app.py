@@ -54,6 +54,10 @@ def _resolve_db_path(db_path: str | Path | None) -> str:
 
 def _ro_connect(db_path: str) -> sqlite3.Connection:
     # Read-only open: URI with mode=ro plus query_only enforcement.
+    if not Path(db_path).is_file():
+        # A fresh clone has no database; say so rather than fail with a 500.
+        raise HTTPException(status_code=503, detail=(
+            f"No database at {db_path}. Build one with run_pipeline.py (see the README)."))
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -372,19 +376,29 @@ def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> di
         raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
     holdings_month = month or _latest_holdings_month(conn)
     holdings: list[dict[str, Any]] = []
+    validated = _has_status_table(conn)
     if holdings_month is not None:
+        # Legacy DBs have no status table; every row is then "not_run".
+        status_sql = (
+            "COALESCE(m.status, 'not_validated')"
+            if validated else "'not_run'")
+        status_join = (
+            " LEFT JOIN scheme_month_status m"
+            " ON m.scheme_id = h.scheme_id AND m.report_month = h.report_month"
+            if validated else "")
         try:
             cur = conn.execute(
                 f"""SELECT h.scheme_id, sch.amc_name, sch.scheme_name, {_scheme_title_sql(conn)},
                           h.quantity, h.market_value_lakhs, h.pct_nav,
                           d.action, d.qty_change, d.flow_lakhs,
-                          d.value_change_lakhs
+                          d.value_change_lakhs,
+                          {status_sql} AS validation_status
                    FROM mf_holdings_monthly h
                    JOIN schemes sch ON sch.scheme_id = h.scheme_id
                    LEFT JOIN mf_holding_deltas d
                      ON d.scheme_id = h.scheme_id
                     AND d.isin = h.isin
-                    AND d.report_month = h.report_month
+                    AND d.report_month = h.report_month{status_join}
                    WHERE h.isin = ? AND h.report_month = ?
                    ORDER BY h.market_value_lakhs DESC""",
                 (stock["isin"], holdings_month),
@@ -405,6 +419,11 @@ def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> di
             if holdings_month else None),
         "holdings": holdings,
         "holdings_count": len(holdings),
+        # Rows the ranking leaves out: quarantined scheme-months are shown for
+        # inspection only, and their actions are never validated activity.
+        "withheld_count": sum(h["validation_status"] == "quarantined" for h in holdings),
+        "not_validated_count": sum(h["validation_status"] == "not_validated" for h in holdings),
+        "validation": "checked" if validated else "not_run",
         "shareholding": quarters,
         "shareholding_status": status,
     }
@@ -750,7 +769,12 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     def dashboard(request: Request, month: str | None = None, equity_only: int = 1,
                   active_only: int = 1, side: str = "buy",
                   limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
-        conn = _ro_connect(resolved_db)
+        try:
+            conn = _ro_connect(resolved_db)
+        except HTTPException as exc:
+            return templates.TemplateResponse(
+                request, "dashboard.html", {"months": [], "missing_db": exc.detail},
+                status_code=exc.status_code)
         try:
             try:
                 months = [

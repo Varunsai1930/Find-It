@@ -335,6 +335,9 @@ table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
   vertical-align: -1px; animation: spin 0.7s linear infinite;
 }
 .state--error { background: var(--neg-soft); color: var(--neg); border: 1px solid transparent; }
+.state--warn { background: var(--warn-soft); color: var(--warn); border: 1px solid transparent; margin-bottom: 8px; }
+.data tbody tr.is-withheld > * { background: var(--warn-soft); }
+.data tbody tr.is-withheld .sub, .data tbody tr.is-withheld .muted { color: var(--ink-2); }
 .state__retry { height: 28px; margin-left: 6px; }
 
 .stock-head .sub { margin-top: 2px; }

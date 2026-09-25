@@ -26,6 +26,15 @@
 
 <h4>Fund holdings · {{ stock.month|month_label }} <span class="muted">({{ stock.holdings_count }} schemes, all types)</span></h4>
 {% if stock.holdings %}
+{% if stock.validation == 'not_run' %}
+<p class="state state--warn">Validation has not been run on this database, so none of these rows has been checked.</p>
+{% elif stock.withheld_count or stock.not_validated_count %}
+<p class="state state--warn">
+  {%- if stock.withheld_count %}{{ stock.withheld_count }} scheme{{ 's' if stock.withheld_count != 1 }} failed validation for {{ stock.month|month_label }}: {{ 'their rows are' if stock.withheld_count != 1 else 'its row is' }} shown for inspection only, withheld from the ranking and not validated activity.{% endif %}
+  {%- if stock.withheld_count and stock.not_validated_count %} {% endif %}
+  {%- if stock.not_validated_count %}{{ stock.not_validated_count }} {{ 'have' if stock.not_validated_count != 1 else 'has' }} no validation result for this month.{% endif -%}
+</p>
+{% endif %}
 <div class="table-wrap" tabindex="0" role="region" aria-label="Fund holdings">
 <table class="data data--compact">
   <thead>
@@ -39,10 +48,20 @@
   </thead>
   <tbody>
     {% for h in stock.holdings %}
-    <tr>
+    {%- set withheld = h.validation_status == 'quarantined' %}
+    <tr{% if withheld %} class="is-withheld"{% endif %}>
       <td>{{ h|scheme_label }}<span class="sub">{{ h.amc_name }} · {{ h.scheme_name }}</span></td>
-      <td>{% if h.action %}<span class="tag tag--{{ h.action }}">{{ h.action }}</span>{% else %}<span class="tag tag--missing" title="No delta row: the scheme was not compared with a previous month">no comparison</span>{% endif %}</td>
-      <td class="n num">{{ h.qty_change|signed }}</td>
+      <td>
+        {%- if withheld -%}
+        <span class="tag tag--stale" title="Failed validation for this month: excluded from the ranking">withheld</span><span class="sub">raw: {{ h.action or 'no comparison' }} · not validated</span>
+        {%- elif h.action -%}
+        <span class="tag tag--{{ h.action }}">{{ h.action }}</span>
+        {%- if h.validation_status == 'not_validated' %}<span class="sub">not validated</span>{% endif -%}
+        {%- else -%}
+        <span class="tag tag--missing" title="No delta row: the scheme was not compared with a previous month">no comparison</span>
+        {%- endif -%}
+      </td>
+      <td class="n num{% if withheld %} muted{% endif %}">{{ h.qty_change|signed }}</td>
       <td class="n num">{{ h.market_value_lakhs|crore }}</td>
       <td class="n num">{{ '%.2f'|format(h.pct_nav) if h.pct_nav is not none else '–' }}</td>
     </tr>

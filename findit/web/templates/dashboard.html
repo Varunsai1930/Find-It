@@ -65,7 +65,7 @@
     {% if month %}
     {% include "_month_view.html" %}
     {% else %}
-    <p class="state state--empty" role="status">No coverage data available yet. Load a month of AMC disclosures with run_pipeline.py, then reload this page.</p>
+    <p class="state state--empty" role="status">{{ missing_db or 'No coverage data available yet. Load a month of AMC disclosures with run_pipeline.py, then reload this page.' }}</p>
     {% endif %}
   </div>
 

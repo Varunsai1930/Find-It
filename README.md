@@ -1,97 +1,132 @@
-# MF Holdings Tracker — Phase 0 (working, tested)
+# FindIt — mutual fund holdings tracker
 
-This is the core data pipeline from the build plan, sections 4–9, built
-and tested end-to-end on synthetic data. It proves the hard part — messy
-AMC Excel parsing → storage → deltas → cross-fund consensus → a plain-English
-summary — works, before spending any time on FII data, an API, or a UI.
+FindIt reads the monthly portfolio disclosures Indian mutual funds publish,
+works out what each scheme bought and sold since the previous month, and
+counts how many fund houses (AMCs) moved the same way on each stock. It joins
+that with each company's quarterly FII/DII shareholding filings, using only
+filings that were public when the month's portfolios were, and serves the
+result as a monthly report and a read-only web dashboard.
 
-No LLM is used anywhere. An AI narration layer was built and then removed;
-see "Why the GLM narration layer was removed" below. Summaries are produced
-by `fallback_summary.py` from numbers Python computed.
+> **Rankings describe fund activity. They are not proven buy signals.**
+> A ten-year test on quarterly filings found that no group of stocks funds
+> were buying beat comparable stocks reliably once company size is
+> controlled (see [Research findings](#research-findings)). Read every list
+> here as a record of what funds did, not as investment advice.
 
-## Files
+No LLM is used anywhere. Every number is computed in Python, and summaries
+are template-based (see "Why the GLM narration layer was removed" below).
 
-| File | What it does |
-|---|---|
-| `amfi_mf_parser.py` | Parses one AMC's monthly disclosure Excel workbook into a clean CSV. Fails loudly on unrecognized columns instead of guessing. |
-| `db.py` | SQLite schema (schemes, stocks, monthly holdings, deltas) + a loader for parser output. |
-| `delta_calculator.py` | Compares two months for every (scheme, stock) pair, classifies each as new / added / trimmed / exited / unchanged. |
-| `consensus_signals.py` | Counts how many distinct funds/AMCs bought vs. sold each stock in a month — this is the actual "common holdings" signal. |
-| `fallback_summary.py` | Turns one scheme's computed deltas into a short plain-English paragraph. Purely template-based, no AI. |
-| `run_pipeline.py` | The one command you run each month once this is wired to real data: load → delta → consensus → summaries. |
-| `make_test_fixtures.py` | Generates the synthetic test files below. Not needed once you're using real AMFI data. |
+## How it works
+
+1. **Parse** — `amfi_mf_parser.py` turns an AMC's monthly Excel workbook into
+   a clean CSV. It fails loudly on unrecognised columns instead of guessing.
+2. **Load and validate** — `run_pipeline.py` loads parsed files into SQLite
+   (`db.py`). A validation gate (`findit/store/validation_gate.py`) checks
+   every scheme-month; one that fails is **quarantined**: kept for
+   inspection, withheld from every ranking.
+3. **Compare** — `delta_calculator.py` classifies each (scheme, stock) as new,
+   added, trimmed, exited or unchanged against the previous month. Only
+   schemes present in both months are compared.
+4. **Rank** — `consensus_signals.py` counts AMCs buying minus AMCs selling per
+   stock (the ranking key), counting only active stock-pickers. Flow into
+   existing positions breaks ties. A discretionary count (changes beyond
+   what price moves alone would cause) is reported beside it.
+5. **Join filings** — quarterly FII/DII shareholding (`fetch_shareholding.py`,
+   BSE or NSE) is joined by ISIN, using only filings published by the date
+   the month's portfolios became public. A missing filing stays *missing*,
+   never zero.
+6. **Report** — `findit.cli.report` writes a one-page monthly report, and
+   `findit.web` serves the dashboard. Both use the same
+   `ranked_consensus`, so they cannot disagree.
+
+## Research findings
+
+The claim behind the project — stocks many AMCs are buying beat comparable
+stocks, more so when FIIs agree — has been tested, and does not hold up yet:
+
+- **Quarterly, 2016–2026** (774 stocks, 40 quarters, entry after
+  publication): MF ownership up with FII also up returned +0.63% a quarter
+  against size-matched stocks (t=1.18); MF up alone −0.42% (t=−1.56); MF
+  down −0.51% (t=−1.70). None of these is reliable.
+- **Monthly:** only one signal month (August 2026) is stored, and its holding
+  period has not finished. A t-statistic needs roughly 24 complete months.
+  Moving the entry from month end to after publication turned that month's
+  early result from +1.26% to −0.98%, which shows how much look-ahead can
+  manufacture.
+
+Details, and the rules that keep the measurement honest, are under
+"Testing the signal before building on it" below.
+
+## Quick start
+
+Python 3.12 or newer.
+
+```bash
+pip install -e ".[dev]"
+python3 -m pytest -q          # every test builds its own temporary database
+ruff check .
+```
+
+The dashboard reads `./tracker.db`. To try it without real data, build one
+from the synthetic fixtures, then start the server:
+
+```bash
+python3 make_test_fixtures.py
+python3 amfi_mf_parser.py test_hdfc_march2026.xlsx --amc "HDFC AMC" --month 2026-03
+python3 amfi_mf_parser.py test_hdfc_april2026.xlsx --amc "HDFC AMC" --month 2026-04
+python3 amfi_mf_parser.py test_sbi_april2026.xlsx  --amc "SBI AMC"  --month 2026-04
+python3 run_pipeline.py \
+  --load test_hdfc_march2026.parsed.csv \
+  --load test_hdfc_april2026.parsed.csv test_sbi_april2026.parsed.csv \
+  --prev 2026-03 --curr 2026-04
+uvicorn findit.web.app:create_app --factory   # http://127.0.0.1:8000
+```
+
+The pipeline prints the April ranking. Reliance Industries leads with one
+AMC buying (HDFC). SBI also added it, but SBI's April file has no March file
+to compare against, so SBI is listed as "no comparison" rather than counted
+as buying its whole portfolio. Without a database, the dashboard says so
+instead of showing an empty page.
+
+GitHub Actions runs the tests and Ruff on Python 3.12 and 3.14 for every
+push and pull request (`.github/workflows/ci.yml`).
 
 ## Data is not in the repo
 
 The repository holds code only. `tracker.db`, `real_data/` (downloaded AMC
 disclosures), the fetch caches and the generated `test_*.xlsx` fixtures are
 git-ignored and live only on your machine. A fresh clone rebuilds them:
-`make_test_fixtures.py` for the synthetic files below, the AMC's monthly
+`make_test_fixtures.py` for the synthetic files, the AMCs' monthly
 disclosure workbooks for real data, and `fetch_shareholding.py` /
 `findit.cli.prices` for filings and prices. The test suite needs none of
-them -- every test builds its own temporary database.
+them.
 
-## Try it right now (no real data needed yet)
+## Files
 
-```bash
-pip install pandas openpyxl --break-system-packages
-python3 make_test_fixtures.py
-python3 amfi_mf_parser.py test_hdfc_march2026.xlsx --amc "HDFC AMC" --month 2026-03
-python3 amfi_mf_parser.py test_hdfc_april2026.xlsx --amc "HDFC AMC" --month 2026-04
-python3 amfi_mf_parser.py test_sbi_april2026.xlsx  --amc "SBI AMC"  --month 2026-04
+| File | What it does |
+|---|---|
+| `amfi_mf_parser.py` | Parses one AMC's monthly disclosure workbook into a clean CSV. |
+| `db.py` | SQLite schema and loaders for parsed holdings and shareholding filings. |
+| `run_pipeline.py` | The monthly command: load, validate, compare, rank, summarise. |
+| `delta_calculator.py` | Month-on-month change per (scheme, stock). |
+| `consensus_signals.py` | Cross-fund buying vs selling per stock, the FII/DII join, and the ranking. |
+| `fetch_shareholding.py` | Quarterly shareholding filings from BSE or NSE. |
+| `fallback_summary.py` | Template-based plain-English summary of one scheme's month. |
+| `findit/core/` | Publication dates, active weights, corporate actions, instrument types. |
+| `findit/store/validation_gate.py` | Validation checks that quarantine a bad scheme-month. |
+| `findit/cli/` | Report, backtests, prices, re-validation, scheme aliases and titles, digest. |
+| `findit/web/` | Read-only FastAPI dashboard (Jinja templates, vanilla JavaScript). |
+| `make_test_fixtures.py` | Generates the synthetic workbooks used in the quick start. |
 
-python3 run_pipeline.py \
-  --load test_hdfc_march2026.parsed.csv \
-  --load test_hdfc_april2026.parsed.csv test_sbi_april2026.parsed.csv \
-  --prev 2026-03 --curr 2026-04
-```
+### How the ranking treats new positions
 
-You should see a consensus table where Reliance Industries shows
-`amcs_buying = 2` (both synthetic AMCs added to it in April) — that's the
-core signal your father described, working.
-
-## Next step — the one that needs you
-
-I can't reach amfiindia.com from this sandbox, so `COLUMN_SYNONYMS` in
-`amfi_mf_parser.py` is seeded from the SEBI-prescribed column names but
-has **not** been tested against a real file. Grab one real monthly
-disclosure (amfiindia.com → Research & Information → Other Data →
-Monthly Portfolio Disclosures — start with a large AMC like HDFC or SBI,
-they tend to be cleaner) and either:
-- run `amfi_mf_parser.py` on it yourself and see what breaks, or
-- upload the `.xlsx` here and I'll run it and fix `COLUMN_SYNONYMS`
-  against what it actually contains.
-
-Either way, the parser is designed to fail with a clear message telling
-you exactly which column it couldn't find — it won't silently get a
-number wrong.
-
-## After that (per the roadmap in the build plan)
-
-- **Phase 1 (done):** BSE quarterly FII/DII parsing (`fetch_shareholding.py`,
-  `db.load_shareholding_records`) joined against `compute_consensus()` on
-  ISIN via `join_shareholding_increase()` for the full MF+FII overlap view.
-  `run_pipeline.py` prints the overlap each month with an `as_of_month`
-  no-lookahead cutoff; missing filings stay `no_data` (never zero) and stale
-  quarters are flagged. `fetch_shareholding.py --report-month YYYY-MM` prints
-  the same overlap after a fetch.
-
-  Consensus separates `new_position_flow_lakhs` from
-  `accumulation_flow_lakhs`. A new position books its entire market value as
-  flow, so without the split an IPO or fresh listing that every fund "bought"
-  because it began existing outranks real accumulation. `universe_status` is
-  tri-state like the FII/DII directions — `established`, `new_listing`, or
-  `unknown` when no previous month is on record. Ranking still leads with
-  consensus breadth (`net_amc_count`); the split only orders names within one
-  breadth level, and the tiebreak is accumulation flow rather than a position's
-  entry value.
-- **Phase 2:** built as cached, constrained GLM narration over the rule
-  summary, then **removed** — the model's only authority was reordering
-  pre-written sentences. See "Why the GLM narration layer was removed".
-- **Phase 3:** dashboard UI (Top-5 cards, common holdings screener). Prices
-  are ingested now; what it still waits on is evidence -- the quarterly
-  history backtest and a track record of more than a handful of months (see
-  "Testing the signal before building on it").
+Consensus separates `new_position_flow_lakhs` from `accumulation_flow_lakhs`.
+A new position books its entire market value as flow, so without the split an
+IPO or fresh listing that every fund "bought" because it began existing would
+outrank real accumulation. `universe_status` is `established`, `new_listing`,
+or `unknown` when no previous month is on record. Ranking leads with breadth
+(`net_amc_count`); the tiebreak is accumulation flow, not a position's entry
+value.
 
 ## Operations (offline)
 
@@ -287,6 +322,13 @@ Read-only view of `./tracker.db` at http://127.0.0.1:8000.
   month's activity including the hidden columns, every scheme's holding, and
   its quarterly filings. Filings published after that month's portfolios went
   public are flagged, never silently used. Escape closes it.
+- A holding from a scheme that failed validation that month stays visible for
+  inspection but is marked **withheld**: its action is shown as raw text, not
+  as buying or selling, because the ranking leaves it out. A scheme with no
+  validation result is marked *not validated*, and a database where
+  validation never ran says so. `/api/stock/{isin}` carries the same status
+  per holding (`validation_status`: `ok`, `quarantined`, `not_validated` or
+  `not_run`).
 - **Scheme summary** takes a typed scheme or AMC name (↓ browses the list) and
   follows the selected month.
 
