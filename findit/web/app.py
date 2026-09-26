@@ -232,13 +232,40 @@ def _month_statuses(conn: sqlite3.Connection, month: str) -> dict[int, str]:
     return {int(r[0]): str(r[1]) for r in rows if r[0] is not None}
 
 
+def _prev_withheld_schemes(conn: sqlite3.Connection, month: str,
+                           active_only: bool) -> set[int]:
+    """In-scope schemes whose delta row this month compares against a quarantined prev_month.
+
+    consensus_signals.voting_schemes drops these (see _eligible_deltas), so
+    without this they would silently fall into "no_equity" even though the
+    equity filter never touched them. Empty when scheme_month_status does not
+    exist: legacy DBs have nothing known to be quarantined.
+    """
+    if not _has_status_table(conn):
+        return set()
+    active = (" AND s.is_active_equity = 1"
+              if active_only and "is_active_equity" in _table_columns(conn, "schemes") else "")
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT d.scheme_id FROM mf_holding_deltas d "
+            "JOIN schemes s ON s.scheme_id = d.scheme_id "
+            "JOIN scheme_month_status st ON st.scheme_id = d.scheme_id "
+            "AND st.report_month = d.prev_month "
+            f"WHERE d.report_month = ? AND st.status = 'quarantined'{active}",
+            (month,)).fetchall()
+    except sqlite3.Error:
+        return set()
+    return {int(r[0]) for r in rows}
+
+
 def _month_coverage(conn: sqlite3.Connection, month: str, equity_only: bool,
                     active_only: bool) -> dict[str, Any]:
     """Who is in month's comparison, what was withheld, and how fresh the inputs are.
 
     Counts cover the schemes the active filter keeps. "compared" is
     consensus_signals.voting_schemes, the exact set the ranking counts, so a
-    scheme loaded without a previous month, or quarantined, is never in it.
+    scheme loaded without a previous month, quarantined itself, or compared
+    against a previous month that was quarantined, is never in it.
     The ingest log does not record every load, so the last ingest is
     database-wide, never presented as this month's.
     """
@@ -250,13 +277,20 @@ def _month_coverage(conn: sqlite3.Connection, month: str, equity_only: bool,
         conn, month, "equity" if equity_only else None, active_only)
     with_deltas = _month_schemes(conn, "mf_holding_deltas", month, active_only).keys()
     no_previous = in_scope.keys() - with_deltas - withheld
+    # Has a previous month, not withheld for this month, but that previous
+    # month itself failed validation -- excluded from "compared" for that
+    # reason, not because the equity filter dropped its holdings.
+    prev_withheld = (_prev_withheld_schemes(conn, month, active_only)
+                     & in_scope.keys()) - withheld
     return {
         "compared": len(compared),
         "compared_amcs": len(set(compared.values())),
         "withheld": len(withheld),
         "no_previous": len(no_previous),
+        "prev_withheld": len(prev_withheld),
         # Compared, but only on holdings the equity filter leaves out.
-        "no_equity": len(in_scope.keys() - compared.keys() - withheld - no_previous),
+        "no_equity": len(in_scope.keys() - compared.keys() - withheld
+                         - no_previous - prev_withheld),
         "in_scope": len(in_scope),
         "loaded": len(_month_schemes(conn, "mf_holdings_monthly", month, False)),
         "validated": validated,

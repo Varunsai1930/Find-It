@@ -39,7 +39,7 @@
       <div>
         <dt>Schemes</dt>
         <dd>{{ coverage.loaded }} loaded for {{ month|month_label }}{% if active_only %}, {{ coverage.in_scope }} of them active stock-pickers{% endif %}.
-          <strong>{{ coverage.compared }}</strong> compared{% if coverage.no_previous %}; {{ coverage.no_previous }} loaded without a previous month to compare{% endif %}{% if coverage.no_equity %}; {{ coverage.no_equity }} hold nothing the equity filter keeps{% endif %}{% if coverage.withheld %}; {{ coverage.withheld }} withheld{% endif %}.</dd>
+          <strong>{{ coverage.compared }}</strong> compared{% if coverage.no_previous %}; {{ coverage.no_previous }} loaded without a previous month to compare{% endif %}{% if coverage.no_equity %}; {{ coverage.no_equity }} hold nothing the equity filter keeps{% endif %}{% if coverage.prev_withheld %}; {{ coverage.prev_withheld }} compared against a withheld previous month{% endif %}{% if coverage.withheld %}; {{ coverage.withheld }} withheld{% endif %}.</dd>
       </div>
       <div>
         <dt>Validation</dt>

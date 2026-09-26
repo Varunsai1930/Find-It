@@ -306,9 +306,11 @@ Read-only view of `./tracker.db` at http://127.0.0.1:8000.
   link reopens the same view.
 - Three facts sit above the table: **schemes compared** (exactly the schemes
   the ranking counts under the current filters — a scheme loaded without a
-  previous month, or withheld by validation, is never among them), **withheld**
+  previous month, withheld by validation, or compared against a previous
+  month that was itself withheld, is never among them), **withheld**
   and the date the month's **portfolios became public**. **Data coverage**
-  expands to the rest: schemes loaded and not compared, validation counts,
+  expands to the rest: schemes loaded and not compared (including how many
+  were compared against a withheld previous month), validation counts,
   filing freshness, the method, and the last ingest run (database-wide; the
   ingest log does not record every load, so it is never shown as the month's).
 - The table is the same `ranked_consensus` ranking as the report (selling uses

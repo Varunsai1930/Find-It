@@ -106,6 +106,7 @@ def test_pyproject_parses():
         "beautifulsoup4==4.15.0",
         "lxml==6.1.0",
         "fastapi==0.141.1",
+        "starlette==1.7.0",
         "uvicorn==0.52.1",
         "jinja2==3.1.6",
         "httpx==0.28.1",

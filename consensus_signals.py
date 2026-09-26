@@ -163,7 +163,15 @@ def compute_active_consensus(
 def _eligible_deltas(conn: sqlite3.Connection, report_month: str,
                      instrument_type: str | None,
                      active_equity_only: bool) -> tuple[str, list]:
-    """FROM/WHERE (aliases d, s, sch) and params for the delta rows that vote in a month."""
+    """FROM/WHERE (aliases d, s, sch) and params for the delta rows that vote in a month.
+
+    A delta row is a comparison between report_month and d.prev_month, so it
+    is excluded when either side is quarantined: report_month via
+    ``_quarantined_scheme_ids``, and d.prev_month via the NOT EXISTS below
+    (per-row, since different schemes can carry different prev_months in the
+    same report_month). Legacy DBs with no scheme_month_status table exclude
+    neither -- nothing is known to be quarantined.
+    """
     sql = ("FROM mf_holding_deltas d "
            "JOIN stocks s ON s.isin = d.isin "
            "JOIN schemes sch ON sch.scheme_id = d.scheme_id "
@@ -180,6 +188,11 @@ def _eligible_deltas(conn: sqlite3.Connection, report_month: str,
     if quarantined:
         sql += f" AND d.scheme_id NOT IN ({','.join('?' for _ in quarantined)})"
         params.extend(quarantined)
+    if _table_columns(conn, "scheme_month_status"):
+        sql += (" AND NOT EXISTS ("
+                "SELECT 1 FROM scheme_month_status pq "
+                "WHERE pq.scheme_id = d.scheme_id AND pq.report_month = d.prev_month "
+                "AND pq.status = 'quarantined')")
     return sql, params
 
 
@@ -193,8 +206,9 @@ def voting_schemes(
 
     A scheme is in the comparison when it has a delta row (it was compared
     with a previous month) on an in-scope stock and is neither filtered out
-    nor quarantined. Coverage counts come from here so they cannot drift from
-    the ranking.
+    nor quarantined -- for report_month or for the previous month that row
+    compares against. Coverage counts come from here so they cannot drift
+    from the ranking.
     """
     source, params = _eligible_deltas(conn, report_month, instrument_type, active_equity_only)
     rows = conn.execute(f"SELECT DISTINCT d.scheme_id, sch.amc_name {source}", params).fetchall()
@@ -212,7 +226,10 @@ def compute_consensus(
     The one implementation of the consensus signal: the pipeline, the
     backtests and the web dashboard all rank with it. Only active equity
     schemes vote (``active_equity_only``) and quarantined scheme-months never
-    do. AMC counts lead; scheme counts are carried for display.
+    do -- including a scheme whose delta compares report_month against a
+    previous month that was itself quarantined, since the comparison is only
+    as good as its worse side. AMC counts lead; scheme counts are carried for
+    display.
     """
     # Legacy DBs predate price_effect_lakhs; PRAGMA is authoritative.
     has_price = "price_effect_lakhs" in _delta_columns(conn)

@@ -343,9 +343,13 @@ def classify_scheme_active(scheme_name: str) -> int:
 # funds' units, or debt. Hybrids, multi-asset and balanced-advantage funds
 # stay active -- their unhedged equity is chosen. Word-bounded so "Long Term
 # Advantage Fund" (ELSS) is not caught by "term fund".
+# "Equity Savings" funds are arbitrage-hedged. A bare "<AMC> Savings Fund" is
+# SEBI's low-duration debt category (ICICI Prudential Savings Fund holds only
+# T-bills, CDs and NCDs), but "Regular Savings Fund" is a conservative hybrid
+# whose unhedged equity is chosen, so it stays active like other hybrids.
 _NON_DISCRETIONARY_TITLE_RE = re.compile(
     r"\b(?:index|etf|passive|nifty|sensex|bse|crisil|ibx|nasdaq"
-    r"|arbitrage|equity savings"
+    r"|arbitrage|equity savings|(?<!regular )savings fund"
     r"|fof|fund of funds?"
     r"|gold|silver"
     r"|liquid|overnight|money market|gilt|g-sec|gsec|sdl|bond|debt|duration"
