@@ -24,8 +24,9 @@ from findit.cli import scheme_titles
     ("ICICI Prudential Equity Savings Fund", 0),
     ("ICICI Prudential Regular Savings Fund", 1),   # conservative hybrid
     ("SBI Children's Fund - Savings Plan", 1),      # hybrid children's plan
+    ("DSP Liquidity Fund", 0),                      # debt: "liquidity" as well as "liquid"
 ])
-def test_savings_titles(title, active):
+def test_debt_and_hybrid_titles(title, active):
     assert db.classify_scheme_title(title) == active
 
 

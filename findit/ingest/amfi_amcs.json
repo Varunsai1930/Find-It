@@ -1,0 +1,469 @@
+{
+ "source": "https://www.amfiindia.com/online-center/portfolio-disclosure",
+ "retrieved": "2026-09-25",
+ "note": "AMFI's list of fund houses and each one's monthly portfolio disclosure page. 'amc' is the name stored in the database; 'brands' are the words a scheme title starts with, used to catch a file filed under the wrong AMC.",
+ "amcs": [
+  {
+   "amfi_name": "360 ONE Mutual Fund",
+   "amc": "360 ONE AMC",
+   "brands": [
+    "360 one"
+   ],
+   "disclosure_page": "https://www.360.one/asset/mutual-funds/downloads/"
+  },
+  {
+   "amfi_name": "Abakkus Mutual Fund",
+   "amc": "Abakkus AMC",
+   "brands": [
+    "abakkus"
+   ],
+   "disclosure_page": "https://www.abakkusmf.com/statutory-disclosures.html#"
+  },
+  {
+   "amfi_name": "Aditya Birla Sun Life Mutual Fund",
+   "amc": "Aditya Birla Sun Life AMC",
+   "brands": [
+    "aditya birla"
+   ],
+   "disclosure_page": "https://mutualfund.adityabirlacapital.com/forms-and-downloads/portfolio"
+  },
+  {
+   "amfi_name": "AlphaGrep Mutual Fund",
+   "amc": "AlphaGrep AMC",
+   "brands": [
+    "alphagrep"
+   ],
+   "disclosure_page": "https://www.alphagrepmf.ai/disclosures"
+  },
+  {
+   "amfi_name": "Angel One Mutual Fund",
+   "amc": "Angel One AMC",
+   "brands": [
+    "angel one"
+   ],
+   "disclosure_page": "https://www.angelonemf.com/downloads"
+  },
+  {
+   "amfi_name": "ASK MUTUAL FUND",
+   "amc": "ASK AMC",
+   "brands": [
+    "ask"
+   ],
+   "disclosure_page": "https://www.askmutualfund.com/#/downloads"
+  },
+  {
+   "amfi_name": "Axis Mutual Fund",
+   "amc": "Axis AMC",
+   "brands": [
+    "axis"
+   ],
+   "disclosure_page": "https://www.axismf.com/statutory-disclosures"
+  },
+  {
+   "amfi_name": "Bajaj Finserv Mutual Fund",
+   "amc": "Bajaj Finserv AMC",
+   "brands": [
+    "bajaj"
+   ],
+   "disclosure_page": "https://www.bajajamc.com/downloads?statutory-disclosures="
+  },
+  {
+   "amfi_name": "Bandhan Mutual Fund",
+   "amc": "Bandhan AMC",
+   "brands": [
+    "bandhan"
+   ],
+   "disclosure_page": "https://bandhanmutual.com/downloads/disclosures"
+  },
+  {
+   "amfi_name": "Bank of India Mutual Fund",
+   "amc": "Bank of India AMC",
+   "brands": [
+    "bank of india",
+    "boi"
+   ],
+   "disclosure_page": "https://www.boimf.in/investor-corner#t2"
+  },
+  {
+   "amfi_name": "Baroda BNP Paribas Mutual Fund",
+   "amc": "Baroda BNP Paribas AMC",
+   "brands": [
+    "baroda"
+   ],
+   "disclosure_page": "https://www.barodabnpparibasmf.in/downloads/monthly-portfolio-scheme"
+  },
+  {
+   "amfi_name": "Canara Robeco Mutual Fund",
+   "amc": "Canara Robeco AMC",
+   "brands": [
+    "canara"
+   ],
+   "disclosure_page": "https://www.canararobeco.com/documents/statutory-disclosures/scheme-dashboard/scheme-monthly-portfolio/"
+  },
+  {
+   "amfi_name": "Capitalmind Mutual Fund",
+   "amc": "Capitalmind AMC",
+   "brands": [
+    "capitalmind"
+   ],
+   "disclosure_page": "https://capitalmindmf.com/statutory-disclosures.html#"
+  },
+  {
+   "amfi_name": "Carnelian Mutual Fund",
+   "amc": "Carnelian AMC",
+   "brands": [
+    "carnelian"
+   ],
+   "disclosure_page": null
+  },
+  {
+   "amfi_name": "Choice Mutual Fund",
+   "amc": "Choice AMC",
+   "brands": [
+    "choice"
+   ],
+   "disclosure_page": "https://choicemf.com/disclosures/monthly-portfolio"
+  },
+  {
+   "amfi_name": "DSP Mutual Fund",
+   "amc": "DSP AMC",
+   "brands": [
+    "dsp"
+   ],
+   "disclosure_page": "https://www.dspim.com/about-us/mandatory-disclosure/portfolio-disclosures"
+  },
+  {
+   "amfi_name": "Edelweiss Mutual Fund",
+   "amc": "Edelweiss AMC",
+   "brands": [
+    "edelweiss"
+   ],
+   "disclosure_page": "https://www.edelweissmf.com/statutory#Portfolio-of-Schemes"
+  },
+  {
+   "amfi_name": "Franklin Templeton Mutual Fund",
+   "amc": "Franklin Templeton AMC",
+   "brands": [
+    "franklin",
+    "templeton"
+   ],
+   "disclosure_page": "https://www.franklintempletonindia.com/investor/reports?firstFilter-12"
+  },
+  {
+   "amfi_name": "Groww Mutual Fund",
+   "amc": "Groww AMC",
+   "brands": [
+    "groww"
+   ],
+   "disclosure_page": "https://growwmf.in/statutory-disclosure/portfolio"
+  },
+  {
+   "amfi_name": "HDFC Mutual Fund",
+   "amc": "HDFC AMC",
+   "brands": [
+    "hdfc"
+   ],
+   "disclosure_page": "https://www.hdfcfund.com/statutory-disclosure/portfolio/monthly-portfolio"
+  },
+  {
+   "amfi_name": "Helios Mutual Fund",
+   "amc": "Helios AMC",
+   "brands": [
+    "helios"
+   ],
+   "disclosure_page": "https://www.heliosmf.in/portfolio-disclosure/"
+  },
+  {
+   "amfi_name": "HSBC Mutual Fund",
+   "amc": "HSBC AMC",
+   "brands": [
+    "hsbc"
+   ],
+   "disclosure_page": "https://www.assetmanagement.hsbc.co.in/en/mutual-funds/investor-resources/information-library#&accordion1446811090=2"
+  },
+  {
+   "amfi_name": "ICICI Prudential Mutual Fund",
+   "amc": "ICICI Prudential AMC",
+   "brands": [
+    "icici"
+   ],
+   "disclosure_page": "https://www.icicipruamc.com/news-and-media/downloads?currentTabFilter=Disclosures&&subCatTabFilter=MonthlyPortfolioDisclosures"
+  },
+  {
+   "amfi_name": "IL&FS Mutual Fund (IDF)",
+   "amc": "IL&FS AMC",
+   "brands": [
+    "il fs",
+    "ilfs"
+   ],
+   "disclosure_page": "http://www.ilfsinfrafund.com/other.php"
+  },
+  {
+   "amfi_name": "Invesco Mutual Fund",
+   "amc": "Invesco AMC",
+   "brands": [
+    "invesco"
+   ],
+   "disclosure_page": "https://invescomutualfund.com/literature-and-form?tab=Complete"
+  },
+  {
+   "amfi_name": "ITI Mutual Fund",
+   "amc": "ITI AMC",
+   "brands": [
+    "iti"
+   ],
+   "disclosure_page": "https://www.itiamc.com/statuory-disclosure"
+  },
+  {
+   "amfi_name": "Jio BlackRock Mutual Fund",
+   "amc": "Jio BlackRock AMC",
+   "brands": [
+    "jio"
+   ],
+   "disclosure_page": "https://www.jioblackrockamc.com/statutory-disclosure/disclosures/monthly-portfolio-disclosure"
+  },
+  {
+   "amfi_name": "JM Financial Mutual Fund",
+   "amc": "JM Financial AMC",
+   "brands": [
+    "jm"
+   ],
+   "disclosure_page": "https://www.jmfinancialmf.com/downloads/Portfolio-Disclosure"
+  },
+  {
+   "amfi_name": "Kotak Mahindra Mutual Fund",
+   "amc": "Kotak Mahindra AMC",
+   "brands": [
+    "kotak"
+   ],
+   "disclosure_page": "https://www.kotakmf.com/Information/forms-and-downloads"
+  },
+  {
+   "amfi_name": "Lakshya Mutual Fund",
+   "amc": "Lakshya AMC",
+   "brands": [
+    "lakshya"
+   ],
+   "disclosure_page": null
+  },
+  {
+   "amfi_name": "LIC Mutual Fund",
+   "amc": "LIC AMC",
+   "brands": [
+    "lic"
+   ],
+   "disclosure_page": "https://www.licmf.com/downloads/monthly-portfolio"
+  },
+  {
+   "amfi_name": "Mahindra Manulife Mutual Fund",
+   "amc": "Mahindra Manulife AMC",
+   "brands": [
+    "mahindra manulife"
+   ],
+   "disclosure_page": "https://www.mahindramanulife.com/downloads#mandatory-disclosures"
+  },
+  {
+   "amfi_name": "Mirae Asset Mutual Fund",
+   "amc": "Mirae Asset AMC",
+   "brands": [
+    "mirae"
+   ],
+   "disclosure_page": "https://www.miraeassetmf.co.in/downloads/portfolio"
+  },
+  {
+   "amfi_name": "Monarch Mutual Fund",
+   "amc": "Monarch AMC",
+   "brands": [
+    "monarch"
+   ],
+   "disclosure_page": null
+  },
+  {
+   "amfi_name": "Motilal Oswal Mutual Fund",
+   "amc": "Motilal Oswal AMC",
+   "brands": [
+    "motilal"
+   ],
+   "disclosure_page": "https://www.motilaloswalmf.com/downloads/scheme-portfolio-details"
+  },
+  {
+   "amfi_name": "Navi Mutual Fund",
+   "amc": "Navi AMC",
+   "brands": [
+    "navi"
+   ],
+   "disclosure_page": "https://navi.com/mutual-fund/downloads/portfolio"
+  },
+  {
+   "amfi_name": "Nippon India Mutual Fund",
+   "amc": "Nippon India AMC",
+   "brands": [
+    "nippon"
+   ],
+   "disclosure_page": "https://mf.nipponindiaim.com/investor-service/downloads/factsheet-portfolio-and-other-disclosures"
+  },
+  {
+   "amfi_name": "NJ Mutual Fund",
+   "amc": "NJ AMC",
+   "brands": [
+    "nj"
+   ],
+   "disclosure_page": "https://downloads.njmutualfund.com/njmf_download.php?nme=127"
+  },
+  {
+   "amfi_name": "Nuvama Mutual Fund",
+   "amc": "Nuvama AMC",
+   "brands": [
+    "nuvama"
+   ],
+   "disclosure_page": null
+  },
+  {
+   "amfi_name": "Old Bridge Mutual Fund",
+   "amc": "Old Bridge AMC",
+   "brands": [
+    "old bridge"
+   ],
+   "disclosure_page": "https://oldbridgemf.com/statutory-disclosures.html#v-pills-tabContent2"
+  },
+  {
+   "amfi_name": "PGIM India Mutual Fund",
+   "amc": "PGIM India AMC",
+   "brands": [
+    "pgim"
+   ],
+   "disclosure_page": "https://www.pgimindia.com/mutual-funds/disclosures/Portfolios/Monthly-Portfolio"
+  },
+  {
+   "amfi_name": "PPFAS Mutual Fund",
+   "amc": "PPFAS AMC",
+   "brands": [
+    "ppfas",
+    "parag parikh"
+   ],
+   "disclosure_page": "https://amc.ppfas.com/downloads/portfolio-disclosure/"
+  },
+  {
+   "amfi_name": "quant Mutual Fund",
+   "amc": "quant AMC",
+   "brands": [
+    "quant"
+   ],
+   "disclosure_page": "https://quantmutual.com/statutory-disclosures"
+  },
+  {
+   "amfi_name": "Quantum Mutual Fund",
+   "amc": "Quantum AMC",
+   "brands": [
+    "quantum"
+   ],
+   "disclosure_page": "https://www.quantumamc.com/portfolio/combined/-1/1/0/0"
+  },
+  {
+   "amfi_name": "Samco Mutual Fund",
+   "amc": "Samco AMC",
+   "brands": [
+    "samco"
+   ],
+   "disclosure_page": "https://www.samcomf.com/StatutoryDisclosure"
+  },
+  {
+   "amfi_name": "SBI Mutual Fund",
+   "amc": "SBI AMC",
+   "brands": [
+    "sbi"
+   ],
+   "disclosure_page": "https://www.sbimf.com/portfolios"
+  },
+  {
+   "amfi_name": "Shriram Mutual Fund",
+   "amc": "Shriram AMC",
+   "brands": [
+    "shriram"
+   ],
+   "disclosure_page": "https://www.shriramamc.in/investor-statutory-disclosures"
+  },
+  {
+   "amfi_name": "Sundaram Mutual Fund",
+   "amc": "Sundaram AMC",
+   "brands": [
+    "sundaram"
+   ],
+   "disclosure_page": "https://www.sundarammutual.com/Monthly-Fortnightly-Adhoc-Portfolios"
+  },
+  {
+   "amfi_name": "Tata Mutual Fund",
+   "amc": "Tata AMC",
+   "brands": [
+    "tata"
+   ],
+   "disclosure_page": "https://www.tatamutualfund.com/schemes-related"
+  },
+  {
+   "amfi_name": "Taurus Mutual Fund",
+   "amc": "Taurus AMC",
+   "brands": [
+    "taurus"
+   ],
+   "disclosure_page": "https://taurusmutualfund.com/monthly-portfolio"
+  },
+  {
+   "amfi_name": "The Wealth Company Mutual Fund",
+   "amc": "The Wealth Company AMC",
+   "brands": [
+    "wealth company"
+   ],
+   "disclosure_page": "https://www.wealthcompanyamc.in/literature-forms/portfolio-documents/monthly/"
+  },
+  {
+   "amfi_name": "Trust Mutual Fund",
+   "amc": "Trust AMC",
+   "brands": [
+    "trustmf",
+    "trust mf"
+   ],
+   "disclosure_page": "https://www.trustmf.com/disclosures?activeTab=portfolio-disclosures"
+  },
+  {
+   "amfi_name": "Unifi Mutual Fund",
+   "amc": "Unifi AMC",
+   "brands": [
+    "unifi"
+   ],
+   "disclosure_page": "https://unifimf.com/statutorydocuments/#monthly-portfolio-disclosure"
+  },
+  {
+   "amfi_name": "Union Mutual Fund",
+   "amc": "Union AMC",
+   "brands": [
+    "union"
+   ],
+   "disclosure_page": "https://www.unionmf.com/about-us/downloads/monthly-portfolio"
+  },
+  {
+   "amfi_name": "UTI Mutual Fund",
+   "amc": "UTI AMC",
+   "brands": [
+    "uti"
+   ],
+   "disclosure_page": "https://www.utimf.com/downloads/consolidate-all-portfolio-disclosure"
+  },
+  {
+   "amfi_name": "WhiteOak Capital Mutual Fund",
+   "amc": "WhiteOak Capital AMC",
+   "brands": [
+    "whiteoak",
+    "white oak"
+   ],
+   "disclosure_page": "https://mf.whiteoakamc.com/regulatory-disclosures/scheme-portfolios"
+  },
+  {
+   "amfi_name": "Zerodha Mutual Fund",
+   "amc": "Zerodha AMC",
+   "brands": [
+    "zerodha"
+   ],
+   "disclosure_page": "https://www.zerodhafundhouse.com/resources/disclosures?source=footer"
+  }
+ ]
+}

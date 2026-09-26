@@ -352,7 +352,7 @@ _NON_DISCRETIONARY_TITLE_RE = re.compile(
     r"|arbitrage|equity savings|(?<!regular )savings fund"
     r"|fof|fund of funds?"
     r"|gold|silver"
-    r"|liquid|overnight|money market|gilt|g-sec|gsec|sdl|bond|debt|duration"
+    r"|liquid(?:ity)?|overnight|money market|gilt|g-sec|gsec|sdl|bond|debt|duration"
     r"|credit risk|floating|floater|fixed maturity|fmp|constant maturity"
     r"|ultra short|term fund|interval)\b",
     re.IGNORECASE,

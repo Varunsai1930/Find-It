@@ -102,6 +102,7 @@ def test_pyproject_parses():
         "pandas==3.0.5",
         "numpy==2.5.1",
         "openpyxl==3.1.5",
+        "xlrd==2.0.2",
         "requests==2.33.1",
         "beautifulsoup4==4.15.0",
         "lxml==6.1.0",

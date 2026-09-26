@@ -91,6 +91,35 @@ instead of showing an empty page.
 GitHub Actions runs the tests and Ruff on Python 3.12 and 3.14 for every
 push and pull request (`.github/workflows/ci.yml`).
 
+## Adding a month of disclosures
+
+AMCs publish their monthly portfolios in different places and formats, and
+several block scripted downloads, so the files are downloaded by hand and the
+intake does everything after that:
+
+```bash
+python3 -m findit.cli.intake --month 2026-09 --init   # folders for AMCs already tracked
+# download each AMC's September files into real_data/inbox/2026-09/<AMC name>/
+python3 -m findit.cli.intake --month 2026-09          # check, parse, print the load command
+```
+
+Each folder is named as the database names the fund house ("SBI AMC",
+"Nippon India AMC"); `findit/ingest/amfi_amcs.json` lists all 57 from AMFI,
+with each one's disclosure page, and the report ends with the ones not yet
+downloaded. Zips are unpacked. An AMC is refused, with nothing written for it,
+when its files would load wrong data silently: a folder name AMFI does not
+list, the same sheet in two files (a consolidated and a per-scheme download),
+a sheet titled as another fund house's scheme, a workbook dated another month,
+or a workbook the parser cannot read. The intake never downloads anything and
+never writes the database: it prints the `run_pipeline.py` command that loads
+the accepted CSVs, and running it is your step. A new AMC needs two months
+loaded before its schemes are compared.
+
+When an AMC renames a sheet between months, the two sheets load as separate
+schemes and neither is compared. Check with
+`python3 -m findit.cli.alias --db tracker.db --amc "DSP AMC" --list` after a
+load and merge renames as described under "Scheme identity" below.
+
 ## Data is not in the repo
 
 The repository holds code only. `tracker.db`, `real_data/` (downloaded AMC
@@ -111,6 +140,8 @@ them.
 | `delta_calculator.py` | Month-on-month change per (scheme, stock). |
 | `consensus_signals.py` | Cross-fund buying vs selling per stock, the FII/DII join, and the ranking. |
 | `fetch_shareholding.py` | Quarterly shareholding filings from BSE or NSE. |
+| `findit/ingest/intake.py` | Checks and parses a month of downloaded AMC workbooks (`findit.cli.intake`). |
+| `findit/ingest/amfi_amcs.json` | AMFI's 57 fund houses, their disclosure pages and database names. |
 | `fallback_summary.py` | Template-based plain-English summary of one scheme's month. |
 | `findit/core/` | Publication dates, active weights, corporate actions, instrument types. |
 | `findit/store/validation_gate.py` | Validation checks that quarantine a bad scheme-month. |

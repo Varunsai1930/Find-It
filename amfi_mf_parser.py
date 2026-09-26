@@ -64,6 +64,11 @@ COLUMN_SYNONYMS = {
         "market/ fair value (rs. in lacs.)",
         # observed in real ICICI Prudential disclosures ("Exposure/Market Value(Rs.Lakh)")
         "exposure/market value(rs.lakh)",
+        # observed in real Nippon India disclosures ("Market/Fair Value\n( Rs. in Lacs)")
+        "market/fair value ( rs. in lacs)",
+        # observed in real Baroda BNP Paribas and PPFAS disclosures
+        # ("Market/Fair Value\n (Rs. in Lakhs)")
+        "market/fair value (rs. in lakhs)",
     ],
     "pct_nav": [
         "% to nav",
@@ -91,8 +96,10 @@ NAV_PERCENT_RANGE = (95.0, 105.0)
 
 # Title rows above the header that are not the scheme's name.
 _NOT_A_TITLE_RE = re.compile(
-    r"^(?:portfolio\b|monthly portfolio|back to index$|scheme name\s*:?$|"
-    r"(?:.*\s)?mutual fund$|as on\b|statement of|\d)",
+    r"^(?:portfolio\b|monthly portfolio|back to index$|index$|scheme name\s*:?$|"
+    r"(?:.*\s)?mutual fund$|as on\b|statement of|\d"
+    # A single word with a digit is a scheme code (Nippon's "RLMF001"), not a name.
+    r"|[a-z]*\d[a-z0-9]*$)",
     re.IGNORECASE,
 )
 
