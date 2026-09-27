@@ -14,8 +14,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-import db as db_module
-import delta_calculator
+from findit.store import db as db_module
+from findit.core import delta_calculator
+from findit.summary import build_summary
 from findit.web.app import create_app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -312,8 +313,6 @@ def test_coverage_shape(tmp_path):
 
 
 def test_summary_wraps_fallback(tmp_path):
-    import importlib.util
-
     db = _copy_db(tmp_path)
     client = TestClient(create_app(str(db)))
     latest = client.get("/api/coverage").json()["latest_month"]
@@ -321,12 +320,9 @@ def test_summary_wraps_fallback(tmp_path):
     body = client.get(f"/api/summary/{sid}/{latest}").json()
     assert "summary" in body and isinstance(body["summary"], str) and body["summary"].strip()
 
-    spec = importlib.util.spec_from_file_location("fb_check", str(REPO_ROOT / "fallback_summary.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
     conn = _ro_conn(db)
     try:
-        expected = mod.build_summary(conn, int(sid), str(latest))
+        expected = build_summary(conn, int(sid), str(latest))
     finally:
         conn.close()
     assert body["summary"] == expected
@@ -395,7 +391,7 @@ def test_dashboard_server_rendered_requirements(tmp_path):
 
 
 def test_month_fragment_is_one_table_in_ranking_order(tmp_path):
-    import consensus_signals
+    from findit.core import consensus_signals
 
     db = _copy_db(tmp_path)
     client = TestClient(create_app(str(db)))
@@ -525,7 +521,7 @@ def _coverage_db(tmp_path) -> Path:
 
 
 def test_compared_count_is_the_set_the_ranking_counts(tmp_path):
-    import consensus_signals
+    from findit.core import consensus_signals
 
     db = _coverage_db(tmp_path)
     client = TestClient(create_app(str(db)))
@@ -773,7 +769,7 @@ def test_missing_database_is_reported_not_a_server_error(tmp_path):
     client = TestClient(create_app(str(missing)))
     page = client.get("/")
     assert page.status_code == 503
-    assert f"No database at {missing}" in page.text and "run_pipeline.py" in page.text
+    assert f"No database at {missing}" in page.text and "findit.cli.pipeline" in page.text
     for url in ("/api/coverage", "/api/stocks/search?q=rel", "/fragments/month/2026-08"):
         res = client.get(url)
         assert res.status_code == 503 and "No database at" in res.json()["detail"]

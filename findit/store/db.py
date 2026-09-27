@@ -142,7 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_security_prices_daily_date
 # treated as passive/debt (0), everything else defaults to active (1).
 # Defaulting to 1 is deliberate: wrongly excluding a real active fund is
 # worse than wrongly including a passive one. Auditable via the backfill
-# print below and the per-run passive list in run_pipeline.py.
+# print below and the per-run passive list in findit.cli.pipeline.
 PASSIVE_SCHEME_PATTERNS = (
     "etf", "index", "nifty", "sensex", "bse", "fof", "sdl", "gsec",
     "liquid", "overnight", "arbitrage", "debt", "bond", "money market",

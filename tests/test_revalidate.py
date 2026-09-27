@@ -5,7 +5,7 @@ import json
 
 import pandas as pd
 
-import db
+from findit.store import db
 from findit.cli import revalidate
 
 

@@ -1,6 +1,4 @@
 """
-amfi_mf_parser.py
-
 Parses ONE AMC's AMFI monthly portfolio disclosure Excel workbook into a
 clean, normalized long-format table: one row per (scheme, stock) holding.
 
@@ -8,8 +6,8 @@ AMFI publishes these at:
   https://www.amfiindia.com/research-information/other-data/monthly-portfolio-disclosures
 Each AMC publishes one workbook per month, with one sheet per scheme it runs.
 
-USAGE:
-  python amfi_mf_parser.py path/to/hdfc_march_2026.xlsx --amc "HDFC AMC" --month 2026-03
+USAGE (one workbook; ``findit.cli.intake`` checks and parses a whole month):
+  python3 -m findit.cli.parse path/to/hdfc_march_2026.xlsx --amc "HDFC AMC" --month 2026-03
 
 WHY THIS IS WRITTEN DEFENSIVELY:
 SEBI prescribes the same columns everywhere (Name of the Instrument, ISIN,
@@ -19,20 +17,8 @@ matches columns by a synonym list instead of fixed names, and FAILS LOUDLY
 (raises) when it can't confidently match a required column, instead of
 silently skipping or misassigning it. A wrong ISIN or quantity is a much
 worse failure than a crash you can see and fix.
-
-WHAT THIS DOES NOT DO YET:
-- Doesn't download from AMFI itself (network in this environment can't
-  reach amfiindia.com) — point it at a file you've already downloaded.
-- Doesn't loop over multiple AMCs/months — that's a thin wrapper around
-  this once this is confirmed working against 2-3 real files.
-- COLUMN_SYNONYMS below is seeded from the SEBI-prescribed column names
-  and public descriptions of the format, NOT tested against a real AMFI
-  file yet, since I can't fetch one from this sandbox. Treat it as a
-  first draft to validate against an actual downloaded file (see the
-  note at the bottom of this file).
 """
 
-import argparse
 import re
 import sys
 from pathlib import Path
@@ -383,38 +369,3 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         print(bad_rows.to_string(), file=sys.stderr)
 
     return result
-
-
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("file", type=Path, help="Path to one AMC's monthly disclosure .xlsx")
-    ap.add_argument("--amc", required=True, help="AMC name, e.g. 'HDFC AMC'")
-    ap.add_argument("--month", required=True, help="Report month, e.g. 2026-08")
-    ap.add_argument("--out", type=Path, default=None, help="Output CSV path")
-    args = ap.parse_args()
-
-    print(f"Parsing {args.file} ...")
-    df = parse_workbook(args.file, args.amc, args.month)
-    print(
-        f"Parsed {df['isin'].notna().sum()} holding rows across {df['scheme_name'].nunique()} "
-        f"schemes."
-    )
-
-    out_path = args.out or args.file.with_suffix(".parsed.csv")
-    df.to_csv(out_path, index=False)
-    print(f"Wrote {out_path}")
-
-
-if __name__ == "__main__":
-    main()
-
-# ---------------------------------------------------------------------------
-# NEXT STEP -- this needs a real file to prove itself:
-# Download one AMC's latest monthly disclosure from
-#   amfiindia.com -> Research & Information -> Other Data ->
-#   Monthly Portfolio Disclosures
-# (pick a large AMC like HDFC or SBI first -- more likely to be a clean
-# example) and either run this script on it locally, or upload the .xlsx
-# here and I'll run it against the real file and fix COLUMN_SYNONYMS
-# against whatever it actually contains.
-# ---------------------------------------------------------------------------

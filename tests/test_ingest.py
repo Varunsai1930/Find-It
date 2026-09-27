@@ -22,9 +22,10 @@ import pandas as pd
 import pytest
 from bs4 import BeautifulSoup
 
-import amfi_mf_parser
-import fetch_shareholding
-from fetch_shareholding import ShareholdingFetchError
+from findit.ingest import amfi_mf_parser
+from findit.cli import shareholding as shareholding_cli
+from findit.ingest import shareholding as fetch_shareholding
+from findit.ingest.shareholding import ShareholdingFetchError
 
 HEADER = [
     "Name of the Instrument",
@@ -512,7 +513,7 @@ def test_failure_summary_groups_by_reason(capsys):
         "INE002A01011: connection reset",
         "INE003A01011 2025-06-30: 404 Client Error: Not Found for url: https://x/y.html",
     ])
-    fetch_shareholding._print_stats(stats)
+    shareholding_cli._print_stats(stats)
     out = capsys.readouterr().out
     assert "   2  connection reset  (e.g. INE001A01011)" in out
     assert "   1  404 Client Error: Not Found  (e.g. INE003A01011 2025-06-30)" in out

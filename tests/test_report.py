@@ -2,7 +2,9 @@
 
 import pytest
 
-from findit.cli import backtest_quarterly, report
+from findit.cli import report
+
+from findit.research import backtest_quarterly
 from tests.test_web import _copy_db
 
 
@@ -45,3 +47,24 @@ def test_evidence_without_a_finding_says_so(monkeypatch):
     quarters = [_quarter({"mf_up_only": e}) for e in (0.02, -0.02, 0.01, -0.01)]
     monkeypatch.setattr(backtest_quarterly, "run", lambda db_path: {"results": quarters})
     assert "No group beats comparable stocks reliably" in "\n".join(report.evidence("x.db"))
+
+
+def test_coverage_states_the_dashboards_counts(tmp_path):
+    """Report and dashboard read one coverage function, so their numbers match."""
+    import sqlite3
+
+    from tests.test_web import _coverage_db
+
+    db = _coverage_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        text = "\n".join(report.coverage(conn, "2026-08"))
+    # The same counts test_web asserts on the dashboard for this database.
+    assert "**2** active equity schemes from **1** AMC compared 2026-07 → 2026-08" in text
+    assert "1 loaded without a 2026-07 portfolio to compare" in text
+    assert "Validation gate: 2 passed, 1 withheld, 1 not validated." in text
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM mf_holdings_monthly "
+                     "WHERE scheme_id = 2 AND report_month = '2026-08'")
+        text = "\n".join(report.coverage(conn, "2026-08"))
+    # A fund missing this month is named as missing, never read as a seller.
+    assert "1 held in 2026-07 but not loaded for 2026-08" in text

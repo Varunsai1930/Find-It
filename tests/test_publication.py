@@ -31,3 +31,21 @@ def test_unknown_shareholding_date_falls_back_to_the_deadline(missing):
 def test_bad_month_is_rejected():
     with pytest.raises(ValueError):
         publication.mf_disclosure_deadline("2026-13")
+
+
+@pytest.mark.parametrize("has_column", [True, False])
+def test_the_sql_publication_rule_matches_the_python_one(has_column):
+    """The consensus join ranks filings in SQL; it must use the same dates."""
+    import sqlite3
+
+    stored = [None, "", "  ", "nan", "None", "2026-07-19T18:05:00", " 2026-07-19 ",
+              "2026-08-02 09:15:00+05:30", "2026-07-19"]
+    conn = sqlite3.connect(":memory:")
+    conn.execute("CREATE TABLE f (quarter_end TEXT, published_at TEXT)")
+    conn.executemany("INSERT INTO f VALUES ('2026-06-30', ?)", [(v,) for v in stored])
+    day_sql, basis_sql = publication.shareholding_published_sql(has_column)
+    rows = conn.execute(f"SELECT published_at, {day_sql}, {basis_sql} FROM f").fetchall()
+    for published_at, day, basis in rows:
+        expected_day, expected_basis = publication.shareholding_published(
+            "2026-06-30", published_at if has_column else None)
+        assert (day, basis) == (expected_day.isoformat(), expected_basis), published_at

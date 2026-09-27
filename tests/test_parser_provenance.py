@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from amfi_mf_parser import parse_workbook
+from findit.ingest.amfi_mf_parser import parse_workbook
 
 
 HEADERS = ["Name of the Instrument", "ISIN", "Quantity", "Market Value", "% to NAV"]

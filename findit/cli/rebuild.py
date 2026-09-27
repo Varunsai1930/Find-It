@@ -5,8 +5,8 @@ import argparse
 import shutil
 from pathlib import Path
 
-import db
-import delta_calculator
+from findit.store import db
+from findit.core import delta_calculator
 
 
 def rebuild_copy(src_db: str | Path, dst_copy: str | Path, prev: str, curr: str) -> int:

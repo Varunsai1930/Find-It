@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-import consensus_signals
-import db
+from findit.core import consensus_signals
+from findit.store import db
 from findit.core import active_weight as aw
 
 

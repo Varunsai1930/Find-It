@@ -3,11 +3,11 @@ import json
 
 import pytest
 
-import consensus_signals
-import db
-import delta_calculator
-import fallback_summary
-from run_pipeline import run_validation_gate
+from findit.core import consensus_signals
+from findit.store import db
+from findit.core import delta_calculator
+from findit.summary import get_summary
+from findit.pipeline import run_validation_gate
 
 PREV = "2026-03"
 CURR = "2026-04"
@@ -73,7 +73,7 @@ def test_far_outside_nav_sum_quarantined_and_hidden(tmp_path):
     )
     consensus = consensus_signals.compute_consensus(conn, CURR)
     assert EQUITY not in set(consensus["isin"]) if not consensus.empty else True
-    summary = fallback_summary.build_summary(conn, sid, CURR)
+    summary = get_summary(conn, sid, CURR)["text"]
     assert "withheld" in summary and "quarantined" in summary
     conn.close()
 
@@ -121,7 +121,7 @@ def test_passive_excluded_from_consensus_but_kept_in_summary(tmp_path):
     row_all = consensus_all[consensus_all["isin"] == EQUITY].iloc[0]
     assert int(row_all["amcs_buying"]) == 2
     # Passive fund's own summary is untouched by the consensus filter.
-    summary = fallback_summary.build_summary(conn, passive, CURR)
+    summary = get_summary(conn, passive, CURR)["text"]
     assert "withheld" not in summary and "Nifty 50 Index Fund" in summary
     conn.close()
 
@@ -170,7 +170,7 @@ def test_extreme_trade_with_flat_peers_stays_published(tmp_path):
     consensus = consensus_signals.compute_consensus(conn, CURR)
     stock = consensus[consensus["isin"] == EQUITY].iloc[0]
     assert int(stock["amcs_buying"]) == 1
-    summary = fallback_summary.build_summary(conn, sids[0], CURR)
+    summary = get_summary(conn, sids[0], CURR)["text"]
     assert "withheld" not in summary
     assert "Equity Co" in summary
     conn.close()
@@ -266,7 +266,7 @@ def test_low_nav_warns_and_retains_dropped_row_provenance(tmp_path):
     assert provenance["nav_sum"] == pytest.approx(4.0)
     assert provenance["dropped_non_isin_count"] == 3
     assert provenance["dropped_non_isin_pct_nav"] == pytest.approx(96.0)
-    assert "withheld" not in fallback_summary.build_summary(conn, sid, CURR)
+    assert "withheld" not in get_summary(conn, sid, CURR)["text"]
     conn.close()
 
 

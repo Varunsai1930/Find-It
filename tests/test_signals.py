@@ -4,9 +4,9 @@ import sqlite3
 
 import pandas as pd
 
-import consensus_signals
-import fallback_summary
-from run_pipeline import _overlap_summary, build_overlap_view
+from findit.core import consensus_signals
+from findit.summary import build_summary
+from findit.pipeline import overlap_summary, build_overlap_view
 
 
 # ---- helpers ---------------------------------------------------------------
@@ -323,11 +323,11 @@ def test_bluechip_hdfc_bank_cd_exit_not_claimed_as_equity():
     _add_scheme_stock_delta(conn, 289, "ICICI Prudential AMC", "BLUECHIP",
                             "INE040A16HO2", "HDFC Bank Ltd.", "cp_or_cd",
                             -10000, -49791.65, -49791.65, -0.61, "exited")
-    text = fallback_summary.build_summary(conn, 289, "2026-08")  # default equity
+    text = build_summary(conn, 289, "2026-08")  # default equity
     assert "Oberoi Realty" in text
     assert "HDFC Bank" not in text
     # Unfiltered view must separate non-equity, not claim CD as equity exit.
-    text_all = fallback_summary.build_summary(conn, 289, "2026-08", instrument_type=None)
+    text_all = build_summary(conn, 289, "2026-08", instrument_type=None)
     assert "Oberoi Realty" in text_all
     assert "HDFC Bank" in text_all
     assert "Non-equity" in text_all or "non-equity" in text_all
@@ -339,7 +339,7 @@ def test_bse_nav_066_case():
     _add_scheme_stock_delta(conn, 289, "ICICI Prudential AMC", "BLUECHIP",
                             "INE118H01025", "BSE Ltd.", "equity",
                             1619026, 53136.43, 53136.43, 0.66249776321, "new")
-    text = fallback_summary.build_summary(conn, 289, "2026-08")
+    text = build_summary(conn, 289, "2026-08")
     assert "BSE Ltd." in text
     assert "0.66%" in text
     assert "flow" in text and "value change" in text
@@ -357,7 +357,7 @@ def test_no_plus_rupee_minus_rendering():
     _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME",
                             "INE000B01001", "Down Qty Up Px", "equity",
                             -100, 500.0, -1000.0, 0.10, "trimmed")
-    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    text = build_summary(conn, 1, "2026-08")
     assert "+₹-" not in text
     assert "flow" in text and "value change" in text
     conn.close()
@@ -391,7 +391,7 @@ def test_exits_capped_and_deduped():
            VALUES (1, 'INE00000001001', '2026-08', '2026-07', -50, -50, -50, -0.05, 'exited', 0.0)"""
     )
     conn.commit()
-    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    text = build_summary(conn, 1, "2026-08")
     # 7 unique ISINs (one duplicated) -> 5 shown + 'and 2 more'.
     assert "and 2 more" in text
     assert "+₹-" not in text
@@ -406,7 +406,7 @@ def test_added_trimmed_rank_by_flow_fallback_value():
                             10, 9000, 100, 0.5, "added")
     _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME", "INE000B01001", "HighFlow", "equity",
                             20, 100, 5000, 0.6, "added")
-    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    text = build_summary(conn, 1, "2026-08")
     assert "HighFlow" in text  # ranked by flow, not value
     conn.close()
 
@@ -459,7 +459,7 @@ def test_sign_flip_flow_positive_value_negative():
     r = out.iloc[0]
     assert r["total_flow_lakhs"] > 0
     assert abs(r["total_price_effect_lakhs"] - (-1474.28)) < 1e-6
-    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    text = build_summary(conn, 1, "2026-08")
     assert "price effect" in text
     assert "flow" in text and "value change" in text
     assert "+₹-" not in text
@@ -470,7 +470,7 @@ def test_added_detail_shows_price_effect_when_material():
     conn = _mem_conn()
     _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME", "INE000A01001", "AddCo", "equity",
                             100, 50.0, 200.0, 0.10, "added", price=-150.0)
-    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    text = build_summary(conn, 1, "2026-08")
     assert "price effect" in text
     assert "flow" in text and "value change" in text
     assert "+₹-" not in text
@@ -481,7 +481,7 @@ def test_new_detail_stays_flow_plus_value():
     conn = _mem_conn()
     _add_scheme_stock_delta(conn, 1, "AMC", "SCHEME", "INE000A01001", "NewCo", "equity",
                             100, 500.0, 500.0, 0.5, "new")
-    text = fallback_summary.build_summary(conn, 1, "2026-08")
+    text = build_summary(conn, 1, "2026-08")
     # flow == value for new positions: no separate price-effect leg.
     assert "price effect" not in text
     assert "flow" in text and "value change" in text
@@ -504,7 +504,7 @@ def test_pipeline_overlap_common_via_end_to_end_consensus():
     assert overlap["status"] == "ok"
     assert len(overlap["common"]) == 1
     assert overlap["common"].iloc[0]["isin"] == "INEAAA01001"
-    summary = _overlap_summary(overlap["joined"], overlap["common"], overlap["status"])
+    summary = overlap_summary(overlap["joined"], overlap["common"], overlap["status"])
     assert summary == {
         "status": "ok", "common_count": 1, "consensus_count": 1,
         "stale_count": 0, "missing_shareholding_count": 0,
@@ -544,6 +544,6 @@ def test_pipeline_overlap_empty_consensus_and_missing_table():
     overlap2 = build_overlap_view(bare, _consensus_row("INE000A01001"), "2026-08")
     assert overlap2["status"] == "unavailable"
     assert overlap2["joined"].equals(_consensus_row("INE000A01001"))
-    summary = _overlap_summary(overlap2["joined"], overlap2["common"], overlap2["status"])
+    summary = overlap_summary(overlap2["joined"], overlap2["common"], overlap2["status"])
     assert summary == {"status": "unavailable", "common_count": 0}
     bare.close()

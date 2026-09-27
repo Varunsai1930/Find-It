@@ -28,6 +28,15 @@ dev = [
     "httpx2==2.13.0",
 ]
 
+# Only the package: a checkout also holds git-ignored data folders
+# (real_data/) that flat-layout discovery would otherwise pick up.
+[tool.setuptools.packages.find]
+include = ["findit*"]
+
+[tool.setuptools.package-data]
+"findit.web" = ["templates/*.html", "static/*"]
+"findit.ingest" = ["amfi_amcs.json"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

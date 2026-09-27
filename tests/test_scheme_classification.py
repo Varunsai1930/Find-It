@@ -12,7 +12,7 @@ No network; every test builds its own temporary database.
 import pandas as pd
 import pytest
 
-import db
+from findit.store import db
 from findit.cli import scheme_titles
 
 

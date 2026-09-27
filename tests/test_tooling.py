@@ -6,8 +6,8 @@ import sqlite3
 import tomllib
 from pathlib import Path
 
-import db
-import delta_calculator
+from findit.store import db
+from findit.core import delta_calculator
 
 from findit.cli.digest import build_digest
 from findit.cli import digest as digest_cli

@@ -13,7 +13,7 @@ from pathlib import Path
 import openpyxl
 import pandas as pd
 
-import amfi_mf_parser
+from findit.ingest import amfi_mf_parser
 from findit.cli import intake as intake_cli
 from findit.ingest import intake
 

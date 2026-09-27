@@ -5,7 +5,7 @@ import sqlite3
 import pandas as pd
 import pytest
 
-import db
+from findit.store import db
 from findit.cli.alias import list_schemes, merge_schemes
 
 
@@ -108,7 +108,7 @@ def test_renamed_sheet_does_not_fork_the_fund(tmp_path):
         "SELECT report_month FROM mf_holdings_monthly ORDER BY report_month")]
     assert months == ["2026-07", "2026-08"]
 
-    import delta_calculator
+    from findit.core import delta_calculator
     deltas = delta_calculator.compute_deltas(conn, "2026-07", "2026-08")
     assert set(deltas["action"]) == {"added"}, "a rename must not read as exit + new"
     conn.close()

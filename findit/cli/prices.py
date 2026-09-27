@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import argparse
 
-import db
+from findit.store import db
 from findit.ingest.prices import (
     PriceFetchError,
     fetch_bhavcopy,

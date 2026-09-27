@@ -3,7 +3,7 @@
 import pandas as pd
 import pytest
 
-from findit.cli import backtest
+from findit.research import backtest
 
 
 def _consensus(rows):

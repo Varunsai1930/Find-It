@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-import db
-import delta_calculator
+from findit.store import db
+from findit.core import delta_calculator
 
 PREV = "2026-03"
 CURR = "2026-04"

@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import sqlite3
 
-import db
+from findit.store import db
 
 # Every table that carries a scheme_id, with the columns that make a row
 # unique within one scheme. A merge must move all of them or none.

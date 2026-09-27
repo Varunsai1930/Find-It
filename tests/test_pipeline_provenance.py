@@ -6,9 +6,9 @@ import sys
 import openpyxl
 import pytest
 
-import amfi_mf_parser
-import db
-import run_pipeline
+from findit.ingest import amfi_mf_parser
+from findit.store import db
+from findit.cli import pipeline as pipeline_cli
 
 
 @pytest.mark.parametrize("equity_nav", [0.0, 1.0, 4.0])
@@ -30,10 +30,10 @@ def test_dropped_nav_survives_csv_and_pipeline(tmp_path, monkeypatch, capsys, eq
     amfi_mf_parser.parse_workbook(xlsx, "Test AMC", "2026-08").to_csv(csv_path, index=False)
     db_path = tmp_path / "tracker.db"
     monkeypatch.setattr(sys, "argv", [
-        "run_pipeline.py", "--db", str(db_path), "--load", str(csv_path),
+        "pipeline", "--db", str(db_path), "--load", str(csv_path),
         "--prev", "2026-07", "--curr", "2026-08",
     ])
-    run_pipeline.main()
+    pipeline_cli.main()
     output = capsys.readouterr().out
     assert "Validation gate: 1 ok, 0 quarantined" in output
     with sqlite3.connect(db_path) as conn:
@@ -74,10 +74,10 @@ def test_legacy_reload_clears_dropped_row_provenance(tmp_path, monkeypatch, caps
     ]).to_csv(legacy, index=False)
     db_path = tmp_path / "reload.db"
     monkeypatch.setattr(sys, "argv", [
-        "run_pipeline.py", "--db", str(db_path), "--load", str(modern), str(legacy),
+        "pipeline", "--db", str(db_path), "--load", str(modern), str(legacy),
         "--prev", "2026-07", "--curr", "2026-08",
     ])
-    run_pipeline.main()
+    pipeline_cli.main()
     with sqlite3.connect(db_path) as conn:
         report = json.loads(conn.execute(
             "SELECT validation_report_json FROM scheme_month_status"
@@ -116,11 +116,11 @@ def test_pipeline_classifies_fresh_schemes_and_reports_overlap(tmp_path, monkeyp
         curr_b, index=False)
     db_path = tmp_path / "tracker.db"
     monkeypatch.setattr(sys, "argv", [
-        "run_pipeline.py", "--db", str(db_path),
+        "pipeline", "--db", str(db_path),
         "--load", str(prev), "--load", str(curr_a), str(curr_b),
         "--prev", "2026-03", "--curr", "2026-04",
     ])
-    run_pipeline.main()
+    pipeline_cli.main()
     output = capsys.readouterr().out
     # Both AMCs added to Reliance: MF consensus must be non-empty in this run.
     assert "INE002A01018" in output

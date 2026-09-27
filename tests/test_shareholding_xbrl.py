@@ -5,7 +5,7 @@ Synthetic documents shaped like BSE's real 2016 and 2020+ filings; no network.
 
 import pytest
 
-import fetch_shareholding as fs
+from findit.ingest import shareholding as fs
 
 
 def _xbrl(facts: dict, style: str = "_ContextI") -> str:

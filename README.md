@@ -18,26 +18,28 @@ are template-based (see "Why the GLM narration layer was removed" below).
 
 ## How it works
 
-1. **Parse** — `amfi_mf_parser.py` turns an AMC's monthly Excel workbook into
-   a clean CSV. It fails loudly on unrecognised columns instead of guessing.
-2. **Load and validate** — `run_pipeline.py` loads parsed files into SQLite
-   (`db.py`). A validation gate (`findit/store/validation_gate.py`) checks
-   every scheme-month; one that fails is **quarantined**: kept for
-   inspection, withheld from every ranking.
-3. **Compare** — `delta_calculator.py` classifies each (scheme, stock) as new,
-   added, trimmed, exited or unchanged against the previous month. Only
-   schemes present in both months are compared.
-4. **Rank** — `consensus_signals.py` counts AMCs buying minus AMCs selling per
+1. **Parse** — `findit/ingest/amfi_mf_parser.py` turns an AMC's monthly Excel
+   workbook into a clean CSV. It fails loudly on unrecognised columns instead
+   of guessing.
+2. **Load and validate** — `findit.cli.pipeline` loads parsed files into
+   SQLite (`findit/store/db.py`). A validation gate
+   (`findit/store/validation_gate.py`) checks every scheme-month; one that
+   fails is **quarantined**: kept for inspection, withheld from every ranking.
+3. **Compare** — `findit/core/delta_calculator.py` classifies each (scheme,
+   stock) as new, added, trimmed, exited or unchanged against the previous
+   month. Only schemes present in both months are compared.
+4. **Rank** — `findit/core/consensus_signals.py` counts AMCs buying minus AMCs selling per
    stock (the ranking key), counting only active stock-pickers. Flow into
    existing positions breaks ties. A discretionary count (changes beyond
    what price moves alone would cause) is reported beside it.
-5. **Join filings** — quarterly FII/DII shareholding (`fetch_shareholding.py`,
-   BSE or NSE) is joined by ISIN, using only filings published by the date
+5. **Join filings** — quarterly FII/DII shareholding
+   (`findit/ingest/shareholding.py`, BSE or NSE) is joined by ISIN, using only filings published by the date
    the month's portfolios became public. A missing filing stays *missing*,
    never zero.
 6. **Report** — `findit.cli.report` writes a one-page monthly report, and
-   `findit.web` serves the dashboard. Both use the same
-   `ranked_consensus`, so they cannot disagree.
+   `findit.web` serves the dashboard. Both use the same `ranked_consensus`
+   and the same coverage counts (`findit/core/coverage.py`), so they cannot
+   disagree.
 
 ## Research findings
 
@@ -71,11 +73,11 @@ The dashboard reads `./tracker.db`. To try it without real data, build one
 from the synthetic fixtures, then start the server:
 
 ```bash
-python3 make_test_fixtures.py
-python3 amfi_mf_parser.py test_hdfc_march2026.xlsx --amc "HDFC AMC" --month 2026-03
-python3 amfi_mf_parser.py test_hdfc_april2026.xlsx --amc "HDFC AMC" --month 2026-04
-python3 amfi_mf_parser.py test_sbi_april2026.xlsx  --amc "SBI AMC"  --month 2026-04
-python3 run_pipeline.py \
+python3 -m findit.cli.fixtures
+python3 -m findit.cli.parse test_hdfc_march2026.xlsx --amc "HDFC AMC" --month 2026-03
+python3 -m findit.cli.parse test_hdfc_april2026.xlsx --amc "HDFC AMC" --month 2026-04
+python3 -m findit.cli.parse test_sbi_april2026.xlsx  --amc "SBI AMC"  --month 2026-04
+python3 -m findit.cli.pipeline \
   --load test_hdfc_march2026.parsed.csv \
   --load test_hdfc_april2026.parsed.csv test_sbi_april2026.parsed.csv \
   --prev 2026-03 --curr 2026-04
@@ -111,7 +113,7 @@ when its files would load wrong data silently: a folder name AMFI does not
 list, the same sheet in two files (a consolidated and a per-scheme download),
 a sheet titled as another fund house's scheme, a workbook dated another month,
 or a workbook the parser cannot read. The intake never downloads anything and
-never writes the database: it prints the `run_pipeline.py` command that loads
+never writes the database: it prints the `findit.cli.pipeline` command that loads
 the accepted CSVs, and running it is your step. A new AMC needs two months
 loaded before its schemes are compared.
 
@@ -125,29 +127,27 @@ load and merge renames as described under "Scheme identity" below.
 The repository holds code only. `tracker.db`, `real_data/` (downloaded AMC
 disclosures), the fetch caches and the generated `test_*.xlsx` fixtures are
 git-ignored and live only on your machine. A fresh clone rebuilds them:
-`make_test_fixtures.py` for the synthetic files, the AMCs' monthly
-disclosure workbooks for real data, and `fetch_shareholding.py` /
+`findit.cli.fixtures` for the synthetic files, the AMCs' monthly
+disclosure workbooks for real data, and `findit.cli.shareholding` /
 `findit.cli.prices` for filings and prices. The test suite needs none of
 them.
 
-## Files
+## Layout
 
-| File | What it does |
+All code lives in the `findit` package. Imports only point down this list,
+and `tests/test_layout.py` fails the build if one points up: a lower layer
+reaching into a higher one is how a rule ends up defined twice.
+
+| Layer | What it holds |
 |---|---|
-| `amfi_mf_parser.py` | Parses one AMC's monthly disclosure workbook into a clean CSV. |
-| `db.py` | SQLite schema and loaders for parsed holdings and shareholding filings. |
-| `run_pipeline.py` | The monthly command: load, validate, compare, rank, summarise. |
-| `delta_calculator.py` | Month-on-month change per (scheme, stock). |
-| `consensus_signals.py` | Cross-fund buying vs selling per stock, the FII/DII join, and the ranking. |
-| `fetch_shareholding.py` | Quarterly shareholding filings from BSE or NSE. |
-| `findit/ingest/intake.py` | Checks and parses a month of downloaded AMC workbooks (`findit.cli.intake`). |
-| `findit/ingest/amfi_amcs.json` | AMFI's 57 fund houses, their disclosure pages and database names. |
-| `fallback_summary.py` | Template-based plain-English summary of one scheme's month. |
-| `findit/core/` | Publication dates, active weights, corporate actions, instrument types. |
-| `findit/store/validation_gate.py` | Validation checks that quarantine a bad scheme-month. |
-| `findit/cli/` | Report, backtests, prices, re-validation, scheme aliases and titles, digest. |
+| `findit/core/` | The rules: month-on-month changes (`delta_calculator`), the consensus ranking and FII/DII join (`consensus_signals`), coverage counts, publication dates, active weights, corporate actions, instrument types. |
+| `findit/store/` | SQLite schema and loaders (`db`), the shared reads every rule is applied through (`queries`: validation status, active-scheme filter, quarterly filings, prices), and the validation gate's checks. |
+| `findit/ingest/` | Reading outside data: AMC workbooks (`amfi_mf_parser`), a month's intake, shareholding filings, NSE prices. `amfi_amcs.json` lists AMFI's 57 fund houses. |
+| `findit/summary.py` | Rule-based plain-English summary of one scheme's month, withheld when its data failed validation. |
+| `findit/research/` | The monthly and ten-year quarterly backtests. |
+| `findit/pipeline.py` | The monthly run's steps: provenance, the validation gate, the FII/DII overlap. |
+| `findit/cli/` | Every command, as `python3 -m findit.cli.<name>`: `pipeline`, `parse`, `intake`, `shareholding`, `prices`, `report`, `backtest`, `backtest_quarterly`, `revalidate`, `rebuild`, `digest`, `alias`, `scheme_titles`, `fixtures`. |
 | `findit/web/` | Read-only FastAPI dashboard (Jinja templates, vanilla JavaScript). |
-| `make_test_fixtures.py` | Generates the synthetic workbooks used in the quick start. |
 
 ### How the ranking treats new positions
 
@@ -256,7 +256,7 @@ stores month-end closes; `--date D` stores the first trading day on or after
 D (both NSE bhavcopy formats: UDiFF from July 2024, legacy before), and the
 backtests print the exact `--date` list they are missing. A holding period
 that has not ended is marked `*`, valued at the latest stored close, and kept
-out of the pooled line. `run_pipeline.py` prints the same track record under
+out of the pooled line. `findit.cli.pipeline` prints the same track record under
 each month's ranking, and the web dashboard ranks with the same
 `compute_consensus` and FII/DII join -- one implementation, so the two can
 never disagree, and an older month never shows filings published after it.
@@ -278,7 +278,7 @@ Every listed company's shareholding pattern can: one format, back to 2015,
 with mutual-fund ownership (`mf_pct`) and FPI ownership as separate lines.
 
 ```bash
-python3 fetch_shareholding.py --db tracker.db --history 0          # every filing
+python3 -m findit.cli.shareholding --db tracker.db --history 0     # every filing
 python3 -m findit.cli.backtest_quarterly --db tracker.db           # lists missing closes
 python3 -m findit.cli.prices --db tracker.db --date ... --date ... # as printed
 python3 -m findit.cli.backtest_quarterly --db tracker.db
@@ -388,9 +388,10 @@ rows, so re-validating never invents provenance the ingest did not record.
 
 ## Summaries (rule-based, no LLM)
 
-`fallback_summary.build_summary` turns one scheme's computed deltas into a
+`findit.summary.build_summary` turns one scheme's computed deltas into a
 plain-English paragraph. `findit.summary.get_summary` wraps it with the
-data-safety checks the summary API and digest rely on:
+data-safety checks the summary API, digest and pipeline rely on -- always
+call that one, since `build_summary` only renders:
 
 - a quarantined current **or referenced previous** month is withheld, with
   wording that says so explicitly — a delta is a comparison, so bad data on

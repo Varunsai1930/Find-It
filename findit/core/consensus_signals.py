@@ -15,37 +15,7 @@ from datetime import date
 import pandas as pd
 
 from findit.core import active_weight, publication
-
-
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    """Column names of a table (empty set when the table does not exist)."""
-    try:
-        return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    except sqlite3.DatabaseError:
-        return set()
-
-
-def _delta_columns(conn: sqlite3.Connection) -> set[str]:
-    """Column names of mf_holding_deltas (empty set when unreadable)."""
-    return _table_columns(conn, "mf_holding_deltas")
-
-
-def _quarantined_scheme_ids(conn: sqlite3.Connection, report_month: str) -> list[int]:
-    """Scheme IDs quarantined for report_month (empty when table missing).
-
-    Only a genuinely absent table yields an empty list. Any other database
-    error propagates: silently returning [] here would publish quarantined
-    schemes as though they had passed, which is the one outcome this filter
-    exists to prevent.
-    """
-    if not _table_columns(conn, "scheme_month_status"):
-        return []
-    rows = conn.execute(
-        "SELECT scheme_id FROM scheme_month_status "
-        "WHERE report_month = ? AND status = 'quarantined'",
-        (report_month,),
-    ).fetchall()
-    return [int(r[0]) for r in rows if r[0] is not None]
+from findit.store import queries
 
 
 def _prev_universe_isins(conn: sqlite3.Connection, prev_months) -> set[str] | None:
@@ -85,40 +55,23 @@ def compute_active_consensus(
 ) -> pd.DataFrame:
     """Per-stock breadth of *discretionary* buying (see findit.core.active_weight).
 
-    Same eligibility as compute_consensus -- active schemes only, quarantined
-    months excluded -- and additionally a scheme whose *previous* month is
-    quarantined is skipped: the drift weight is built from that month, so
-    bad data there makes the comparison unsafe.
+    The same schemes vote as in compute_consensus (``_eligible_deltas``):
+    active only, and never a comparison with a quarantined month on either
+    side -- the drift weight is built from the previous month, so bad data
+    there would make it unsafe.
     """
     empty = pd.DataFrame(columns=["isin"] + ACTIVE_COLUMNS)
     # Deltas-only DBs (legacy, or built for a test) carry no holdings to
     # measure drift from: report no discretionary data rather than failing.
-    if not _table_columns(conn, "mf_holding_deltas") or not _table_columns(
+    if not queries.table_columns(conn, "mf_holding_deltas") or not queries.table_columns(
             conn, "mf_holdings_monthly"):
         return empty
-    pairs = conn.execute(
-        "SELECT DISTINCT scheme_id, prev_month FROM mf_holding_deltas "
-        "WHERE report_month = ? AND prev_month IS NOT NULL",
-        (report_month,),
-    ).fetchall()
-    if not pairs:
-        return empty
-    scheme_cols = _table_columns(conn, "schemes")
-    active_ok = set()
-    if active_equity_only and "is_active_equity" in scheme_cols:
-        active_ok = {int(r[0]) for r in conn.execute(
-            "SELECT scheme_id FROM schemes WHERE is_active_equity = 1")}
-    quarantined = {report_month: set(_quarantined_scheme_ids(conn, report_month))}
-    prev_months: dict[int, str] = {}
-    for scheme_id, prev_month in pairs:
-        scheme_id, prev_month = int(scheme_id), str(prev_month)
-        if active_equity_only and "is_active_equity" in scheme_cols and scheme_id not in active_ok:
-            continue
-        if prev_month not in quarantined:
-            quarantined[prev_month] = set(_quarantined_scheme_ids(conn, prev_month))
-        if scheme_id in quarantined[report_month] or scheme_id in quarantined[prev_month]:
-            continue
-        prev_months[scheme_id] = prev_month
+    # Every stock of a compared scheme has a delta row, even when unchanged,
+    # so the instrument filter is applied to the holdings below instead.
+    source, params = _eligible_deltas(conn, report_month, None, active_equity_only)
+    prev_months = {int(sid): str(prev) for sid, prev in conn.execute(
+        f"SELECT DISTINCT d.scheme_id, d.prev_month {source} AND d.prev_month IS NOT NULL",
+        params).fetchall()}
     if not prev_months:
         return empty
 
@@ -142,12 +95,12 @@ def compute_active_consensus(
     curr = _holdings([(sid, report_month) for sid in prev_months])
 
     confirmed = {}
-    if _table_columns(conn, "corporate_actions"):
+    if queries.table_columns(conn, "corporate_actions"):
         confirmed = {str(r[0]): float(r[1]) for r in conn.execute(
             "SELECT isin, ratio FROM corporate_actions "
             "WHERE confirmed = 1 AND effective_month = ? AND ratio > 0", (report_month,))}
     fallback = {}
-    if _table_columns(conn, "security_prices_monthly"):
+    if queries.table_columns(conn, "security_prices_monthly"):
         # Exchange closes are rupees per share; holdings are lakhs.
         fallback = {str(r[0]): float(r[1]) / 1e5 for r in conn.execute(
             "SELECT isin, close_price FROM security_prices_monthly "
@@ -166,11 +119,10 @@ def _eligible_deltas(conn: sqlite3.Connection, report_month: str,
     """FROM/WHERE (aliases d, s, sch) and params for the delta rows that vote in a month.
 
     A delta row is a comparison between report_month and d.prev_month, so it
-    is excluded when either side is quarantined: report_month via
-    ``_quarantined_scheme_ids``, and d.prev_month via the NOT EXISTS below
-    (per-row, since different schemes can carry different prev_months in the
-    same report_month). Legacy DBs with no scheme_month_status table exclude
-    neither -- nothing is known to be quarantined.
+    is excluded when either side is quarantined (per row for the previous
+    month, since schemes can carry different prev_months in one report_month).
+    Legacy DBs with no scheme_month_status table exclude neither -- nothing is
+    known to be quarantined. The rules themselves live in findit.store.queries.
     """
     sql = ("FROM mf_holding_deltas d "
            "JOIN stocks s ON s.isin = d.isin "
@@ -180,19 +132,11 @@ def _eligible_deltas(conn: sqlite3.Connection, report_month: str,
     if instrument_type is not None:
         sql += " AND s.instrument_type = ?"
         params.append(instrument_type)
-    # Passive/debt schemes never count toward market-wide conviction.
-    # Guarded for legacy DBs whose schemes table predates the column.
-    if active_equity_only and "is_active_equity" in _table_columns(conn, "schemes"):
-        sql += " AND sch.is_active_equity = 1"
-    quarantined = _quarantined_scheme_ids(conn, report_month)
-    if quarantined:
-        sql += f" AND d.scheme_id NOT IN ({','.join('?' for _ in quarantined)})"
-        params.extend(quarantined)
-    if _table_columns(conn, "scheme_month_status"):
-        sql += (" AND NOT EXISTS ("
-                "SELECT 1 FROM scheme_month_status pq "
-                "WHERE pq.scheme_id = d.scheme_id AND pq.report_month = d.prev_month "
-                "AND pq.status = 'quarantined')")
+    if active_equity_only:
+        sql += queries.active_equity_sql(conn, "sch")
+    if queries.has_status_table(conn):
+        for month in ("d.report_month", "d.prev_month"):
+            sql += f" AND NOT {queries.quarantined_sql('d.scheme_id', month)}"
     return sql, params
 
 
@@ -232,7 +176,7 @@ def compute_consensus(
     display.
     """
     # Legacy DBs predate price_effect_lakhs; PRAGMA is authoritative.
-    has_price = "price_effect_lakhs" in _delta_columns(conn)
+    has_price = "price_effect_lakhs" in queries.table_columns(conn, "mf_holding_deltas")
     price_select = "d.price_effect_lakhs, " if has_price else ""
     source, params = _eligible_deltas(conn, report_month, instrument_type, active_equity_only)
     sql = (
@@ -337,20 +281,6 @@ def compute_consensus(
     ).reset_index(drop=True)
 
 
-def quarterly_filing_sql(columns: set[str], alias: str = "") -> str:
-    """SQL predicate keeping quarterly shareholding filings, dropping interim ones.
-
-    With a filing_type column, legacy NULL rows fall back to the date test.
-    """
-    prefix = f"{alias}." if alias else ""
-    month_days = ",".join(f"'{md}'" for md in publication.QUARTER_END_MONTH_DAYS)
-    by_date = f"substr({prefix}quarter_end, 6, 5) IN ({month_days})"
-    if "filing_type" in columns:
-        return (f"({prefix}filing_type = 'quarterly' OR "
-                f"({prefix}filing_type IS NULL AND {by_date}))")
-    return by_date
-
-
 def _cutoff_date(as_of_month: str | None, as_of_date) -> date | None:
     """The day whose knowledge the join may use (None = everything on file).
 
@@ -429,28 +359,21 @@ def join_shareholding_increase(
                 out[column] = pd.Series(dtype="object")
         return out
 
-    sh_cols = sorted(_table_columns(conn, "shareholding_quarterly"))
+    sh_cols = queries.table_columns(conn, "shareholding_quarterly")
 
-    where_clauses: list[str] = [quarterly_filing_sql(set(sh_cols))]
+    where_clauses: list[str] = [queries.quarterly_filing_sql(sh_cols)]
     params: list = []
 
     # When a filing became public: observed broadcast date, else the
     # regulatory deadline (legacy rows and DBs without the column).
-    deadline_sql = f"date(quarter_end, '+{publication.SHAREHOLDING_FILING_DAYS} days')"
-    if "published_at" in sh_cols:
-        published_sql = f"COALESCE(substr(published_at, 1, 10), {deadline_sql})"
-        basis_sql = (f"CASE WHEN published_at IS NULL THEN '{publication.BASIS_DEADLINE}' "
-                     f"ELSE '{publication.BASIS_OBSERVED}' END")
-    else:
-        published_sql = deadline_sql
-        basis_sql = f"'{publication.BASIS_DEADLINE}'"
+    published_sql, basis_sql = publication.shareholding_published_sql("published_at" in sh_cols)
 
     cutoff = _cutoff_date(as_of_month, as_of_date)
     if cutoff is not None:
         where_clauses.append(f"{published_sql} <= ?")
         params.append(cutoff.isoformat())
 
-    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+    where_sql = f"WHERE {' AND '.join(where_clauses)}"
     shareholding = pd.read_sql_query(
         f"""WITH filtered AS (
                SELECT isin, quarter_end, fii_pct, dii_pct,

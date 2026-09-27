@@ -70,11 +70,31 @@ def shareholding_filing_deadline(quarter_end) -> date:
     return to_date(quarter_end) + timedelta(days=SHAREHOLDING_FILING_DAYS)
 
 
+# Stored text that means "publication time never observed".
+_UNOBSERVED = ("", "nan", "None")
+
+
 def shareholding_published(quarter_end, published_at) -> tuple[date, str]:
     """(publication date, basis) for one shareholding filing."""
-    if published_at is not None and str(published_at).strip() not in ("", "nan", "None"):
+    if published_at is not None and str(published_at).strip() not in _UNOBSERVED:
         return to_date(published_at), BASIS_OBSERVED
     return shareholding_filing_deadline(quarter_end), BASIS_DEADLINE
+
+
+def shareholding_published_sql(has_published_at: bool) -> tuple[str, str]:
+    """shareholding_published as SQL: (ISO publication date, basis) expressions.
+
+    For ranking inside a query over shareholding_quarterly. Must agree with the
+    Python rule row for row (tests/test_publication.py checks it): a blank or
+    'nan' timestamp is unobserved, never a publication date before every cutoff.
+    """
+    deadline = f"date(quarter_end, '+{SHAREHOLDING_FILING_DAYS} days')"
+    if not has_published_at:
+        return deadline, f"'{BASIS_DEADLINE}'"
+    unobserved = ", ".join(f"'{value}'" for value in _UNOBSERVED)
+    missing = f"(published_at IS NULL OR trim(published_at) IN ({unobserved}))"
+    return (f"CASE WHEN {missing} THEN {deadline} ELSE substr(trim(published_at), 1, 10) END",
+            f"CASE WHEN {missing} THEN '{BASIS_DEADLINE}' ELSE '{BASIS_OBSERVED}' END")
 
 
 def first_tradable_date(published) -> date:

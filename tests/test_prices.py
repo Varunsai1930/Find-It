@@ -7,7 +7,7 @@ from datetime import date
 import pandas as pd
 import pytest
 
-import db
+from findit.store import db
 from findit.ingest import prices as P
 
 

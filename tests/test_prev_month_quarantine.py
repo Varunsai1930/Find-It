@@ -14,9 +14,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-import consensus_signals
-import db
-import delta_calculator
+from findit.core import consensus_signals
+from findit.store import db
+from findit.core import delta_calculator
 from findit.web.app import create_app
 
 _ISIN = "INE002A01018"

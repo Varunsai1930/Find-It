@@ -6,7 +6,7 @@ said on the day the data was ingested -- so a database can carry quarantines
 the current code would never produce, while narration eligibility and the
 consensus filter still read those stale rows and withhold good data.
 
-This re-runs `run_pipeline.run_validation_gate` against the holdings already
+This re-runs `findit.pipeline.run_validation_gate` against the holdings already
 stored, with no CSVs and no network. Source hashes and drop provenance are
 carried over from the existing status rows, so re-validating never invents
 provenance the ingest did not record.
@@ -20,8 +20,8 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-import db
-import run_pipeline
+from findit.store import db
+from findit import pipeline
 
 
 def _scheme_months(conn: sqlite3.Connection, months=None, scheme_ids=None):
@@ -81,7 +81,7 @@ def revalidate(db_path: str | Path, months=None, scheme_ids=None) -> dict:
         touched = rebuild_touched(conn, months, scheme_ids)
         if not touched:
             return {"scheme_months": 0, "changes": [], "before": {}, "after": {}}
-        report = run_pipeline.run_validation_gate(conn, touched)
+        report = pipeline.run_validation_gate(conn, touched)
         after = _statuses(conn)
         changes = []
         for key in sorted(set(before) | set(after)):

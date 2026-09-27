@@ -23,10 +23,9 @@ from pathlib import Path
 
 import pandas as pd
 
-import consensus_signals
-import delta_calculator
-from findit.cli import backtest, backtest_quarterly
-from findit.core import publication
+from findit.core import consensus_signals, publication
+from findit.core.coverage import month_coverage
+from findit.research import backtest, backtest_quarterly
 
 TOP_N = 15
 # Groups whose quarterly result the evidence section states.
@@ -60,22 +59,29 @@ def _table(frame: pd.DataFrame) -> list[str]:
     return lines
 
 
-def coverage(conn: sqlite3.Connection, month: str, prev: str | None) -> list[str]:
-    schemes = pd.read_sql_query(
-        "SELECT s.scheme_id, s.amc_name, s.is_active_equity, "
-        "COALESCE(m.status, 'unvalidated') AS status FROM schemes s "
-        "JOIN (SELECT DISTINCT scheme_id FROM mf_holdings_monthly WHERE report_month = ?) h "
-        "USING (scheme_id) LEFT JOIN scheme_month_status m "
-        "ON m.scheme_id = s.scheme_id AND m.report_month = ?", conn, params=(month, month))
-    active = schemes[schemes["is_active_equity"] == 1]
-    lines = [f"- **{len(active)}** active equity schemes from **{active['amc_name'].nunique()}** "
-             f"AMCs vote; {len(schemes) - len(active)} index/ETF/arbitrage/FoF/debt schemes "
-             "do not.",
-             f"- Quarantined by the validation gate: {int((schemes['status'] == 'quarantined').sum())}."]
-    if prev:
-        unmatched = delta_calculator.unmatched_schemes(conn, prev, month)
-        lines.append(f"- Held in only one of {prev} / {month} (not compared, so not counted as "
-                     f"buying or selling): {len(unmatched['only_curr']) + len(unmatched['only_prev'])}.")
+def coverage(conn: sqlite3.Connection, month: str) -> list[str]:
+    """The dashboard's coverage counts (findit.core.coverage), as report lines."""
+    c = month_coverage(conn, month)
+    amcs = "AMC" if c["compared_amcs"] == 1 else "AMCs"
+    lines = [f"- **{c['compared']}** active equity schemes from **{c['compared_amcs']}** {amcs} "
+             f"compared {c['prev_month']} → {month}: the schemes that vote.",
+             f"- {c['loaded'] - c['in_scope']} index/ETF/arbitrage/FoF/debt schemes loaded "
+             "for the month do not vote."]
+    left_out = [f"{c[key]} {label}" for key, label in (
+        ("no_previous", f"loaded without a {c['prev_month']} portfolio to compare"),
+        ("dropped_out", f"held in {c['prev_month']} but not loaded for {month}"),
+        ("prev_withheld", "compared against a withheld previous month"),
+        ("no_equity", "hold nothing the equity filter keeps"),
+    ) if c[key]]
+    if left_out:
+        lines.append("- Active schemes not compared, so not counted as buying or selling: "
+                     + "; ".join(left_out) + ".")
+    if c["validated"]:
+        lines.append(f"- Validation gate: {c['passed']} passed, {c['withheld']} withheld, "
+                     f"{c['not_validated']} not validated.")
+    else:
+        lines.append("- The validation gate has not been run on this database: nothing is "
+                     "withheld, and nothing has been checked.")
     return lines
 
 
@@ -83,8 +89,9 @@ def evidence(db_path: str) -> list[str]:
     outcome = backtest_quarterly.run(db_path)
     results = outcome["results"]
     if not results:
-        return ["_No quarterly history is stored yet; run `fetch_shareholding.py --history 0` "
-                "and `findit.cli.backtest_quarterly` first._"]
+        return ["_No quarterly history is stored yet; run "
+                "`python3 -m findit.cli.shareholding --history 0` and "
+                "`findit.cli.backtest_quarterly` first._"]
     raw = backtest.pooled(results, backtest_quarterly.GROUPS)
     sized = backtest.pooled(backtest_quarterly.size_neutral(results), backtest_quarterly.GROUPS)
     quarters = sum(1 for r in results if not r.get("partial_period"))
@@ -121,7 +128,7 @@ def build(db_path: str, month: str) -> str:
         if prev is None:
             raise SystemExit(f"no holding changes stored for {month}; run the pipeline first")
         ranked = consensus_signals.ranked_consensus(conn, month)
-        cover = coverage(conn, month, prev)
+        cover = coverage(conn, month)
     finally:
         conn.close()
     selling = consensus_signals.broadest_selling(ranked).head(TOP_N)

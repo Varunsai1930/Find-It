@@ -3,8 +3,8 @@
 import pandas as pd
 import pytest
 
-import amfi_mf_parser
-import db
+from findit.ingest import amfi_mf_parser
+from findit.store import db
 from findit.cli import scheme_titles
 
 

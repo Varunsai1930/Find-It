@@ -8,7 +8,7 @@ the folders for AMCs already in the database):
     python3 -m findit.cli.intake --month 2026-08
 
 Accepted AMCs get a parsed CSV under ``<inbox>/<month>/_parsed/`` and the
-report prints the ``run_pipeline.py`` command that loads them. Nothing is
+report prints the ``findit.cli.pipeline`` command that loads them. Nothing is
 downloaded and the database is never written: loading is that separate step.
 Exit status is 1 when anything was refused, unknown or misplaced.
 """

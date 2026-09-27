@@ -1,5 +1,6 @@
-"""findit.ingest — ingestion of external data that is not an AMC workbook.
+"""findit.ingest: reading outside data into rows the store can load.
 
-``prices`` fetches NSE closes. AMC workbooks are parsed by amfi_mf_parser.py
-and BSE shareholding filings by fetch_shareholding.py.
+AMC monthly workbooks (``amfi_mf_parser``, a month at a time via ``intake``),
+quarterly shareholding filings from BSE or NSE (``shareholding``) and NSE
+closes (``prices``).
 """

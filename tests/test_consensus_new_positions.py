@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-import consensus_signals
+from findit.core import consensus_signals
 
 
 def _conn() -> sqlite3.Connection:
@@ -111,8 +111,8 @@ def test_empty_consensus_still_exposes_the_new_columns():
 
 
 def test_a_fund_missing_from_either_month_is_not_compared(tmp_path):
-    import db
-    import delta_calculator
+    from findit.store import db
+    from findit.core import delta_calculator
 
     conn = db.get_connection(str(tmp_path / "t.db"))
     conn.executemany("INSERT INTO schemes (scheme_id, amc_name, scheme_name) VALUES (?, ?, ?)",
@@ -132,8 +132,8 @@ def test_a_fund_missing_from_either_month_is_not_compared(tmp_path):
 
 
 def test_recomputing_a_month_replaces_it_instead_of_leaving_stale_rows(tmp_path):
-    import db
-    import delta_calculator
+    from findit.store import db
+    from findit.core import delta_calculator
 
     conn = db.get_connection(str(tmp_path / "t.db"))
     conn.execute("INSERT INTO mf_holding_deltas (scheme_id, isin, report_month, prev_month, "

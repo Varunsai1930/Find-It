@@ -26,8 +26,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import amfi_mf_parser
-import db
+from findit.ingest import amfi_mf_parser
+from findit.store import db
 
 
 def apply_titles(conn, amc: str, files: list[Path], dry_run: bool = False) -> dict:

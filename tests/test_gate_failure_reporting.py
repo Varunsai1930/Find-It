@@ -5,8 +5,8 @@ import sqlite3
 import pandas as pd
 import pytest
 
-import consensus_signals
-from findit.store import validation_gate
+from findit.core import consensus_signals
+from findit.store import queries, validation_gate
 from findit.store.validation_gate import validate_holdings_month
 
 
@@ -57,15 +57,19 @@ def test_quarantine_filter_does_not_fail_open_on_a_broken_table():
     conn.execute("CREATE TABLE scheme_month_status (scheme_id INTEGER, "
                  "report_month TEXT, status TEXT)")
     conn.execute("INSERT INTO scheme_month_status VALUES (1, '2026-08', 'quarantined')")
-    assert consensus_signals._quarantined_scheme_ids(conn, "2026-08") == [1]
+    assert queries.quarantined(conn, "2026-08") == {(1, "2026-08")}
     conn.execute("DROP TABLE scheme_month_status")
     # Absent table is the one case that legitimately means "nothing quarantined".
-    assert consensus_signals._quarantined_scheme_ids(conn, "2026-08") == []
+    assert queries.quarantined(conn, "2026-08") == set()
+    # A table that exists but cannot be read raises instead of answering "none".
+    conn.execute("CREATE TABLE scheme_month_status (scheme_id INTEGER, report_month TEXT)")
+    with pytest.raises(sqlite3.OperationalError):
+        queries.quarantined(conn, "2026-08")
     conn.close()
 
 
 def test_quarantined_scheme_is_excluded_from_consensus(tmp_path):
-    import db
+    from findit.store import db
     conn = db.get_connection(str(tmp_path / "t.db"))
     conn.execute("INSERT INTO schemes (amc_name, scheme_name, scheme_key, is_active_equity) "
                  "VALUES ('A', 'F', 'f', 1)")

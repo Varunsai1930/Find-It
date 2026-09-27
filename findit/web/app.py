@@ -20,8 +20,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import pandas as pd
 
-import consensus_signals
-from findit.core import publication
+from findit.core import consensus_signals, publication
+from findit.core.coverage import month_coverage
+from findit.store import queries
 from findit.summary import get_summary
 
 _WEB_DIR = Path(__file__).resolve().parent
@@ -57,7 +58,8 @@ def _ro_connect(db_path: str) -> sqlite3.Connection:
     if not Path(db_path).is_file():
         # A fresh clone has no database; say so rather than fail with a 500.
         raise HTTPException(status_code=503, detail=(
-            f"No database at {db_path}. Build one with run_pipeline.py (see the README)."))
+            f"No database at {db_path}. Build one with `python3 -m findit.cli.pipeline` "
+            "(see the README)."))
     uri = f"file:{db_path}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -87,51 +89,11 @@ def _latest_holdings_month(conn: sqlite3.Connection) -> str | None:
     return str(row[0])
 
 
-def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    try:
-        return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-    except sqlite3.Error:
-        return set()
-
-
-
-
-def _quarterly_predicate(conn: sqlite3.Connection, alias: str = "") -> str:
-    """Quarterly-filing filter, shared with the consensus FII/DII join."""
-    return consensus_signals.quarterly_filing_sql(
-        _table_columns(conn, "shareholding_quarterly"), alias)
-
-
-def _quarantined_pairs(conn: sqlite3.Connection) -> set[tuple[int, str]]:
-    """(scheme_id, report_month) pairs withheld pending validation.
-
-    Empty when the v2 status table is absent (legacy DBs): nothing is
-    withheld, and coverage labels the month unvalidated rather than valid.
-    """
-    try:
-        rows = conn.execute(
-            "SELECT scheme_id, report_month FROM scheme_month_status WHERE status = 'quarantined'"
-        ).fetchall()
-    except sqlite3.Error:
-        return set()
-    return {(int(r[0]), str(r[1])) for r in rows if r[0] is not None and r[1] is not None}
-
-
-def _has_status_table(conn: sqlite3.Connection) -> bool:
-    try:
-        conn.execute("SELECT 1 FROM scheme_month_status LIMIT 1").fetchall()
-    except sqlite3.Error:
-        return False
-    return True
-
-
-
-
 def _shareholding_rows(conn: sqlite3.Connection, isin: str) -> list[dict[str, Any]]:
     try:
-        pred = _quarterly_predicate(conn)
-        published = ("published_at" if "published_at" in _table_columns(conn, "shareholding_quarterly")
-                     else "NULL AS published_at")
+        columns = queries.table_columns(conn, "shareholding_quarterly")
+        pred = queries.quarterly_filing_sql(columns)
+        published = "published_at" if "published_at" in columns else "NULL AS published_at"
         cur = conn.execute(
             "SELECT quarter_end, promoter_pct, fii_pct, dii_pct, public_pct, source,"
             f" {published} FROM shareholding_quarterly WHERE isin = ? AND {pred}"
@@ -200,109 +162,6 @@ def _no_signal_message(conn: sqlite3.Connection, month: str) -> str:
             "ingested for this month, or this is the first month tracked).")
 
 
-def _scalar(conn: sqlite3.Connection, sql: str, params: tuple = ()) -> Any:
-    try:
-        row = conn.execute(sql, params).fetchone()
-    except sqlite3.Error:
-        return None
-    return None if row is None else row[0]
-
-
-def _month_schemes(conn: sqlite3.Connection, table: str, month: str,
-                   active_only: bool) -> dict[int, str]:
-    """scheme_id -> AMC for schemes with rows in table for month."""
-    active = (" AND s.is_active_equity = 1"
-              if active_only and "is_active_equity" in _table_columns(conn, "schemes") else "")
-    try:
-        rows = conn.execute(
-            f"SELECT DISTINCT t.scheme_id, s.amc_name FROM {table} t"
-            f" JOIN schemes s USING (scheme_id) WHERE t.report_month = ?{active}",
-            (month,)).fetchall()
-    except sqlite3.Error:
-        return {}
-    return {int(r[0]): str(r[1]) for r in rows}
-
-
-def _month_statuses(conn: sqlite3.Connection, month: str) -> dict[int, str]:
-    try:
-        rows = conn.execute("SELECT scheme_id, status FROM scheme_month_status"
-                            " WHERE report_month = ?", (month,)).fetchall()
-    except sqlite3.Error:
-        return {}
-    return {int(r[0]): str(r[1]) for r in rows if r[0] is not None}
-
-
-def _prev_withheld_schemes(conn: sqlite3.Connection, month: str,
-                           active_only: bool) -> set[int]:
-    """In-scope schemes whose delta row this month compares against a quarantined prev_month.
-
-    consensus_signals.voting_schemes drops these (see _eligible_deltas), so
-    without this they would silently fall into "no_equity" even though the
-    equity filter never touched them. Empty when scheme_month_status does not
-    exist: legacy DBs have nothing known to be quarantined.
-    """
-    if not _has_status_table(conn):
-        return set()
-    active = (" AND s.is_active_equity = 1"
-              if active_only and "is_active_equity" in _table_columns(conn, "schemes") else "")
-    try:
-        rows = conn.execute(
-            "SELECT DISTINCT d.scheme_id FROM mf_holding_deltas d "
-            "JOIN schemes s ON s.scheme_id = d.scheme_id "
-            "JOIN scheme_month_status st ON st.scheme_id = d.scheme_id "
-            "AND st.report_month = d.prev_month "
-            f"WHERE d.report_month = ? AND st.status = 'quarantined'{active}",
-            (month,)).fetchall()
-    except sqlite3.Error:
-        return set()
-    return {int(r[0]) for r in rows}
-
-
-def _month_coverage(conn: sqlite3.Connection, month: str, equity_only: bool,
-                    active_only: bool) -> dict[str, Any]:
-    """Who is in month's comparison, what was withheld, and how fresh the inputs are.
-
-    Counts cover the schemes the active filter keeps. "compared" is
-    consensus_signals.voting_schemes, the exact set the ranking counts, so a
-    scheme loaded without a previous month, quarantined itself, or compared
-    against a previous month that was quarantined, is never in it.
-    The ingest log does not record every load, so the last ingest is
-    database-wide, never presented as this month's.
-    """
-    in_scope = _month_schemes(conn, "mf_holdings_monthly", month, active_only)
-    validated = _has_status_table(conn)
-    statuses = _month_statuses(conn, month)
-    withheld = {sid for sid in in_scope if statuses.get(sid) == "quarantined"}
-    compared = consensus_signals.voting_schemes(
-        conn, month, "equity" if equity_only else None, active_only)
-    with_deltas = _month_schemes(conn, "mf_holding_deltas", month, active_only).keys()
-    no_previous = in_scope.keys() - with_deltas - withheld
-    # Has a previous month, not withheld for this month, but that previous
-    # month itself failed validation -- excluded from "compared" for that
-    # reason, not because the equity filter dropped its holdings.
-    prev_withheld = (_prev_withheld_schemes(conn, month, active_only)
-                     & in_scope.keys()) - withheld
-    return {
-        "compared": len(compared),
-        "compared_amcs": len(set(compared.values())),
-        "withheld": len(withheld),
-        "no_previous": len(no_previous),
-        "prev_withheld": len(prev_withheld),
-        # Compared, but only on holdings the equity filter leaves out.
-        "no_equity": len(in_scope.keys() - compared.keys() - withheld
-                         - no_previous - prev_withheld),
-        "in_scope": len(in_scope),
-        "loaded": len(_month_schemes(conn, "mf_holdings_monthly", month, False)),
-        "validated": validated,
-        "passed": sum(statuses.get(sid) == "ok" for sid in in_scope),
-        "not_validated": sum(sid not in statuses for sid in in_scope),
-        "prev_month": _scalar(conn, "SELECT MAX(prev_month) FROM mf_holding_deltas"
-                                    " WHERE report_month = ?", (month,)),
-        "public_on": publication.mf_disclosure_deadline(month).isoformat(),
-        "last_ingest": _scalar(conn, "SELECT MAX(started_at) FROM ingest_runs"),
-    }
-
-
 def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any]:
     """Template context for one month: coverage facts plus the consensus table.
 
@@ -330,8 +189,8 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any
         "total": len(ranked),
         "rows": rows,
         "message": "" if rows else _no_signal_message(conn, month),
-        "coverage": _month_coverage(conn, month, bool(view["equity_only"]),
-                                    bool(view["active_only"])),
+        "coverage": month_coverage(conn, month, bool(view["equity_only"]),
+                                   bool(view["active_only"])),
         "filings": filings,
     }
 
@@ -379,7 +238,7 @@ def _month_label(iso: Any, with_day: bool = False) -> str:
 
 def _scheme_title_sql(conn: sqlite3.Connection, alias: str = "sch") -> str:
     """The workbook's own scheme title where recorded (legacy DBs lack the column)."""
-    if "scheme_title" in _table_columns(conn, "schemes"):
+    if "scheme_title" in queries.table_columns(conn, "schemes"):
         return f"{alias}.scheme_title"
     return "NULL AS scheme_title"
 
@@ -410,7 +269,7 @@ def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> di
         raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
     holdings_month = month or _latest_holdings_month(conn)
     holdings: list[dict[str, Any]] = []
-    validated = _has_status_table(conn)
+    validated = queries.has_status_table(conn)
     if holdings_month is not None:
         # Legacy DBs have no status table; every row is then "not_run".
         status_sql = (
@@ -577,7 +436,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             ]
             quarantined = [
                 {"scheme_id": sid, "report_month": m}
-                for (sid, m) in sorted(_quarantined_pairs(conn))
+                for (sid, m) in sorted(queries.quarantined(conn))
             ]
             payload = {
                 "months": months,
@@ -590,7 +449,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 "latest_quarter": latest_quarter,
                 "quarantined": quarantined,
                 "validation_coverage": (
-                    "validated" if _has_status_table(conn) else "unvalidated"
+                    "validated" if queries.has_status_table(conn) else "unvalidated"
                 ),
             }
             if not months:
@@ -643,9 +502,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             # Index/ETF/debt schemes track a benchmark rather than express a
             # view; active_only=0 opts back in to the wider view.
             active_filter = active_only == 1
-            quarantined_schemes = sorted(
-                {sid for (sid, m) in _quarantined_pairs(conn) if m == month}
-            )
+            quarantined_schemes = sorted(sid for sid, _ in queries.quarantined(conn, month))
             ranked = _records(_ranked(conn, month, equity_filter, active_filter))
             if not ranked:
                 return _sanitize(
@@ -690,26 +547,10 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 )
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
-            if (int(scheme_id), month) in _quarantined_pairs(conn):
-                return _sanitize(
-                    {
-                        "scheme_id": int(scheme_id),
-                        "report_month": month,
-                        "amc_name": row["amc_name"],
-                        "scheme_name": row["scheme_name"],
-                        "summary": (
-                            f"Data for {row['scheme_name']} in {month} withheld"
-                            " pending validation (not zero)."
-                        ),
-                        "has_data": False,
-                        "quarantined": True,
-                    }
-                )
-            try:
-                summary_result = get_summary(conn, scheme_id, month)
-                text = summary_result["text"]
-            except ValueError as exc:
-                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            # get_summary owns the withhold rule, for the current month and the
+            # previous month the comparison is made against.
+            summary_result = get_summary(conn, scheme_id, month)
+            text = summary_result["text"]
             blocked = summary_result["reason"] in {"quarantined", "nonfinite_or_invalid_data"}
             has_data = not blocked and not str(text).startswith("No holding-change data available")
             return _sanitize(
@@ -724,6 +565,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                     "model_version": summary_result["model_version"],
                     "cached": summary_result["cached"],
                     "summary_status": summary_result["reason"] or "available",
+                    "quarantined": summary_result["reason"] == "quarantined",
                 }
             )
         finally:

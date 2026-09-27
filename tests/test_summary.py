@@ -4,8 +4,8 @@ import sqlite3
 
 import pytest
 
-import db
-import fallback_summary
+from findit.store import db
+from findit.summary import build_summary
 from findit.summary import RULES_VERSION, get_summary
 
 
@@ -41,7 +41,7 @@ def test_validated_month_returns_the_rule_summary(tmp_path):
     assert result["eligible"] is True and result["reason"] is None
     assert result["generated_by"] == "rules"
     assert result["model_version"] == RULES_VERSION
-    assert result["text"] == fallback_summary.build_summary(conn, 1, "2026-08")
+    assert result["text"] == build_summary(conn, 1, "2026-08")
     conn.close()
 
 

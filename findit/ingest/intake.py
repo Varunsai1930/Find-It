@@ -9,7 +9,7 @@ downloaded by hand from each AMC's disclosure page (listed in
 
 ``prepare`` checks and parses them. It never downloads anything and never
 opens the database; loading the CSVs it writes stays a separate, explicit
-``run_pipeline.py`` step. An AMC is refused -- nothing written for it -- when
+``findit.cli.pipeline`` step. An AMC is refused -- nothing written for it -- when
 its files would load wrong data silently:
 
 - a folder name that is not an AMFI fund house (a typo would fork the AMC);
@@ -37,8 +37,8 @@ from pathlib import Path
 
 import pandas as pd
 
-import amfi_mf_parser
-import db
+from findit.ingest import amfi_mf_parser
+from findit.store import db
 
 REGISTRY_PATH = Path(__file__).with_name("amfi_amcs.json")
 WORKBOOK_SUFFIXES = {".xlsx", ".xls", ".xlsm"}
@@ -255,11 +255,11 @@ def prepare(month_dir: Path, month: str, registry: list[Amc] | None = None) -> I
 
 
 def pipeline_command(report: IntakeReport, db_path: str = "tracker.db") -> str | None:
-    """The run_pipeline.py call that loads every accepted AMC's CSV."""
+    """The findit.cli.pipeline call that loads every accepted AMC's CSV."""
     csvs = [str(r.csv) for r in report.results if r.csv is not None]
     if not csvs:
         return None
-    parts = ["python3", "run_pipeline.py", "--load", *csvs,
+    parts = ["python3", "-m", "findit.cli.pipeline", "--load", *csvs,
              "--prev", previous_month(report.month), "--curr", report.month]
     if db_path != "tracker.db":
         parts += ["--db", db_path]

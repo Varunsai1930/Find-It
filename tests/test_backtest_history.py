@@ -8,8 +8,8 @@ from datetime import date
 import pandas as pd
 import pytest
 
-import db
-from findit.cli import backtest, backtest_quarterly as bq
+from findit.store import db
+from findit.research import backtest, backtest_quarterly as bq
 
 
 # ---- monthly ----------------------------------------------------------------
