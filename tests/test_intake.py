@@ -227,3 +227,15 @@ def test_parser_reads_nippon_style_title_rows_and_headers(tmp_path):
     assert set(frame["scheme_title"]) == {
         "Nippon India Growth Mid Cap Fund (An open-ended equity scheme)"}
     assert frame["market_value_lakhs"].tolist() == [60.0, 40.0]
+
+
+def test_parser_drops_rows_that_only_look_like_isins(tmp_path):
+    # An industry-summary label of 12 letters and an AMC placeholder code match
+    # the old shape check; a real ISIN ends in a numeric check digit.
+    path = _book(tmp_path / "hdfc.xlsx", {"MIDCAP": "HDFC Mid Cap Fund"})
+    wb = openpyxl.load_workbook(path)
+    wb["MIDCAP"].append(["1.93", "CONSTRUCTION", "", "", "", ""])
+    wb["MIDCAP"].append(["Unlisted equity", "EQ600401XXXX", "Finance", 10, 1.0, 0.1])
+    wb.save(path)
+    frame = amfi_mf_parser.parse_workbook(path, "HDFC AMC", "2026-08")
+    assert set(frame["isin"]) == {"INE002A01018", "INE009A01021"}

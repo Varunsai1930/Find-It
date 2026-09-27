@@ -81,12 +81,15 @@ COLUMN_SYNONYMS = {
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
 
-# Generic ISIN shape (2-letter country + 10 alphanumerics). Indian holdings
-# match ^IN..., foreign holdings (e.g. US...) match the generic shape and are
-# KEPT as instruments for later classification (db.classify_isin -> foreign)
-# instead of being silently dropped. Only rows failing the generic shape
-# (subtotals, notes, garbage) are dropped — with a reported count.
-ISIN_GENERIC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{10}$")
+# Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
+# check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
+# match the generic shape and are KEPT as instruments for later
+# classification (db.classify_isin -> foreign) instead of being silently
+# dropped. Only rows failing the generic shape are dropped -- with a reported
+# count: subtotals, notes, industry-summary rows whose label happens to be 12
+# letters ("CONSTRUCTION"), and AMC placeholders for securities without an
+# ISIN ("EQ600401XXXX").
+ISIN_GENERIC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
 
 # Per scheme-month NAV scale bands. Fraction sheets sum ~1.0, percent sheets
 # sum ~100. Anything else warns and keeps raw — never forced to 100.
