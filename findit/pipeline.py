@@ -117,7 +117,7 @@ def _record_candidates(conn, issues, prev_df, curr_df, month: str) -> list[dict]
 
 
 def build_overlap_view(conn, consensus: pd.DataFrame, curr: str) -> dict:
-    """Join MF consensus against quarterly FII/DII shareholding (Phase 1).
+    """Join MF consensus against quarterly FII/DII shareholding.
 
     Uses ``curr`` as a no-lookahead cutoff: only filings published by the
     day ``curr``'s MF portfolios became public are ranked. Missing filings stay

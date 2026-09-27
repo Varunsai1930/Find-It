@@ -197,7 +197,6 @@ def ensure_scheme_identity_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_scheme_aliases_norm "
         "ON scheme_aliases(alias_normalized)"
     )
-    conn.commit()
 
 
 def backfill_scheme_identity(conn: sqlite3.Connection) -> int:
@@ -236,12 +235,14 @@ class AmbiguousSchemeError(RuntimeError):
 
 
 def resolve_scheme_id(
-    conn: sqlite3.Connection, amc_name: str, scheme_name: str, create: bool = True
+    conn: sqlite3.Connection, amc_name: str, scheme_name: str, create: bool = True,
+    commit: bool = True,
 ):
     """Resolve one AMC sheet name to a stable scheme_id.
 
     Returns the scheme_id, or None when no match exists and create=False.
     Raises AmbiguousSchemeError rather than picking one of several matches.
+    ``commit=False`` leaves a new scheme inside the caller's transaction.
     """
     ensure_scheme_identity_schema(conn)
     amc = str(amc_name)
@@ -289,7 +290,8 @@ def resolve_scheme_id(
         "created_at, source) VALUES (?, ?, ?, datetime('now'), 'self')",
         (scheme_id, raw, key),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return scheme_id
 
 
@@ -376,11 +378,13 @@ def classify_scheme(scheme_name: str, scheme_title: str | None = None) -> int:
     return classify_scheme_active(scheme_name)
 
 
-def record_scheme_title(conn: sqlite3.Connection, scheme_id: int, title: str):
+def record_scheme_title(conn: sqlite3.Connection, scheme_id: int, title: str,
+                        commit: bool = True):
     """Store a scheme's full name and re-derive is_active_equity from it.
 
     Returns (amc, scheme_name, title, old_flag, new_flag) when the flag
     changed, else None, so callers can print every reclassification.
+    ``commit=False`` leaves the write inside the caller's transaction.
     """
     title = " ".join(str(title).split())
     if not title or title == "nan":
@@ -399,7 +403,8 @@ def record_scheme_title(conn: sqlite3.Connection, scheme_id: int, title: str):
         "UPDATE schemes SET scheme_title = ?, is_active_equity = ? WHERE scheme_id = ?",
         (title, new_flag, scheme_id),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     if row[2] is not None and int(row[2]) != new_flag:
         return (row[0], row[1], title, int(row[2]), new_flag)
     return None
@@ -520,9 +525,13 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
 
 
 def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
-    """Loads one parser output CSV (one AMC, one month) into the DB.
-    Upserts schemes/stocks, replaces holdings for that (scheme, month).
-    Returns the number of holding rows loaded."""
+    """Load one parser output CSV (one AMC, one month); returns holding rows loaded.
+
+    Each (scheme, month) in the file replaces what was stored for it, in one
+    transaction with the rest of the file. Reloading an identical file
+    changes nothing; a changed one clears what was derived from the old
+    holdings (see _drop_derived) instead of leaving it looking current.
+    """
     df = pd.read_csv(csv_path)
     required = {
         "isin", "instrument_name", "quantity", "market_value_lakhs",
@@ -545,13 +554,69 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
         if not has_parser_scale and nav_sum <= 2.0:
             df.loc[group_indices, "pct_nav"] = df.loc[group_indices, "pct_nav"] * 100.0
 
-    cur = conn.cursor()
+    # One transaction per file: a failure part-way leaves the previous state,
+    # never half a month. Earlier uncommitted writes on this connection are
+    # the caller's and are committed first, as the helpers here used to.
+    if conn.in_transaction:
+        conn.commit()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        loaded = _write_parsed(conn, df)
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
+    return loaded
+
+
+# The columns the gate and the deltas read. A reload that changes only the
+# parser's provenance columns leaves every derived result valid.
+_HOLDING_NUMBERS = ("isin", "quantity", "market_value_lakhs", "pct_nav")
+_HOLDING_COLUMNS = _HOLDING_NUMBERS + ("pct_nav_raw", "pct_nav_scale")
+
+
+def _value(value):
+    """A CSV cell as SQLite stores it: NaN is NULL, numpy scalars are Python ones."""
+    if value is None or (not isinstance(value, str) and pd.isna(value)):
+        return None
+    return value.item() if hasattr(value, "item") else value
+
+
+def _combine(lines: list[tuple]) -> tuple:
+    """One holding from every line that lists the same ISIN in a scheme-month.
+
+    A fund can hold a stock in several lots -- a balanced-advantage fund lists
+    its unhedged and its arbitrage-hedged shares apart -- so the holding is
+    the sum of the lines that hold a positive quantity. Lines holding nothing
+    are notes: a bond's ISIN repeated with no numbers, or a written-off
+    security's zero-quantity lines. With no line holding anything, the last
+    line that carries a number stands, as before; a blank note never
+    replaces a real value.
+    """
+    quantity = _HOLDING_COLUMNS.index("quantity")
+    held = [line for line in lines if (line[quantity] or 0) > 0]
+    if len(held) == 1:
+        return held[0]
+    if not held:
+        valued = [line for line in lines if any(v is not None for v in line[1:4])]
+        return (valued or lines)[-1]
+    combined = []
+    for i, column in enumerate(_HOLDING_COLUMNS):
+        values = [line[i] for line in held if line[i] is not None]
+        if column in ("isin", "pct_nav_scale"):
+            combined.append(values[0] if values else None)
+        else:
+            combined.append(sum(values) if values else None)
+    return tuple(combined)
+
+
+def _write_parsed(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
+    """load_parsed_csv's writes, inside its transaction."""
     # Identity is resolved per sheet name, so a re-punctuated or aliased
     # sheet keeps its existing scheme_id instead of forking into a new fund.
     scheme_ids = {}
     for (amc, scheme), _ in df.groupby(["amc_name", "scheme_name"]):
-        scheme_ids[f"{amc}||{scheme}"] = resolve_scheme_id(conn, amc, scheme)
-    conn.commit()
+        scheme_ids[(amc, scheme)] = resolve_scheme_id(conn, amc, scheme, commit=False)
 
     # Full scheme names from the sheet headers drive the passive/arbitrage
     # filter. Every flag they change is printed, never applied silently.
@@ -559,52 +624,82 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
         titled = df.dropna(subset=["scheme_title"]).drop_duplicates(["amc_name", "scheme_name"])
         for _, row in titled.iterrows():
             change = record_scheme_title(
-                conn, scheme_ids[f"{row['amc_name']}||{row['scheme_name']}"],
-                row["scheme_title"])
+                conn, scheme_ids[(row["amc_name"], row["scheme_name"])],
+                row["scheme_title"], commit=False)
             if change:
                 amc, scheme, title, old_flag, new_flag = change
                 print(f"  [is_active_equity {old_flag}->{new_flag}] {amc} | {scheme} "
                       f"| {title}")
 
-    # A scheme containing only cash/non-ISIN holdings carries one metadata
-    # row. Register the scheme above, but never turn that row into a security.
-    if "dropped_non_isin_count" in df:
-        metadata_only = df["isin"].isna() | df["isin"].astype(str).str.strip().eq("")
-        for _, row in df.loc[metadata_only].iterrows():
-            sid = scheme_ids[f"{row['amc_name']}||{row['scheme_name']}"]
-            cur.execute(
-                "DELETE FROM mf_holdings_monthly WHERE scheme_id = ? AND report_month = ?",
-                (sid, row["report_month"]),
-            )
-        df = df.loc[~metadata_only].copy()
+    # The file's holdings per scheme-month. A scheme holding only cash or
+    # non-ISIN rows carries one metadata row: it is registered above and
+    # its month is replaced by nothing, but that row never becomes a security.
+    metadata_only = df["isin"].isna() | df["isin"].astype(str).str.strip().eq("")
+    snapshots: dict[tuple[int, str], dict[str, tuple]] = {}
+    repeated = 0
+    for (amc, scheme, month), group in df.groupby(["amc_name", "scheme_name", "report_month"]):
+        lines: dict[str, list[tuple]] = {}  # one entry per line listing the ISIN
+        for _, row in group.loc[~metadata_only.loc[group.index]].iterrows():
+            lines.setdefault(str(row["isin"]), []).append(
+                tuple(_value(row.get(c)) for c in _HOLDING_COLUMNS))
+        repeated += sum(len(same) > 1 for same in lines.values())
+        snapshots[(scheme_ids[(amc, scheme)], str(month))] = {
+            isin: _combine(same) for isin, same in lines.items()}
+    if repeated:
+        print(f"  [combined] {repeated} ISIN(s) listed on more than one line in a scheme: "
+              "lots holding shares were summed, note lines set aside")
 
-    for _, row in df.drop_duplicates("isin").iterrows():
-        cur.execute(
-            "INSERT OR REPLACE INTO stocks (isin, name, industry, instrument_type) VALUES (?, ?, ?, ?)",
-            (row["isin"], row["instrument_name"], row.get("industry"), classify_isin(row["isin"])),
-        )
+    securities = df.loc[~metadata_only].drop_duplicates("isin")
+    conn.executemany(
+        "INSERT OR REPLACE INTO stocks (isin, name, industry, instrument_type) VALUES (?, ?, ?, ?)",
+        [(row["isin"], row["instrument_name"], _value(row.get("industry")),
+          classify_isin(row["isin"])) for _, row in securities.iterrows()])
 
     loaded = 0
-    for _, row in df.iterrows():
-        key = f"{row['amc_name']}||{row['scheme_name']}"
-        scheme_id = scheme_ids.get(key)
-        if scheme_id is None:
-            raise RuntimeError(f"scheme_id missing for {key} — this shouldn't happen")
-        cur.execute(
-            """INSERT OR REPLACE INTO mf_holdings_monthly
-               (scheme_id, isin, report_month, quantity, market_value_lakhs, pct_nav,
-                pct_nav_raw, pct_nav_scale)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                scheme_id, row["isin"], row["report_month"],
-                row["quantity"], row["market_value_lakhs"], row["pct_nav"],
-                row.get("pct_nav_raw"), row.get("pct_nav_scale"),
-            ),
-        )
-        loaded += 1
-
-    conn.commit()
+    for (scheme_id, month), rows in snapshots.items():
+        loaded += len(rows)
+        stored = set(conn.execute(
+            f"SELECT {', '.join(_HOLDING_COLUMNS)} FROM mf_holdings_monthly "
+            "WHERE scheme_id = ? AND report_month = ?", (scheme_id, month)).fetchall())
+        if stored == set(rows.values()):
+            continue  # the same snapshot again: nothing derived from it is stale
+        # The file replaces the month; an upsert would keep holdings the
+        # corrected file no longer lists.
+        conn.execute("DELETE FROM mf_holdings_monthly WHERE scheme_id = ? AND report_month = ?",
+                     (scheme_id, month))
+        conn.executemany(
+            f"INSERT OR REPLACE INTO mf_holdings_monthly (scheme_id, report_month, "
+            f"{', '.join(_HOLDING_COLUMNS)}) VALUES (?, ?, {', '.join('?' for _ in _HOLDING_COLUMNS)})",
+            [(scheme_id, month, *values) for values in rows.values()])
+        width = len(_HOLDING_NUMBERS)
+        if {v[:width] for v in stored} != {v[:width] for v in rows.values()}:
+            _drop_derived(conn, scheme_id, month)
     return loaded
+
+
+def _drop_derived(conn: sqlite3.Connection, scheme_id: int, month: str) -> None:
+    """Forget what was derived from a scheme-month whose holdings just changed.
+
+    Its gate status goes, so it reads "not validated" until the gate runs
+    again, and so do the delta rows comparing against it, so no ranking
+    counts a comparison with holdings that are no longer stored. Later months
+    that compared against it are named: only a pipeline run recomputes them.
+    """
+    cleared = conn.execute("DELETE FROM scheme_month_status "
+                           "WHERE scheme_id = ? AND report_month = ?", (scheme_id, month)).rowcount
+    later = [r[0] for r in conn.execute(
+        "SELECT DISTINCT report_month FROM mf_holding_deltas "
+        "WHERE scheme_id = ? AND prev_month = ? ORDER BY 1", (scheme_id, month))]
+    cleared += conn.execute("DELETE FROM mf_holding_deltas WHERE scheme_id = ? AND "
+                            "(report_month = ? OR prev_month = ?)", (scheme_id, month, month)).rowcount
+    if not cleared:
+        return  # a first load: nothing was derived from it yet
+    amc, scheme = conn.execute("SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?",
+                               (scheme_id,)).fetchone()
+    note = (f"; re-run the pipeline for {', '.join(later)}, which compared against it"
+            if later else "")
+    print(f"  [replaced] {amc} | {scheme} | {month}: holdings changed, so its validation "
+          f"and comparisons were cleared{note}")
 
 
 def load_shareholding_records(conn: sqlite3.Connection, records: pd.DataFrame) -> int:

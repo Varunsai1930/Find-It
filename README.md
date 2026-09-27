@@ -73,11 +73,11 @@ The dashboard reads `./tracker.db`. To try it without real data, build one
 from the synthetic fixtures, then start the server:
 
 ```bash
-python3 -m findit.cli.fixtures
-python3 -m findit.cli.parse test_hdfc_march2026.xlsx --amc "HDFC AMC" --month 2026-03
-python3 -m findit.cli.parse test_hdfc_april2026.xlsx --amc "HDFC AMC" --month 2026-04
-python3 -m findit.cli.parse test_sbi_april2026.xlsx  --amc "SBI AMC"  --month 2026-04
-python3 -m findit.cli.pipeline \
+findit fixtures
+findit parse test_hdfc_march2026.xlsx --amc "HDFC AMC" --month 2026-03
+findit parse test_hdfc_april2026.xlsx --amc "HDFC AMC" --month 2026-04
+findit parse test_sbi_april2026.xlsx  --amc "SBI AMC"  --month 2026-04
+findit pipeline \
   --load test_hdfc_march2026.parsed.csv \
   --load test_hdfc_april2026.parsed.csv test_sbi_april2026.parsed.csv \
   --prev 2026-03 --curr 2026-04
@@ -100,9 +100,9 @@ several block scripted downloads, so the files are downloaded by hand and the
 intake does everything after that:
 
 ```bash
-python3 -m findit.cli.intake --month 2026-09 --init   # folders for AMCs already tracked
+findit intake --month 2026-09 --init   # folders for AMCs already tracked
 # download each AMC's September files into real_data/inbox/2026-09/<AMC name>/
-python3 -m findit.cli.intake --month 2026-09          # check, parse, print the load command
+findit intake --month 2026-09          # check, parse, print the load command
 ```
 
 Each folder is named as the database names the fund house ("SBI AMC",
@@ -117,9 +117,18 @@ never writes the database: it prints the `findit.cli.pipeline` command that load
 the accepted CSVs, and running it is your step. A new AMC needs two months
 loaded before its schemes are compared.
 
+Running a month again is safe. Each scheme-month in a file replaces what was
+stored for it (a stock a corrected file drops is dropped), and each file loads
+in one transaction, so a failure leaves the previous state rather than half a
+month. Reloading identical files changes nothing. When a reload does change
+a scheme-month's numbers, its validation status and every comparison built on
+the old numbers are cleared, and the load names any later month that must be
+re-run. The run log (`ingest_runs`) records `running`, then `completed` only
+once the last step has finished, or `failed` with the error.
+
 When an AMC renames a sheet between months, the two sheets load as separate
 schemes and neither is compared. Check with
-`python3 -m findit.cli.alias --db tracker.db --amc "DSP AMC" --list` after a
+`findit alias --db tracker.db --amc "DSP AMC" --list` after a
 load and merge renames as described under "Scheme identity" below.
 
 ## Data is not in the repo
@@ -138,6 +147,11 @@ All code lives in the `findit` package. Imports only point down this list,
 and `tests/test_layout.py` fails the build if one points up: a lower layer
 reaching into a higher one is how a rule ends up defined twice.
 
+Each calculation is a pure function over DataFrames (`diff_holdings`,
+`rank_consensus`, `add_shareholding_signal`, `render_summary`); the function
+that reads the database hands it the rows, so any number can be reproduced
+from those rows alone (`tests/test_pure_rules.py`).
+
 | Layer | What it holds |
 |---|---|
 | `findit/core/` | The rules: month-on-month changes (`delta_calculator`), the consensus ranking and FII/DII join (`consensus_signals`), coverage counts, publication dates, active weights, corporate actions, instrument types. |
@@ -146,7 +160,7 @@ reaching into a higher one is how a rule ends up defined twice.
 | `findit/summary.py` | Rule-based plain-English summary of one scheme's month, withheld when its data failed validation. |
 | `findit/research/` | The monthly and ten-year quarterly backtests. |
 | `findit/pipeline.py` | The monthly run's steps: provenance, the validation gate, the FII/DII overlap. |
-| `findit/cli/` | Every command, as `python3 -m findit.cli.<name>`: `pipeline`, `parse`, `intake`, `shareholding`, `prices`, `report`, `backtest`, `backtest_quarterly`, `revalidate`, `rebuild`, `digest`, `alias`, `scheme_titles`, `fixtures`. |
+| `findit/cli/` | Every command, as `findit <command>` once installed (`findit --help` lists them), or `python3 -m findit.cli <command>` without installing. |
 | `findit/web/` | Read-only FastAPI dashboard (Jinja templates, vanilla JavaScript). |
 
 ### How the ranking treats new positions
@@ -164,9 +178,9 @@ value.
 ```bash
 pip install -e ".[dev]"
 PYTHONDONTWRITEBYTECODE=1 python3 -m pytest -q -p no:cacheprovider tests/test_tooling.py
-python3 -m findit.cli.rebuild --db tracker.db --db-copy /tmp/tracker.copy.db \
+findit rebuild --db tracker.db --db-copy /tmp/tracker.copy.db \
   --prev 2026-03 --curr 2026-04
-python3 -m findit.cli.digest --db /tmp/tracker.copy.db --month 2026-04 --schemes 1 2
+findit digest --db /tmp/tracker.copy.db --month 2026-04 --schemes 1 2
 ```
 
 Rebuild copies the DB first and computes deltas via `delta_calculator` on the
@@ -195,9 +209,9 @@ A *real* rename (`SCRF` -> `SBI Credit Risk Fund`) is a judgement call and is
 never guessed. Record it yourself:
 
 ```bash
-python3 -m findit.cli.alias --db tracker.db --amc "SBI AMC" --list
-python3 -m findit.cli.alias --db tracker.db --add-alias SCRF --scheme-id 33
-python3 -m findit.cli.alias --db tracker.db --merge-from 214 --merge-into 33
+findit alias --db tracker.db --amc "SBI AMC" --list
+findit alias --db tracker.db --add-alias SCRF --scheme-id 33
+findit alias --db tracker.db --merge-from 214 --merge-into 33
 ```
 
 `--merge-from` moves every holdings/delta/status/summary row onto the surviving
@@ -237,7 +251,7 @@ measurement honest:
    automatically; for an existing DB:
 
    ```bash
-   python3 -m findit.cli.scheme_titles --db tracker.db --amc "SBI AMC" \
+   findit scheme-titles --db tracker.db --amc "SBI AMC" \
      real_data/sbi_aug2026.xlsx --dry-run
    ```
 4. **Months, not stocks, are the sample.** Stocks in one month move together,
@@ -247,8 +261,8 @@ measurement honest:
 #### Monthly: the signal this project actually ranks
 
 ```bash
-python3 -m findit.cli.prices --db tracker.db --date 2026-09-11 --date 2026-10-11
-python3 -m findit.cli.backtest --db tracker.db --from 2026-07 --to 2026-08
+findit prices --db tracker.db --date 2026-09-11 --date 2026-10-11
+findit backtest --db tracker.db --from 2026-07 --to 2026-08
 ```
 
 `findit.cli.prices` is the only command that downloads prices. `--month`
@@ -278,10 +292,10 @@ Every listed company's shareholding pattern can: one format, back to 2015,
 with mutual-fund ownership (`mf_pct`) and FPI ownership as separate lines.
 
 ```bash
-python3 -m findit.cli.shareholding --db tracker.db --history 0     # every filing
-python3 -m findit.cli.backtest_quarterly --db tracker.db           # lists missing closes
-python3 -m findit.cli.prices --db tracker.db --date ... --date ... # as printed
-python3 -m findit.cli.backtest_quarterly --db tracker.db
+findit shareholding --db tracker.db --history 0     # every filing
+findit backtest-quarterly --db tracker.db           # lists missing closes
+findit prices --db tracker.db --date ... --date ... # as printed
+findit backtest-quarterly --db tracker.db
 ```
 
 The fetcher reads both BSE formats (inline-XBRL HTML for recent quarters,
@@ -315,7 +329,7 @@ did, not a buy list, until more evidence says otherwise.
 #### The monthly report
 
 ```bash
-python3 -m findit.cli.report --db tracker.db --month 2026-08 --out report_2026-08.md
+findit report --db tracker.db --month 2026-08 --out report_2026-08.md
 ```
 
 One page: coverage (who voted, who was excluded and why), the broadest buying
@@ -377,8 +391,8 @@ eligibility still read them, withholding good data. Re-run the gate over stored
 holdings, with no CSVs and no network:
 
 ```bash
-python3 -m findit.cli.revalidate --db tracker.db --dry-run
-python3 -m findit.cli.revalidate --db tracker.db
+findit revalidate --db tracker.db --dry-run
+findit revalidate --db tracker.db
 ```
 
 `--dry-run` reports the status changes from a temporary copy and never opens
@@ -402,7 +416,7 @@ call that one, since `build_summary` only renders:
 Neither consumer writes, calls a network service, or caches anything.
 
 ```bash
-python3 -m findit.cli.digest --db tracker.db --month 2026-08 --schemes 1 2
+findit digest --db tracker.db --month 2026-08 --schemes 1 2
 ```
 
 ### Why the GLM narration layer was removed
@@ -420,7 +434,7 @@ configured, so the real provider path only ever ran against mocks.
 
 It was removed rather than left dormant. The output is unchanged, because the
 model never produced any of it. The eligibility logic it carried was the
-genuinely valuable part and was kept, in `findit/summary.py`.
-`docs/phase-2-plan.md` remains as the record of the design, and the code is in
-git history if the decision is ever revisited with a job worth the constraint
+genuinely valuable part and was kept, in `findit/summary.py`. The design
+(`docs/phase-2-plan.md`) and the code are in git history if the decision is
+ever revisited with a job worth the constraint
 budget — cross-fund synthesis, say, with the numbers still Python-computed.

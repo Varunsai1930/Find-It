@@ -64,7 +64,34 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     conn = db.get_connection(args.db)
+    # The run log says "running" until the last step finishes, and "failed"
+    # with the error when a step raises -- never "completed" for a run that
+    # stopped part-way. A killed process leaves "running", which is true.
+    run_id = uuid.uuid4().hex[:12]
+    started_at = datetime.now(timezone.utc).isoformat()
+    run_report = {"prev": args.prev, "curr": args.curr,
+                  "files": sorted(str(Path(f)) for batch in args.load for f in batch)}
+    _record_run(conn, run_id, started_at, "running", run_report)
+    try:
+        status = _run(conn, args, run_id, started_at, run_report)
+    except BaseException as exc:
+        if conn.in_transaction:
+            conn.rollback()  # a step's half-written transaction, never committed
+        run_report["error"] = f"{type(exc).__name__}: {exc}"
+        _record_run(conn, run_id, started_at, "failed", run_report)
+        raise
+    _record_run(conn, run_id, started_at, status, run_report)
 
+
+def _record_run(conn, run_id: str, started_at: str, status: str, report: dict) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO ingest_runs (run_id, started_at, status, validation_report_json) "
+        "VALUES (?, ?, ?, ?)", (run_id, started_at, status, json.dumps(report)))
+    conn.commit()
+
+
+def _run(conn, args, run_id: str, started_at: str, run_report: dict) -> str:
+    """Every step of the run, printing as it goes; returns the run's final status."""
     # Load + record which (scheme, month) each file touched.
     touched: dict = {}
     for batch in args.load:
@@ -87,23 +114,13 @@ def main(argv: list[str] | None = None) -> None:
     report = run_validation_gate(conn, touched)
     ok = [o for o in report["scheme_months"] if o["status"] == "ok"]
     bad = [o for o in report["scheme_months"] if o["status"] != "ok"]
-    run_id = uuid.uuid4().hex[:12]
-    started_at = datetime.now(timezone.utc).isoformat()
-    run_status = "completed_with_quarantine" if bad else "completed"
-    conn.execute(
-        "INSERT OR REPLACE INTO ingest_runs "
-        "(run_id, started_at, status, validation_report_json) "
-        "VALUES (?, ?, ?, ?)",
-        (run_id, started_at, run_status, json.dumps({
-            "prev": args.prev, "curr": args.curr,
-            "files": sorted({f for v in touched.values() for f in v["files"]}),
-            "ok_count": len(ok), "quarantined_count": len(bad),
-            "scheme_months": report["scheme_months"],
-            "price_warnings": report["price_warnings"],
-            "corporate_action_candidates": report["corporate_action_candidates"],
-        })),
-    )
-    conn.commit()
+    run_report.update({
+        "ok_count": len(ok), "quarantined_count": len(bad),
+        "scheme_months": report["scheme_months"],
+        "price_warnings": report["price_warnings"],
+        "corporate_action_candidates": report["corporate_action_candidates"],
+    })
+    _record_run(conn, run_id, started_at, "running", run_report)
 
     print(f"\n=== Validation gate: {len(ok)} ok, {len(bad)} quarantined ===")
     if bad:
@@ -138,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         print(consensus.to_string(index=False))
 
-    # Phase 1: MF+FII/DII overlap on ISIN. Missing filings stay no_data
+    # MF+FII/DII overlap on ISIN. Missing filings stay no_data
     # (never zero); quarterly filings may be stale relative to the MF month.
     print(f"\n=== MF + FII/DII overlap, {args.curr} ===")
     overlap = build_overlap_view(conn, consensus, args.curr)
@@ -158,26 +175,7 @@ def main(argv: list[str] | None = None) -> None:
         print("(MF net buying + FII-or-DII quarterly increase; stale quarters flagged)")
         for _, row in common.iterrows():
             print(_format_overlap_row(row))
-    # The run report is the audit trail for this month. If it cannot be
-    # written, say so loudly rather than leaving a silently incomplete record.
-    try:
-        current_report = json.loads(conn.execute(
-            "SELECT validation_report_json FROM ingest_runs WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()[0])
-        current_report["mf_fii_overlap"] = overlap_summary(
-            joined, common, overlap_status, overlap_error)
-        conn.execute(
-            "UPDATE ingest_runs SET validation_report_json = ? WHERE run_id = ?",
-            (json.dumps(current_report), run_id),
-        )
-        conn.commit()
-    except (sqlite3.DatabaseError, TypeError, ValueError) as exc:
-        print(
-            f"  [warn] could not record the MF+FII overlap in ingest_runs "
-            f"{run_id}: {type(exc).__name__}: {exc}",
-            file=sys.stderr,
-        )
+    run_report["mf_fii_overlap"] = overlap_summary(joined, common, overlap_status, overlap_error)
     try:
         passive = conn.execute(
             "SELECT DISTINCT s.amc_name, s.scheme_name FROM schemes s "
@@ -206,7 +204,8 @@ def main(argv: list[str] | None = None) -> None:
               file=sys.stderr)
 
     print(f"\n=== Monthly summaries, {args.curr} ===")
-    scheme_ids = conn.execute("SELECT DISTINCT scheme_id FROM mf_holding_deltas WHERE report_month = ?", (args.curr,)).fetchall()
+    scheme_ids = conn.execute("SELECT DISTINCT scheme_id FROM mf_holding_deltas "
+                              "WHERE report_month = ?", (args.curr,)).fetchall()
     for (scheme_id,) in scheme_ids:
         print()
         # get_summary also withholds a delta whose *previous* month is
@@ -223,7 +222,7 @@ def main(argv: list[str] | None = None) -> None:
             f"price {candidate['price_ratio']:.4f}x | "
             f"target {candidate['target_qty_ratio']:g}x | confirmed=0"
         )
-
+    return "completed_with_quarantine" if bad else "completed"
 
 
 if __name__ == "__main__":

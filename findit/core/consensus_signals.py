@@ -3,7 +3,7 @@ consensus_signals.py — cross-fund agreement per stock for a given month.
 
 ``compute_consensus`` is the "MF side" of the common-holdings idea: how
 many distinct schemes/AMCs added vs trimmed a given stock this month.
-``join_shareholding_increase`` (Phase 1) joins that output against
+``join_shareholding_increase`` joins that output against
 quarterly FII/DII shareholding on ISIN to produce the full MF+FII
 overlap signal: MF net buying plus an FII-or-DII quarterly increase,
 with missing filings kept as no_data (never zero) and stale quarters
@@ -185,7 +185,23 @@ def compute_consensus(
         f"       d.flow_lakhs, {price_select}d.prev_month, sch.amc_name {source}"
     )
     deltas = pd.read_sql_query(sql, conn, params=params)
+    if deltas.empty:
+        return rank_consensus(deltas, None, pd.DataFrame(columns=["isin"] + ACTIVE_COLUMNS))
+    universe = _prev_universe_isins(conn, deltas["prev_month"].tolist())
+    active = compute_active_consensus(conn, report_month, instrument_type, active_equity_only)
+    return rank_consensus(deltas, universe, active)
 
+
+def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
+                   active: pd.DataFrame) -> pd.DataFrame:
+    """The consensus ranking from eligible delta rows. Pure.
+
+    ``deltas``: one row per voting (scheme, stock) with isin, scheme_id,
+    amc_name, action, stock_name, industry, instrument_type, flow_lakhs and
+    optionally price_effect_lakhs. ``prev_universe``: ISINs any tracked
+    scheme held in the previous month, or None when that is unknown.
+    ``active``: compute_active_consensus's per-stock discretionary counts.
+    """
     if deltas.empty:
         return pd.DataFrame(columns=[
             "isin", "stock_name", "industry", "instrument_type",
@@ -221,7 +237,7 @@ def compute_consensus(
             opening.groupby("isin")["flow_lakhs"].sum().rename("new_position_flow_lakhs")
         )
         series_to_concat.append(new_flow)
-    if has_price and "price_effect_lakhs" in deltas.columns:
+    if "price_effect_lakhs" in deltas.columns:
         price_totals = (
             deltas.groupby("isin")["price_effect_lakhs"].sum().rename("total_price_effect_lakhs")
         )
@@ -254,20 +270,16 @@ def compute_consensus(
     # tracked portfolio last month is a new listing, not a conviction buy.
     # With no previous month on record we say "unknown" rather than
     # branding the whole universe new.
-    universe = _prev_universe_isins(
-        conn, deltas["prev_month"].tolist() if "prev_month" in deltas.columns else []
-    )
-    if universe is None:
+    if prev_universe is None:
         out["universe_status"] = "unknown"
     else:
         out["universe_status"] = out["isin"].apply(
-            lambda i: "established" if str(i) in universe else "new_listing"
+            lambda i: "established" if str(i) in prev_universe else "new_listing"
         )
     out["is_new_to_universe"] = out["universe_status"] == "new_listing"
 
     # Discretionary breadth alongside the raw counts. It does not change the
     # ranking below: whether it should is a question for the backtest.
-    active = compute_active_consensus(conn, report_month, instrument_type, active_equity_only)
     out = out.merge(active, on="isin", how="left")
     for column in ("active_amcs_buying", "active_amcs_selling", "net_active_amc_count"):
         out[column] = out[column].fillna(0).astype(int)
@@ -406,7 +418,20 @@ def join_shareholding_increase(
         conn,
         params=params,
     )
+    return add_shareholding_signal(consensus, shareholding,
+                                   cutoff if cutoff is not None else date.today(),
+                                   stale_after_days)
 
+
+def add_shareholding_signal(consensus: pd.DataFrame, shareholding: pd.DataFrame,
+                            reference: date, stale_after_days: int = 200) -> pd.DataFrame:
+    """Join each stock's two latest public filings to the consensus. Pure.
+
+    ``shareholding``: one row per ISIN with the latest and previous quarter's
+    FII/DII (the query in join_shareholding_increase). ``reference`` is the
+    day staleness is measured from. A stock with no filing keeps its row,
+    with directions ``no_data`` -- never zero.
+    """
     out = consensus.merge(shareholding, on="isin", how="left")
     out["mf_increased"] = out["net_amc_count"].gt(0).fillna(False)
 
@@ -426,8 +451,7 @@ def join_shareholding_increase(
     )
     out["is_common"] = out["is_common_with_fii_increase"]
 
-    ref = cutoff if cutoff is not None else date.today()
-    ref_ts = pd.Timestamp(ref.isoformat())
+    ref_ts = pd.Timestamp(reference.isoformat())
     q_ts = pd.to_datetime(out["shareholding_quarter_end"], errors="coerce")
     out["staleness_days"] = (ref_ts - q_ts).dt.days.astype("float")
     out["shareholding_stale"] = out["staleness_days"].isna() | (

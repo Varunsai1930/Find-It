@@ -7,10 +7,14 @@ and SBI AMC for April. They carry real-world messiness on purpose -- title
 rows above the header, subtotal and disclaimer rows, and column names that
 differ between AMCs -- which the parser must handle.
 """
+import argparse
+
 import openpyxl
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    argparse.ArgumentParser(description=__doc__,
+                            formatter_class=argparse.RawDescriptionHelpFormatter).parse_args(argv)
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 

@@ -13,6 +13,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+from findit.cli import __main__ as findit_cli
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "findit"
 
@@ -54,3 +58,16 @@ def test_no_module_imports_a_higher_layer():
 def test_all_code_lives_in_the_package():
     """Stray top-level modules are importable only by accident of the cwd."""
     assert sorted(p.name for p in ROOT.glob("*.py")) == []
+
+
+def test_every_command_is_reachable_through_findit(capsys):
+    """A new findit/cli module must be listed, and each one's --help must run."""
+
+    modules = {p.stem for p in (PACKAGE / "cli").glob("*.py") if not p.stem.startswith("__")}
+    assert set(findit_cli.COMMANDS) == modules
+    for name in findit_cli.COMMANDS:
+        with pytest.raises(SystemExit) as done:
+            findit_cli.main([name.replace("_", "-"), "--help"])
+        assert done.value.code == 0, name
+    assert findit_cli.main(["no-such-command"]) == 2
+    assert "unknown command" in capsys.readouterr().err

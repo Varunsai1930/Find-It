@@ -1,4 +1,4 @@
-"""Preview-only digest from fresh persisted summaries or rule fallback. No sending."""
+"""Preview a month's rule-based summaries for several schemes. Read-only; sends nothing."""
 from __future__ import annotations
 
 import argparse
@@ -8,15 +8,15 @@ from findit.summary import get_summary
 
 
 def _summary_text(conn: sqlite3.Connection, scheme_id: int, month: str) -> str:
-    # Freshness is checked on every read; this never calls the model or writes.
+    # get_summary withholds quarantined or broken months, as everywhere else.
     return get_summary(conn, int(scheme_id), month)["text"]
 
 
 def build_digest(conn: sqlite3.Connection, scheme_ids, month: str) -> str:
     """Build a deterministic preview digest for scheme_ids in month.
 
-    Uses current persisted summaries or rule fallback; no LLM calls, no network,
-    no sending. Output is sorted by scheme_id for determinism.
+    No network, no writes, no sending. Output is sorted by scheme_id for
+    determinism.
     """
     ids = sorted({int(s) for s in scheme_ids})
     header = f"Monthly digest — {month} ({len(ids)} scheme(s))"

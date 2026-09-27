@@ -178,8 +178,7 @@ def build_summary(
         raise ValueError(f"No scheme with scheme_id={scheme_id}")
     amc_name, scheme_name = scheme
 
-    stock_cols = [r[1] for r in conn.execute("PRAGMA table_info(stocks)").fetchall()]
-    has_instrument = "instrument_type" in stock_cols
+    has_instrument = "instrument_type" in queries.table_columns(conn, "stocks")
 
     if has_instrument:
         select_extra = ", s.instrument_type AS instrument_type"
@@ -196,7 +195,18 @@ def build_summary(
         params.append(instrument_type)
 
     deltas = pd.read_sql_query(sql, conn, params=params)
+    # With no instrument filter, equity and non-equity changes are told apart.
+    split = instrument_type is None and has_instrument
+    return render_summary(scheme_name, amc_name, report_month, deltas, split)
 
+
+def render_summary(scheme_name: str, amc_name: str, report_month: str,
+                   deltas: pd.DataFrame, split_non_equity: bool = False) -> str:
+    """A scheme-month's delta rows as plain English. Pure.
+
+    ``deltas`` carries mf_holding_deltas columns plus stock_name (and
+    instrument_type when ``split_non_equity``).
+    """
     if deltas.empty:
         return (
             f"No holding-change data available for {scheme_name} in "
@@ -209,7 +219,7 @@ def build_summary(
     # When no instrument filter is requested but the column exists, keep
     # equity calls separate from money-market/bond maturities so a CD
     # maturity is never narrated as an equity exit.
-    if instrument_type is None and has_instrument and "instrument_type" in deltas.columns:
+    if split_non_equity:
         equity = deltas[deltas["instrument_type"] == "equity"]
         non_equity = deltas[deltas["instrument_type"] != "equity"]
         if not equity.empty:
@@ -317,7 +327,7 @@ def assess(conn: sqlite3.Connection, scheme_id: int, report_month: str) -> dict:
         reason = "quarantined"
     elif invalid:
         reason = "nonfinite_or_invalid_data"
-    elif current_status not in {"ok", "validated"}:
+    elif current_status != queries.STATUS_OK:
         reason = "unvalidated"
     elif unknown_type:
         reason = "unknown_instrument_type"

@@ -34,8 +34,17 @@ def unmatched_schemes(conn: sqlite3.Connection, prev_month: str, curr_month: str
 
 
 def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -> pd.DataFrame:
-    """Returns a DataFrame of deltas for every (scheme, isin) of the schemes
-    present in *both* months, including flow_lakhs (trading flow),
+    """diff_holdings over the two months' stored holdings."""
+    return diff_holdings(_fetch_month(conn, prev_month), _fetch_month(conn, curr_month),
+                         prev_month, curr_month)
+
+
+def diff_holdings(prev: pd.DataFrame, curr: pd.DataFrame,
+                  prev_month: str, curr_month: str) -> pd.DataFrame:
+    """Deltas for every (scheme, isin) of the schemes present in *both* months.
+
+    Pure: ``prev``/``curr`` carry scheme_id, isin, quantity,
+    market_value_lakhs and pct_nav. Each row has flow_lakhs (trading flow),
     price_effect_lakhs (residual) and value_change_lakhs.
 
     A scheme with a snapshot in only one month is left out, not compared
@@ -47,8 +56,6 @@ def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -
     snapshots cannot see intra-month execution, so execution-vs-close
     differences sit in the price-effect residual.
     """
-    prev = _fetch_month(conn, prev_month)
-    curr = _fetch_month(conn, curr_month)
     both = set(prev["scheme_id"]) & set(curr["scheme_id"])
     prev = prev[prev["scheme_id"].isin(both)]
     curr = curr[curr["scheme_id"].isin(both)]
