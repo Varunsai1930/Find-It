@@ -213,37 +213,30 @@ def fetch_bhavcopy(report_month: str, cache_dir: Path | str = CACHE_DIR,
         + ("; ".join(attempts) if attempts else "(nothing)"))
 
 
-def load_prices(conn, prices: pd.DataFrame) -> int:
-    """Upsert month-end closes. Returns rows written."""
+def _upsert_prices(conn, prices: pd.DataFrame, table: str, columns: list[str]) -> int:
     if prices is None or prices.empty:
         return 0
-    columns = ["isin", "report_month", "trade_date", "close_price", "series",
-               "symbol", "source", "source_url", "fetched_at"]
     missing = set(columns) - set(prices.columns)
     if missing:
         raise ValueError(f"price rows are missing expected columns: {sorted(missing)}")
     rows = prices.loc[:, columns].where(pd.notna(prices[columns]), None)
     conn.executemany(
-        f"INSERT OR REPLACE INTO security_prices_monthly ({', '.join(columns)}) "
+        f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
         f"VALUES ({', '.join('?' for _ in columns)})",
         rows.itertuples(index=False, name=None))
     conn.commit()
     return len(rows)
+
+
+def load_prices(conn, prices: pd.DataFrame) -> int:
+    """Upsert month-end closes. Returns rows written."""
+    columns = ["isin", "report_month", "trade_date", "close_price", "series",
+               "symbol", "source", "source_url", "fetched_at"]
+    return _upsert_prices(conn, prices, "security_prices_monthly", columns)
 
 
 def load_daily_prices(conn, prices: pd.DataFrame) -> int:
     """Upsert one trading day's closes into security_prices_daily."""
-    if prices is None or prices.empty:
-        return 0
     columns = ["isin", "trade_date", "close_price", "traded_value", "series", "symbol",
                "source", "source_url", "fetched_at"]
-    missing = set(columns) - set(prices.columns)
-    if missing:
-        raise ValueError(f"price rows are missing expected columns: {sorted(missing)}")
-    rows = prices.loc[:, columns].where(pd.notna(prices[columns]), None)
-    conn.executemany(
-        f"INSERT OR REPLACE INTO security_prices_daily ({', '.join(columns)}) "
-        f"VALUES ({', '.join('?' for _ in columns)})",
-        rows.itertuples(index=False, name=None))
-    conn.commit()
-    return len(rows)
+    return _upsert_prices(conn, prices, "security_prices_daily", columns)

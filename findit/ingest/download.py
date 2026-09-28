@@ -259,9 +259,9 @@ def discover_icici_archive(month: str, session: requests.Session) -> list[Source
 
 
 def discover_hdfc(month: str, page) -> list[SourceFile]:
-    _, _, month_name = _month(month)
+    year, number, month_name = _month(month)
     page.goto(HDFC_PAGE, wait_until="domcontentloaded", timeout=30000)
-    date = f"{calendar.monthrange(int(month[:4]), int(month[5:]))[1]} {month_name} {month[:4]}"
+    date = f"{calendar.monthrange(year, number)[1]} {month_name} {year}"
     links = page.locator('a[href$=".xlsx"]').evaluate_all(
         "els => els.map(a => ({name: a.textContent.trim(), url: a.href}))")
     candidates = []
@@ -321,6 +321,49 @@ def _check_file(path: Path) -> Path:
     return path
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _completed_files(folder: Path, files: list[SourceFile], amc: str) -> list[Path]:
+    manifest_path = folder / MANIFEST
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text())
+        expected = {item["name"]: item for item in manifest.get("files", [])}
+        requested = {item.name if item.name in expected else
+                     Path(item.name).with_suffix(".xlsx").name for item in files}
+        if (manifest.get("amc") == amc and
+                requested == set(expected) and len(requested) == len(files) and
+                {p.name for p in folder.iterdir() if p.name != "_unzipped"} ==
+                set(expected) | {MANIFEST} and
+                all((folder / name).is_file() and
+                    _sha256(folder / name) == info["sha256"]
+                    for name, info in expected.items())):
+            return [folder / name for name in sorted(expected)]
+    raise FileExistsError(f"{folder} has existing or changed files; review them manually")
+
+
+def _download_file(item: SourceFile, target: Path, session: requests.Session, page) -> Path:
+    if item.browser:
+        if page is None:
+            raise ValueError(f"{item.amc}: browser download unavailable")
+        locator = page.locator(f'a[href="{item.url}"]')
+        with page.expect_download(timeout=60000) as event:
+            locator.first.click(force=True)
+        event.value.save_as(target)
+    else:
+        with session.get(item.url, stream=True, timeout=60) as response:
+            response.raise_for_status()
+            with target.open("wb") as out:
+                for chunk in response.iter_content(chunk_size=1024 * 256):
+                    out.write(chunk)
+    return _check_file(target)
+
+
 def save_files(files: list[SourceFile], month_dir: Path, session: requests.Session,
                page=None) -> list[Path]:
     """Stage and verify a whole AMC, then publish it in one directory move."""
@@ -333,42 +376,13 @@ def save_files(files: list[SourceFile], month_dir: Path, session: requests.Sessi
     if len({f.name for f in files}) != len(files):
         raise ValueError(f"{amc}: duplicate download names")
     if folder.exists() and any(folder.iterdir()):
-        manifest_path = folder / MANIFEST
-        if manifest_path.is_file():
-            manifest = json.loads(manifest_path.read_text())
-            expected = {item["name"]: item for item in manifest.get("files", [])}
-            requested = {item.name if item.name in expected else
-                         Path(item.name).with_suffix(".xlsx").name for item in files}
-            if (manifest.get("amc") == amc and
-                    requested == set(expected) and len(requested) == len(files) and
-                    {p.name for p in folder.iterdir() if p.name != "_unzipped"} ==
-                    set(expected) | {MANIFEST} and
-                    all((folder / name).is_file() and
-                        hashlib.sha256((folder / name).read_bytes()).hexdigest() == info["sha256"]
-                        for name, info in expected.items())):
-                return [folder / name for name in sorted(expected)]
-        raise FileExistsError(f"{folder} has existing or changed files; review them manually")
+        return _completed_files(folder, files, amc)
     month_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".findit-download-", dir=month_dir) as temporary:
-        staged = []
-        for item in files:
-            target = Path(temporary) / _safe_name(item.name)
-            if item.browser:
-                if page is None:
-                    raise ValueError(f"{amc}: browser download unavailable")
-                locator = page.locator(f'a[href="{item.url}"]')
-                with page.expect_download(timeout=60000) as event:
-                    locator.first.click(force=True)
-                event.value.save_as(target)
-            else:
-                with session.get(item.url, stream=True, timeout=60) as response:
-                    response.raise_for_status()
-                    with target.open("wb") as out:
-                        for chunk in response.iter_content(chunk_size=1024 * 256):
-                            out.write(chunk)
-            staged.append(_check_file(target))
+        staged = [_download_file(item, Path(temporary) / _safe_name(item.name),
+                                 session, page) for item in files]
         manifest = {"amc": amc, "files": [
-            {"name": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+            {"name": path.name, "sha256": _sha256(path)}
             for path in staged]}
         (Path(temporary) / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
         if folder.exists():

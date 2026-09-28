@@ -13,6 +13,19 @@ from findit.ingest import download
 from findit.ingest.intake import load_registry, prepare, render
 
 
+def _browser_page(stack: ExitStack):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "browser support missing; install with 'pip install -e .[download]'"
+        ) from exc
+    playwright = stack.enter_context(sync_playwright())
+    browser = download._browser(playwright)
+    stack.callback(browser.close)
+    return browser.new_page(accept_downloads=True)
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--month", required=True, help="Portfolio month, YYYY-MM")
@@ -43,33 +56,15 @@ def main(argv: list[str] | None = None) -> int:
         for amc in selected:
             try:
                 if amc in {"HDFC AMC", "Aditya Birla Sun Life AMC", "Mirae Asset AMC"} and page is None:
-                    try:
-                        from playwright.sync_api import sync_playwright
-                    except ImportError as exc:
-                        raise RuntimeError(
-                            "browser support missing; install with 'pip install -e .[download]'"
-                        ) from exc
-                    playwright = stack.enter_context(sync_playwright())
-                    browser = download._browser(playwright)
-                    stack.callback(browser.close)
-                    page = browser.new_page(accept_downloads=True)
+                    page = _browser_page(stack)
                 try:
                     files = download.discover(args.month, amc, session, page)
                 except ValueError as exc:
                     if amc != "ICICI Prudential AMC" or "browser required" not in str(exc):
                         raise
                     if page is None:
-                        try:
-                            from playwright.sync_api import sync_playwright
-                        except ImportError as import_exc:
-                            raise RuntimeError(
-                                "browser support missing; install with 'pip install -e .[download]'"
-                            ) from import_exc
-                        playwright = stack.enter_context(sync_playwright())
-                        browser = download._browser(playwright)
-                        stack.callback(browser.close)
-                        page = browser.new_page(accept_downloads=True)
-                    files = download.discover(args.month, amc, session, page)
+                        page = _browser_page(stack)
+                    files = download.discover_icici(args.month, page)
                 print(f"{amc}: {len(files)} file(s) for {args.month}")
                 if args.dry_run:
                     for item in files:
@@ -98,7 +93,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
         elif args.prepare:
             print("Intake validation skipped because downloads failed.", file=sys.stderr)
-        print(f"Next: findit intake --month {args.month} --inbox {args.inbox}")
+        if not args.prepare or failed:
+            print(f"Next: findit intake --month {args.month} --inbox {args.inbox}")
     return 1 if failed else 0
 
 
