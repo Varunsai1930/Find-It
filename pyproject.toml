@@ -25,6 +25,7 @@ dependencies = [
 findit = "findit.cli.__main__:main"
 
 [project.optional-dependencies]
+download = ["playwright==1.63.0"]
 dev = [
     "pytest==8.4.2",
     "ruff==0.16.5",

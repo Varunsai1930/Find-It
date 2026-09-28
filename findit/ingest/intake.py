@@ -1,7 +1,8 @@
-"""Monthly disclosure intake: workbooks you downloaded -> parsed CSVs to load.
+"""Monthly disclosure intake: downloaded workbooks -> parsed CSVs to load.
 
-Every AMC publishes its monthly portfolio differently, so the files are
-downloaded by hand from each AMC's disclosure page (listed in
+Every AMC publishes its monthly portfolio differently. Files can be fetched
+by ``findit download`` where supported or downloaded by hand from the AMC's
+disclosure page (listed in
 ``amfi_amcs.json``, taken from AMFI) into one folder per fund house:
 
     real_data/inbox/2026-08/SBI AMC/<workbooks or zips>

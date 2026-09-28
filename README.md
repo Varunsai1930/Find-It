@@ -95,9 +95,30 @@ push and pull request (`.github/workflows/ci.yml`).
 
 ## Adding a month of disclosures
 
-AMCs publish their monthly portfolios in different places and formats, and
-several block scripted downloads, so the files are downloaded by hand and the
-intake does everything after that:
+AMCs publish their monthly portfolios in different places and formats. The
+download command covers nine major houses: SBI, ICICI Prudential, HDFC,
+Nippon India, UTI, Aditya Birla Sun Life, Mirae Asset, DSP, and PPFAS.
+Install its optional browser dependency
+once (`pip install -e '.[download]'`). It uses installed Chrome if available;
+otherwise install Playwright Chromium with `python -m playwright install chromium`.
+Preview a published month, then download it:
+
+```bash
+findit download --month 2026-08 --dry-run
+findit download --month 2026-08 --prepare
+findit intake --month 2026-08
+```
+
+Downloads are checked as real Excel/ZIP files and staged before an AMC's folder
+is written. A completed download has a checksum manifest and a repeat run
+reuses it after checking every file. A changed or hand-filled folder is left
+untouched for review. `--prepare` runs intake validation after successful
+downloads; it prints the database load command but never executes it. If a
+source fails, the command prints its official page and the exact folder for a
+manual download, then exits with an error. ICICI also tries its public archive
+before the browser listing. Kotak (CAPTCHA) and Axis still require manual
+downloads; the command lists their pages every full run. For other houses,
+use the manual intake flow:
 
 ```bash
 findit intake --month 2026-09 --init   # folders for AMCs already tracked

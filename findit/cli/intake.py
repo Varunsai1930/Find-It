@@ -1,8 +1,8 @@
 """Check and parse a month of downloaded AMC disclosures, ready to load.
 
-Download each AMC's monthly portfolio from its disclosure page into one
-folder per fund house, named as the database names it (``--init`` creates
-the folders for AMCs already in the database):
+Download each AMC's monthly portfolio into one folder per fund house, named
+as the database names it. ``findit download`` can populate nine major
+houses; ``--init`` creates folders for AMCs already in the database:
 
     python3 -m findit.cli.intake --month 2026-08 --init
     python3 -m findit.cli.intake --month 2026-08
