@@ -81,6 +81,7 @@ def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path):
         zf.write(auxiliary, "Risk-o-meter_Funds and Benchmark_Aug 2026.xlsx")
     report = intake.prepare(month, "2026-08")
     assert report.ok, intake.render(report)
+    assert not (folder / intake.UNZIPPED_DIR).exists()
     assert report.results[0].files == [
         "_unzipped/fw_uti_mf_scheme_portfolios_31.08.2026/"
         "Sebi Exposure as on 31 Aug 2026.xlsx"]

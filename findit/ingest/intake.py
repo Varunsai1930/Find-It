@@ -255,7 +255,12 @@ def prepare(month_dir: Path, month: str, registry: list[Amc] | None = None) -> I
             close = difflib.get_close_matches(entry.name.lower(), list(lowered), n=3, cutoff=0.5)
             unknown[entry.name] = [lowered[c] for c in close]
         else:
-            results.append(_prepare_amc(entry, entry.name, month, registry, out_dir))
+            try:
+                results.append(_prepare_amc(entry, entry.name, month, registry, out_dir))
+            finally:
+                # ZIP contents are recreated on each intake run. Keep the
+                # source archive and parsed CSV, not another on-disk copy.
+                shutil.rmtree(entry / UNZIPPED_DIR, ignore_errors=True)
     present = {r.amc for r in results}
     missing = [a for a in registry if a.amc not in present]
     return IntakeReport(month, results, unknown, loose, missing)
