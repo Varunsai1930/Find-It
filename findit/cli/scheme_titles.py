@@ -9,8 +9,7 @@ scheme whose ``is_active_equity`` flag changes.
 
     python3 -m findit.cli.scheme_titles --db tracker.db --amc "SBI AMC" \\
         real_data/sbi_aug2026.xlsx
-    python3 -m findit.cli.scheme_titles --db tracker.db --amc "ICICI Prudential AMC" \\
-        real_data/icici_aug2026/*.xlsx --dry-run
+    python3 -m findit.cli.scheme_titles --db tracker.db --from-db --dry-run
 
 A scheme's title is stored once and does not change month to month, but a
 *classifier rule* fix (e.g. teaching it to recognise a debt "Savings Fund")
