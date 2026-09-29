@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import hashlib
+import gzip
 import json
 import sqlite3
 import time
@@ -479,7 +480,8 @@ def test_fetch_single_filing_keeps_one_and_persists_attachment(tmp_path):
     assert rows[0][0] == isin and rows[0][1] == "2026-05-15"
     assert rows[0][3] == pytest.approx(4.0)
     expected_sha = hashlib.sha256(ixbrl.encode("utf-8")).hexdigest()
-    assert (cache_dir / "attachments" / f"{expected_sha}.ixbrl").exists()
+    attachment = cache_dir / "attachments" / f"{expected_sha}.ixbrl.gz"
+    assert gzip.decompress(attachment.read_bytes()) == ixbrl.encode("utf-8")
     conn.close()
 
 

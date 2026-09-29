@@ -25,6 +25,7 @@ left out rather than guessed into DII.
 from __future__ import annotations
 
 import hashlib
+import gzip
 import io
 import json
 import re
@@ -181,14 +182,14 @@ def classify_filing_type(quarter_end: str) -> str:
 
 
 def _persist_ixbrl_attachment(cache_dir: Path, content: bytes) -> str:
-    """Persist raw iXBRL bytes under attachments/<sha256>.ixbrl; return sha256."""
+    """Keep source bytes compressed; the filename hashes the original bytes."""
     if isinstance(content, str):
         content = content.encode("utf-8")
     sha = hashlib.sha256(bytes(content)).hexdigest()
-    dest = Path(cache_dir) / "attachments" / f"{sha}.ixbrl"
+    dest = Path(cache_dir) / "attachments" / f"{sha}.ixbrl.gz"
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not dest.exists():
-        dest.write_bytes(bytes(content))
+        dest.write_bytes(gzip.compress(bytes(content), compresslevel=6, mtime=0))
     return sha
 
 
