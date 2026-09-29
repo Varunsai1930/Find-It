@@ -70,6 +70,22 @@ def test_accepted_folders_give_csvs_and_the_load_command(tmp_path):
     assert missing["HDFC AMC"].startswith("https://www.hdfcfund.com/")
 
 
+def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path):
+    month = _month(tmp_path)
+    exposure = _book(tmp_path / "exposure.xlsx", {"UTI Flexi Cap Fund": "UTI Flexi Cap Fund"})
+    auxiliary = _book(tmp_path / "risk.xlsx", {"Notes": "Riskometer"})
+    folder = month / "UTI AMC"
+    folder.mkdir(parents=True)
+    with zipfile.ZipFile(folder / "fw_uti_mf_scheme_portfolios_31.08.2026.zip", "w") as zf:
+        zf.write(exposure, "Sebi Exposure as on 31 Aug 2026.xlsx")
+        zf.write(auxiliary, "Risk-o-meter_Funds and Benchmark_Aug 2026.xlsx")
+    report = intake.prepare(month, "2026-08")
+    assert report.ok, intake.render(report)
+    assert report.results[0].files == [
+        "_unzipped/fw_uti_mf_scheme_portfolios_31.08.2026/"
+        "Sebi Exposure as on 31 Aug 2026.xlsx"]
+
+
 def test_misspelt_folder_is_not_parsed_and_suggests_the_registry_name(tmp_path):
     month = _month(tmp_path)
     _book(month / "Nipon India AMC" / "n.xlsx", {"GF": "Nippon India Growth Fund"})

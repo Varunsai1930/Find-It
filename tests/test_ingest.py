@@ -36,6 +36,33 @@ HEADER = [
     "% to NAV",
 ]
 
+
+def test_mirae_market_value_header_is_recognized():
+    columns = ["Name of the Instrument", "ISIN", "Quantity",
+               "Market/Fair Value \n(Rs. in Lacs)", "% to Net Assets"]
+    mapping = amfi_mf_parser.match_columns(columns)
+    assert mapping["market_value_lakhs"] == columns[3]
+
+
+def test_uti_stacked_scheme_sections_parse_as_distinct_schemes(tmp_path):
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    for code, name, isin in (("002", "UTI First Fund", INE_A),
+                             ("017", "UTI Second Fund", INE_B)):
+        sheet.append([f"SCHEME CODE{code}STARTS"])
+        sheet.append(["UTI MUTUAL FUND"])
+        sheet.append([f"SCHEME: {name}"])
+        sheet.append(["PORTFOLIO DISCLOSURE AS OF 31/08/2026"])
+        sheet.append(["NAME OF THE INSTRUMENT", "QUANTITY", "MARKET-VALUE",
+                      "% TO NAV", "ISIN"])
+        sheet.append(["EQ - TEST LTD", 100, 10, 100, isin])
+        sheet.append([f"SCHEME CODE{code}ENDS"])
+    path = tmp_path / "Sebi Exposure as on 31 Aug 2026.xlsx"
+    workbook.save(path)
+    rows = amfi_mf_parser.parse_workbook(path, "UTI AMC", "2026-08")
+    assert set(rows["scheme_name"]) == {"UTI First Fund", "UTI Second Fund"}
+    assert set(rows["isin"]) == {INE_A, INE_B}
+
 INE_A = "INE002A01018"
 INE_B = "INE040A01034"
 FOREIGN = "US0378331005"  # generic shape, classified foreign later

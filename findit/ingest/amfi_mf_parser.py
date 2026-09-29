@@ -55,6 +55,10 @@ COLUMN_SYNONYMS = {
         # observed in real Baroda BNP Paribas and PPFAS disclosures
         # ("Market/Fair Value\n (Rs. in Lakhs)")
         "market/fair value (rs. in lakhs)",
+        # Mirae Asset monthly workbooks ("Market/Fair Value\n(Rs. in Lacs)")
+        "market/fair value (rs. in lacs)",
+        # UTI consolidated exposure workbook
+        "market-value",
     ],
     "pct_nav": [
         "% to nav",
@@ -218,6 +222,39 @@ def read_scheme_titles(path: Path) -> dict:
     return titles
 
 
+def _scheme_sheets(xls):
+    """Yield ordinary sheets or UTI's consecutive scheme sections as sheets."""
+    for sheet_name in xls.sheet_names:
+        raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+        first = str(raw.iat[0, 0]).strip() if not raw.empty else ""
+        if not re.fullmatch(r"SCHEME CODE\d+STARTS", first):
+            yield sheet_name, raw
+            continue
+        start = None
+        code = None
+        for index, value in raw.iloc[:, 0].items():
+            marker = str(value).strip()
+            opening = re.fullmatch(r"SCHEME CODE(\d+)STARTS", marker)
+            closing = re.fullmatch(r"SCHEME CODE(\d+)ENDS", marker)
+            if opening:
+                if start is not None:
+                    raise ValueError("UTI portfolio has nested scheme sections")
+                start, code = index, opening.group(1)
+            elif closing:
+                if start is None or closing.group(1) != code:
+                    raise ValueError("UTI portfolio has an unmatched scheme end")
+                section = raw.iloc[start + 1:index].reset_index(drop=True)
+                titles = section.iloc[:5, 0]
+                names = [str(v).split(":", 1)[1].strip() for v in titles
+                         if str(v).startswith("SCHEME:")]
+                if len(names) != 1:
+                    raise ValueError(f"UTI scheme section {code} has no unique title")
+                yield names[0], section
+                start, code = None, None
+        if start is not None:
+            raise ValueError(f"UTI portfolio has an unclosed scheme section {code}")
+
+
 def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame:
     """Parse holdings and repeat exclusion provenance on each scheme's rows.
 
@@ -229,10 +266,9 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
     xls = pd.ExcelFile(path)
     all_rows = []
 
-    for sheet_name in xls.sheet_names:
-        # SINGLE READ per sheet: headerless, then slice the header row
-        # in-memory. Never re-read the same sheet with header=<idx>.
-        raw = pd.read_excel(xls, sheet_name=sheet_name, header=None)
+    for sheet_name, raw in _scheme_sheets(xls):
+        # Each workbook sheet is read once; UTI's stacked sections are sliced
+        # from that read in memory.
 
         # AMFI sheets usually have a few title/metadata rows before the
         # real header row. Find it by locating the first row containing
