@@ -86,7 +86,12 @@
     {% if month %}
     {% include "_month_view.html" %}
     {% else %}
-    <p class="state state--empty" role="status">{{ missing_db or 'No coverage data available yet. Load a month of AMC disclosures with <code>python3 -m findit.cli.pipeline</code>, then reload this page.' }}</p>
+    <section class="panel empty-state" aria-labelledby="empty-title">
+      <h2 id="empty-title">{{ 'Connect your holdings data' if missing_db else 'No coverage data available yet' }}</h2>
+      {% if missing_db %}<p class="state state--error" role="alert">{{ missing_db }}</p>{% endif %}
+      <p>Load monthly AMC disclosures using the pipeline, then reload this page. The README includes an offline sample to get started.</p>
+      <p class="muted">To use an existing database, start FindIt with <code>FINDIT_DB=/path/to/tracker.db</code>.</p>
+    </section>
     {% endif %}
   </div>
 

@@ -245,6 +245,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   box-shadow: var(--shadow); margin-bottom: 16px; min-width: 0;
 }
 .panel--narrow { max-width: 820px; }
+.empty-state { padding: 32px; }
+.empty-state h2 { font-size: 24px; }
+.empty-state > p { max-width: 70ch; }
+.empty-state code { overflow-wrap: anywhere; }
 .panel__head { padding: 20px 24px 16px; border-bottom: 1px solid var(--line); }
 .panel__bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel__head h2:focus { outline: none; }

@@ -101,7 +101,7 @@
           <div class="stock-cell">
             <span class="rank">{{ loop.index }}</span>
             <div>
-              <button type="button" class="stock-link" data-isin="{{ row.isin }}" aria-haspopup="dialog">{{ row.stock_name }}</button>
+              <button type="button" class="stock-link" data-isin="{{ row.isin }}" aria-haspopup="dialog">{{ row.stock_name|stock_label }}</button>
               <span class="sub">{{ row.isin }}{% if row.industry %} · {{ row.industry }}{% endif %}{% if row.universe_status == 'new_listing' %} · <span class="tag tag--info">new listing</span>{% endif %}</span>
             </div>
           </div>

@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import re
 import sqlite3
 import threading
 from pathlib import Path
@@ -27,7 +28,6 @@ from findit.store import queries
 from findit.summary import get_summary
 
 _WEB_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Consensus rows per page; 0 shows every ranked stock.
 _ROW_LIMITS = (25, 50, 0)
@@ -49,23 +49,38 @@ def _sanitize(value: Any) -> Any:
 
 
 def _resolve_db_path(db_path: str | Path | None) -> str:
-    if db_path is None:
-        return str((_REPO_ROOT / "tracker.db").resolve())
-    return str(Path(str(db_path)).resolve())
+    path = db_path if db_path is not None else os.environ.get("FINDIT_DB", "tracker.db")
+    return str(Path(path).expanduser().resolve())
+
+
+def _stock_label(name: str | None) -> str:
+    """Remove the disclosure's equity marker, preserving the company's name."""
+    return re.sub(r"^EQ\s*-\s*", "", name or "", flags=re.IGNORECASE).strip()
 
 
 def _ro_connect(db_path: str) -> sqlite3.Connection:
-    # Read-only open: URI with mode=ro plus query_only enforcement.
+    # Encode URI-sensitive filename characters, and never create a missing DB.
     if not Path(db_path).is_file():
-        # A fresh clone has no database; say so rather than fail with a 500.
         raise HTTPException(status_code=503, detail=(
             f"No database at {db_path}. Build one with `python3 -m findit.cli.pipeline` "
-            "(see the README)."))
-    uri = f"file:{db_path}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA query_only=ON;")
-    return conn
+            "(see the README), or set FINDIT_DB to your existing database."))
+    conn = None
+    try:
+        conn = sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True,
+                               check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA query_only=ON;")
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if not {"schemes", "stocks", "mf_holdings_monthly", "mf_holding_deltas"} <= tables:
+            raise sqlite3.DatabaseError("missing tracker tables")
+        conn.create_function("stock_label", 1, _stock_label, deterministic=True)
+        return conn
+    except sqlite3.Error as exc:
+        if conn is not None:
+            conn.close()
+        raise HTTPException(status_code=503, detail=(
+            "The holdings database could not be read. Check FINDIT_DB points to a FindIt "
+            "database built by the pipeline (see the README).")) from exc
 
 
 def _known_months(conn: sqlite3.Connection) -> set[str]:
@@ -304,7 +319,7 @@ def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> di
     status = "available" if quarters else "missing"
     payload: dict[str, Any] = {
         "isin": stock["isin"],
-        "name": stock["name"],
+        "name": _stock_label(stock["name"]),
         "industry": stock["industry"],
         "instrument_type": stock["instrument_type"],
         "month": holdings_month,
@@ -337,7 +352,8 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
                  limit: int = 12) -> list[dict[str, Any]]:
     """Stocks whose name contains query or whose ISIN starts with it.
 
-    Names starting with the query come first, then the most widely held:
+    Names starting with the query come first (ignoring disclosure equity markers),
+    with equities before other instruments, then the most widely held:
     schemes holding it in month when given, else in any month. Fewer than two
     searchable characters match nothing rather than everything.
     """
@@ -346,11 +362,13 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
         return []
     in_month = " WHERE report_month = ?" if month else ""
     rows = conn.execute(
-        "SELECT s.isin, s.name, s.industry, COALESCE(h.n, 0) AS schemes_holding FROM stocks s"
+        "SELECT s.isin, stock_label(s.name) AS name, s.industry,"
+        " COALESCE(h.n, 0) AS schemes_holding FROM stocks s"
         " LEFT JOIN (SELECT isin, COUNT(DISTINCT scheme_id) AS n FROM mf_holdings_monthly"
         f"{in_month} GROUP BY isin) h USING (isin)"
         " WHERE s.name LIKE ? OR s.isin LIKE ?"
-        " ORDER BY s.name LIKE ? DESC, schemes_holding DESC, s.name LIMIT ?",
+        " ORDER BY stock_label(s.name) LIKE ? DESC, s.instrument_type = 'equity' DESC,"
+        " schemes_holding DESC, s.name LIMIT ?",
         (*([month] if month else []), f"%{text}%", f"{text}%", f"{text}%", limit)).fetchall()
     return [dict(r) for r in rows]
 
@@ -363,7 +381,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
               for name in ("style.css", "dashboard.js")}
     templates.env.globals["asset_url"] = lambda name: f"/static/{name}?v={assets[name]}"
     templates.env.filters.update(crore=_crore, signed=_signed, month_label=_month_label,
-                                 scheme_label=_scheme_label)
+                                 scheme_label=_scheme_label, stock_label=_stock_label)
 
     app = FastAPI(title="FindIt holdings dashboard (read-only)")
 
@@ -379,33 +397,16 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
         conn = _ro_connect(resolved_db)
         try:
             try:
-                months = [
-                    str(r[0])
-                    for r in conn.execute(
-                        "SELECT DISTINCT report_month FROM mf_holdings_monthly "
-                        "ORDER BY report_month"
-                    ).fetchall()
-                    if r[0] is not None
-                ]
+                counts = conn.execute(
+                    "SELECT report_month, COUNT(DISTINCT scheme_id), COUNT(*) "
+                    "FROM mf_holdings_monthly WHERE report_month IS NOT NULL "
+                    "GROUP BY report_month ORDER BY report_month"
+                ).fetchall()
             except sqlite3.Error:
-                months = []
-            scheme_counts: dict[str, int] = {}
-            holdings_counts: dict[str, int] = {}
-            for m in months:
-                try:
-                    sc = conn.execute(
-                        "SELECT COUNT(DISTINCT scheme_id) FROM mf_holdings_monthly "
-                        "WHERE report_month = ?",
-                        (m,),
-                    ).fetchone()
-                    hc = conn.execute(
-                        "SELECT COUNT(*) FROM mf_holdings_monthly WHERE report_month = ?",
-                        (m,),
-                    ).fetchone()
-                except sqlite3.Error:
-                    continue
-                scheme_counts[m] = int(sc[0] or 0)
-                holdings_counts[m] = int(hc[0] or 0)
+                counts = []
+            months = [str(r[0]) for r in counts]
+            scheme_counts = {str(r[0]): int(r[1]) for r in counts}
+            holdings_counts = {str(r[0]): int(r[2]) for r in counts}
             try:
                 delta_months = [
                     str(r[0])
@@ -430,12 +431,13 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 quarters = []
             latest_month = months[-1] if months else None
             latest_quarter = quarters[-1] if quarters else None
+            delta_month_set = set(delta_months)
             per_month = [
                 {
                     "month": m,
                     "schemes": scheme_counts.get(m, 0),
                     "holdings": holdings_counts.get(m, 0),
-                    "has_deltas": m in set(delta_months),
+                    "has_deltas": m in delta_month_set,
                 }
                 for m in months
             ]

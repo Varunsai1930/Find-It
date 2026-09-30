@@ -789,3 +789,56 @@ def test_dashboard_serves_fingerprinted_local_assets(tmp_path):
         assert response.status_code == 200
         assert response.content
     assert "function combobox" in client.get(urls[1]).text
+
+
+def test_database_configuration_uses_cwd_env_and_explicit_path(tmp_path, monkeypatch):
+    from findit.web.app import _resolve_db_path
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("FINDIT_DB", raising=False)
+    assert _resolve_db_path(None) == str(tmp_path / "tracker.db")
+    monkeypatch.setenv("FINDIT_DB", "custom.db")
+    assert _resolve_db_path(None) == str(tmp_path / "custom.db")
+    assert _resolve_db_path("explicit.db") == str(tmp_path / "explicit.db")
+
+
+def test_database_uri_handles_reserved_filename_characters(tmp_path):
+    source = _copy_db(tmp_path)
+    dest = tmp_path / "mentor #1? data.db"
+    source.rename(dest)
+    before = _hash(dest)
+    client = TestClient(create_app(dest))
+    assert client.get("/").status_code == 200
+    assert client.get("/api/coverage").json()["latest_month"] == "2026-08"
+    assert _hash(dest) == before
+
+
+def test_corrupt_and_unrelated_databases_show_setup_error(tmp_path):
+    for name, contents in (("corrupt.db", b"not a database"), ("unrelated.db", b"")):
+        path = tmp_path / name
+        path.write_bytes(contents)
+        before = _hash(path)
+        client = TestClient(create_app(path))
+        page = client.get("/")
+        assert page.status_code == 503
+        assert "could not be read" in page.text
+        assert client.get("/api/coverage").status_code == 503
+        assert client.get("/api/stocks/search?q=rel").status_code == 503
+        assert _hash(path) == before
+
+
+def test_equity_disclosure_markers_do_not_hide_relevant_search_results(tmp_path):
+    path = _copy_db(tmp_path)
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE stocks SET name = 'EQ - Reliance Industries' WHERE isin = 'INE002A01018'")
+    for n in range(12):
+        conn.execute("INSERT INTO stocks (isin, name, instrument_type) VALUES (?, ?, 'ncd')",
+                     (f"NCD{n:09d}", f"Reliance Industries bond {n}"))
+    conn.commit()
+    conn.close()
+    client = TestClient(create_app(path))
+    found = client.get("/api/stocks/search?q=reliance").json()["results"]
+    assert found[0]["isin"] == "INE002A01018"
+    assert found[0]["name"] == "Reliance Industries"
+    assert "EQ - Reliance" not in client.get("/").text
+    assert client.get("/api/stock/INE002A01018").json()["name"] == "Reliance Industries"

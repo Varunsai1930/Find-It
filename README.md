@@ -386,7 +386,16 @@ serves, so the two cannot disagree.
 uvicorn findit.web.app:create_app --factory
 ```
 
-Read-only view of `./tracker.db` at http://127.0.0.1:8000.
+Read-only view of `./tracker.db` in the current working directory at http://127.0.0.1:8000.
+To choose a different database, including when running from an installed package:
+
+```bash
+FINDIT_DB=/absolute/path/to/tracker.db uvicorn findit.web.app:create_app --factory
+```
+
+Keep the default loopback address for a local mentor demo. The dashboard needs no
+network connection once the database is built. Missing, invalid or unrelated databases
+show a setup message and return HTTP 503 instead of a misleading empty report.
 
 - **Month** and **Buying / Selling** pick the view; rows, *Equity only* and
   *Active stock-pickers only* refine it. Every choice is kept in the URL, so a
