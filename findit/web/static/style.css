@@ -28,8 +28,7 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
     --bg: #101b19;
     --surface: #172622;
     --surface-2: #1e302b;
@@ -52,8 +51,6 @@
     --shadow: none;
     color-scheme: dark;
   }
-}
-
 * { box-sizing: border-box; }
 
 /* Keep focused rows clear of the sticky top bar (static on phones). */
@@ -114,6 +111,9 @@ em { font-style: italic; }
 .nav a { color: var(--ink-3); text-decoration: none; font-size: 13px; padding: 7px 0; }
 .nav a:hover, .nav a[aria-current] { color: var(--ink); }
 .nav a[aria-current] { border-bottom: 2px solid var(--accent); font-weight: 650; }
+.theme-toggle { margin-left: auto; font-size: 12px; }
+.theme-toggle[hidden] { display: none; }
+.edition + .theme-toggle { margin-left: 0; }
 .edition { margin-left: auto; color: var(--ink-3); font-size: 11px; }
 .filterbar { display: flex; flex-wrap: wrap; gap: 20px 28px; align-items: flex-end;
   padding: 20px; margin: 0 0 24px; background: var(--surface);
@@ -383,6 +383,7 @@ table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
 @media (max-width: 1000px) {
   .edition { display: none; }
   .topbar__inner { gap: 30px; }
+  .edition + .theme-toggle { margin-left: auto; }
   .intro__link { display: none; }
   .lookup { flex: 1 1 100%; margin-left: 0; }
 }
@@ -402,7 +403,10 @@ table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
   .panel__head { padding: 16px; }
   /* Brand on one line above a compact two-column filter grid:
      month | rows, then Buying | Selling, then the checkboxes and search. */
-  .topbar__inner { flex-direction: column; align-items: stretch; gap: 8px; padding-top: 10px; padding-bottom: 12px; }
+  .topbar__inner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 8px; padding-top: 14px; padding-bottom: 12px; }
+  .brand { grid-column: 1; }
+  .theme-toggle { grid-column: 2; grid-row: 1; }
+  .nav { grid-column: 1 / -1; }
   .brand { flex-direction: row; align-items: center; gap: 10px; }
   .brand__tag { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; flex: none; }

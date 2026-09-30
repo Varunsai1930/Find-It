@@ -782,6 +782,8 @@ def test_dashboard_serves_fingerprinted_local_assets(tmp_path):
     client = TestClient(create_app(str(_copy_db(tmp_path))))
     html = client.get("/").text
     urls = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
+    assert client.get("/static/favicon.svg").status_code == 200
+    urls = [url for url in urls if "?v=" in url]
     assert len(urls) == 2
     for url in urls:
         assert re.search(r"\?v=[a-f0-9]{12}$", url)

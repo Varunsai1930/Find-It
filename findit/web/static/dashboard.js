@@ -1,5 +1,21 @@
 (function () {
   "use strict";
+  var themeToggle = document.getElementById("theme-toggle");
+  if (themeToggle) {
+    function themeLabel() {
+      var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      themeToggle.textContent = next === "light" ? "Light mode" : "Dark mode";
+      themeToggle.setAttribute("aria-label", "Switch to " + next + " mode");
+    }
+    themeToggle.hidden = false;
+    themeLabel();
+    themeToggle.addEventListener("click", function () {
+      var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+      document.documentElement.dataset.theme = next;
+      try { localStorage.setItem("findit-theme", next); } catch (e) { /* Optional storage. */ }
+      themeLabel();
+    });
+  }
   var form = document.getElementById("view-controls");
   var view = document.getElementById("month-view");
   var viewStatus = document.getElementById("view-status");
