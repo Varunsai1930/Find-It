@@ -86,3 +86,45 @@ def test_known_zero_and_partial_numeric_nav_are_preserved(tmp_path):
     parsed = parse_workbook(path, "AMC", "2026-08")
     assert parsed.iloc[0]["dropped_non_isin_count"] == 2
     assert parsed.iloc[0]["dropped_non_isin_pct_nav"] == 0
+
+
+@pytest.mark.parametrize("scale", [1.0, 0.01])
+def test_printed_total_identifies_units_without_counting_category_totals(tmp_path, scale):
+    path = workbook(tmp_path, [
+        ["Equity & Equity Related Instruments", None, None, 60, 60 * scale],
+        ["Listed / Awaiting Listing On Stock Exchanges", None, None, 60, 60 * scale],
+        ["Example", "INE123A01012", 100, 60, 60 * scale],
+        ["Others", None, None, 40, 40 * scale],
+        ["Cash Margin - Derivatives", None, None, 40, 40 * scale],
+        ["Total Net Assets", None, None, 100, 100 * scale],
+        ["Swap notional (not a NAV weight)", None, None, 25000, 25000],
+    ])
+    parsed = parse_workbook(path, "AMC", "2026-08")
+    assert parsed.iloc[0]["pct_nav"] == pytest.approx(60)
+    assert parsed.iloc[0]["pct_nav_raw"] == pytest.approx(60 * scale)
+    assert parsed.iloc[0]["dropped_non_isin_pct_nav"] == pytest.approx(40)
+    assert parsed.iloc[0]["dropped_non_isin_count"] == 2
+    assert parsed.iloc[0]["pct_nav_scale"] == ("percent" if scale == 1 else "fraction")
+
+
+def test_partial_fraction_uses_printed_total_and_preserves_unknown_omissions(tmp_path):
+    path = workbook(tmp_path, [
+        ["Example", "INE123A01012", 100, 60, 0.6],
+        ["TREPS", None, 10, 40, "-"],
+        ["Total Net Assets", None, None, 100, 1.0],
+    ])
+    parsed = parse_workbook(path, "AMC", "2026-08")
+    assert parsed.iloc[0]["pct_nav"] == pytest.approx(60)
+    assert parsed.iloc[0]["pct_nav_raw"] == pytest.approx(0.6)
+    assert pd.isna(parsed.iloc[0]["dropped_non_isin_pct_nav"])
+
+
+def test_conflicting_printed_totals_leave_ambiguous_weights_raw(tmp_path):
+    path = workbook(tmp_path, [
+        ["Example", "INE123A01012", 100, 60, 0.6],
+        ["Grand Total", None, None, 100, 1.0],
+        ["Net Assets", None, None, 100, 100.0],
+    ])
+    parsed = parse_workbook(path, "AMC", "2026-08")
+    assert parsed.iloc[0]["pct_nav"] == pytest.approx(0.6)
+    assert parsed.iloc[0]["pct_nav_scale"] == "unknown"

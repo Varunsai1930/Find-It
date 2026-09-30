@@ -197,8 +197,45 @@ def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Serie
     # footnotes after the portfolio grand total, reusing these column
     # positions for contract counts or notionals rather than NAV weights.
     # They must not be counted as additional omitted portfolio positions.
-    after_portfolio = names.str.match(r"grand\s*total\b", case=False).cummax()
-    return ~valid_mask & names.ne("") & ~summaries & numeric & ~after_portfolio
+    after_portfolio = names.str.match(
+        r"(?:grand\s*total|total\s+net\s+assets|net\s+assets|net\s+asset\s+value)\b",
+        case=False,
+    ).cummax()
+    # These printed category totals contain no instrument quantity; their
+    # constituents are the detail rows that follow them.
+    categories = names.str.fullmatch(
+        r"(?:equity & equity related instruments(?: \(.*\))?|debt instruments|"
+        r"listed / awaiting listing on stock exchanges|government securities|"
+        r"non-convertible debentures / bonds|securitized debt instruments|"
+        r"money market instruments|certificate of deposits|treasury bills|"
+        r"zero coupon bonds / deep discount bonds|privately placed/unlisted|"
+        r"units of real estate investment trust \(REITs\)|"
+        r"units of infrastructure investment trusts \(InvITs\))",
+        case=False,
+    ) & clean["quantity"].isna()
+    return ~valid_mask & names.ne("") & ~summaries & ~categories & numeric & ~after_portfolio
+
+
+def _reported_nav_total(clean: pd.DataFrame) -> float | None:
+    """Use an explicitly printed portfolio total as source-scale evidence.
+
+    A partial portfolio's summed rows may not reach one or 100. Category
+    subtotals can also repeat its weight. The portfolio total identifies
+    units without guessing from an individual stock's weight. Conflicting
+    totals stay ambiguous and fall back to the existing row-sum rule.
+    """
+    names = clean["instrument_name"].fillna("").astype(str).str.strip()
+    is_total = names.str.fullmatch(
+        r"grand\s+total|total\s+net\s+assets|net\s+assets|net\s+asset\s+value",
+        case=False,
+    )
+    values = pd.to_numeric(clean.loc[is_total, "pct_nav"], errors="coerce").dropna()
+    if values.empty:
+        return None
+    total = float(values.iloc[0])
+    if detect_nav_scale(total) == "unknown" or (values - total).abs().gt(1e-6).any():
+        return None
+    return total
 
 
 def find_header_row(raw: pd.DataFrame):
@@ -265,6 +302,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
     """
     xls = pd.ExcelFile(path)
     all_rows = []
+    reported_totals = {}
 
     for sheet_name, raw in _scheme_sheets(xls):
         # Each workbook sheet is read once; UTI's stacked sections are sliced
@@ -312,10 +350,20 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         isin_norm = clean["isin"].astype(str).str.strip().str.upper()
         valid_mask = isin_norm.str.match(ISIN_GENERIC_RE, na=False)
         dropped_mask = dropped_holding_mask(clean, valid_mask)
+        reported_total = _reported_nav_total(clean)
+        reported_totals[sheet_name.strip()] = reported_total
         dropped_count = int(dropped_mask.sum())
         dropped_nav = pd.to_numeric(
             clean.loc[dropped_mask, "pct_nav"], errors="coerce"
         ).sum(min_count=1) if dropped_count else 0.0
+        if reported_total is not None and dropped_count:
+            # Reconcile against the printed total rather than double-counting
+            # category headings and detail rows in the omitted weight.
+            accepted = pd.to_numeric(clean.loc[valid_mask, "pct_nav"], errors="coerce")
+            accepted_sum = float(accepted.sum())
+            if (accepted.notna().all() and pd.notna(dropped_nav)
+                    and accepted_sum <= reported_total):
+                dropped_nav = reported_total - accepted_sum
         n_bad = int((~valid_mask).sum())
         n_kept = int(valid_mask.sum())
         if n_bad:
@@ -368,14 +416,15 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         accepted_total = result.loc[idx, "pct_nav_raw"].sum(min_count=1)
         omitted_total = result.loc[idx, "dropped_non_isin_pct_nav"].iloc[0]
         total = float(pd.Series([accepted_total, omitted_total]).sum(min_count=1))
-        scale = detect_nav_scale(total)
+        reported_total = reported_totals[scheme]
+        scale = detect_nav_scale(reported_total if reported_total is not None else total)
         result.loc[idx, "pct_nav_scale"] = scale
         if scale == "fraction":
             result.loc[idx, "pct_nav"] = result.loc[idx, "pct_nav_raw"] * 100.0
             result.loc[idx, "dropped_non_isin_pct_nav"] *= 100.0
             print(
                 f"  [nav-scale] '{scheme}' [{month}]: sum {total:.4f} in "
-                f"0.95-1.05 -> fraction x100 to percent.",
+                f"-> fraction x100 to percent (printed total {reported_total}).",
                 file=sys.stderr,
             )
         elif scale == "percent":
