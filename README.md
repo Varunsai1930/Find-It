@@ -83,7 +83,7 @@ findit pipeline \
   --load test_hdfc_march2026.parsed.csv \
   --load test_hdfc_april2026.parsed.csv test_sbi_april2026.parsed.csv \
   --prev 2026-03 --curr 2026-04
-uvicorn findit.web.app:create_app --factory   # http://127.0.0.1:8000
+findit web --db tracker.db   # http://127.0.0.1:8000
 ```
 
 The pipeline prints the April ranking. Reliance Industries leads with one
@@ -92,7 +92,8 @@ to compare against, so SBI is listed as "no comparison" rather than counted
 as buying its whole portfolio. Without a database, the dashboard says so
 instead of showing an empty page.
 
-GitHub Actions runs the tests and Ruff on Python 3.12 and 3.14 for every
+GitHub Actions runs the Python tests and Ruff on Python 3.12 and 3.14, plus
+the dashboard interaction regressions on Node 22, for every
 push and pull request (`.github/workflows/ci.yml`).
 
 ## Adding a month of disclosures
@@ -383,8 +384,14 @@ serves, so the two cannot disagree.
 ### Dashboard (`findit.web`)
 
 ```bash
-uvicorn findit.web.app:create_app --factory
+findit web --db tracker.db
+# Without installing the console command:
+python3 -m findit.cli web --db tracker.db
 ```
+
+For a local presentation, follow [the mentor demo guide](docs/mentor-demo.md).
+The UI supports light and dark appearances, readable phone layouts, keyboard
+stock search, and a stock detail drawer.
 
 Read-only view of `./tracker.db` in the current working directory at http://127.0.0.1:8000.
 To choose a different database, including when running from an installed package:
@@ -489,3 +496,17 @@ genuinely valuable part and was kept, in `findit/summary.py`. The design
 (`docs/phase-2-plan.md`) and the code are in git history if the decision is
 ever revisited with a job worth the constraint
 budget — cross-fund synthesis, say, with the numbers still Python-computed.
+
+### Updating previously parsed NAV weights
+
+Parsing uses an explicitly printed portfolio total to identify fractional or
+percentage NAV units. When no unambiguous total exists, it falls back to the
+sum of detail rows; ambiguous values remain raw. Category headings and
+post-portfolio derivative disclosures do not establish additional portfolio
+weight. Original weights remain in `pct_nav_raw`.
+
+A database loaded with an older parser must be **reparsed from its source
+workbooks and reloaded** to correct its stored NAV units. Re-validation alone
+changes validation statuses, not stored weights. Work on a database copy,
+load both months, and recompute the comparison with the pipeline before
+using the corrected database.
