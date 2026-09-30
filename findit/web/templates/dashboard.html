@@ -4,18 +4,40 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<title>FindIt holdings dashboard</title>
-<link rel="stylesheet" href="/static/style.css">
+<meta name="description" content="Explore monthly changes in Indian mutual fund holdings, fund-house consensus, and quarterly ownership filings.">
+<title>FindIt · Monthly fund activity</title>
+<link rel="stylesheet" href="/static/style.css?v=20261001">
 </head>
 <body>
 <a class="skip" href="#month-view">Skip to results</a>
 
 <header class="topbar">
   <div class="topbar__inner">
-    <div class="brand">
-      <span class="brand__name">FindIt</span>
-      <span class="brand__tag">Mutual fund holdings · monthly change</span>
+    <a class="brand" href="/" aria-label="FindIt home">
+      <span class="brand__mark" aria-hidden="true">f<span>.</span></span>
+      <span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span>
+    </a>
+    <nav class="nav" aria-label="Main navigation">
+      <a href="#month-view" aria-current="page">Monthly activity</a>
+      {% if scheme_options %}<a href="#scheme-summary">Scheme summary</a>{% endif %}
+      <a href="#notes-title">Reading guide</a>
+    </nav>
+    <span class="edition">India / Monthly disclosures</span>
+  </div>
+</header>
+
+<main class="page">
+  <section class="intro" aria-labelledby="page-title">
+    <div>
+      <p class="eyebrow">The fund activity desk</p>
+      <h1 id="page-title">Monthly fund activity<span class="intro__dot">.</span></h1>
+      <p class="intro__description">See what India's mutual funds bought and sold. Compare fund houses, explore individual holdings, and check the evidence behind each change.</p>
     </div>
+    <a class="intro__link" href="#notes-title">How to read the data <span aria-hidden="true">↗</span></a>
+  </section>
+
+  {% if months %}
+  <div class="filterbar" aria-label="Activity filters and stock search">
     {% if months %}
     <form class="controls" id="view-controls" method="get" action="/">
       <label class="field field--month">
@@ -58,9 +80,8 @@
     </form>
     {% endif %}
   </div>
-</header>
+  {% endif %}
 
-<main class="page">
   <div id="month-view">
     {% if month %}
     {% include "_month_view.html" %}
@@ -112,6 +133,7 @@
       <dd>A record of what funds did, not a buy list. It reports changes in quantity, flow and value, not performance.</dd>
     </dl>
   </section>
+  <footer class="footer"><span>FindIt / Fund holdings research</span><span>Monthly disclosures. Measured changes.</span></footer>
 </main>
 
 <dialog class="drawer" id="stock-dialog" aria-labelledby="stock-dialog-title">
