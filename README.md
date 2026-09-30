@@ -20,7 +20,8 @@ are template-based (see "Why the GLM narration layer was removed" below).
 
 1. **Parse** — `findit/ingest/amfi_mf_parser.py` turns an AMC's monthly Excel
    workbook into a clean CSV. It fails loudly on unrecognised columns instead
-   of guessing.
+   of guessing. It recognises Mirae's `Market/Fair Value (Rs. in Lacs)` header
+   and parses UTI's stacked scheme sections separately.
 2. **Load and validate** — `findit.cli.pipeline` loads parsed files into
    SQLite (`findit/store/db.py`). A validation gate
    (`findit/store/validation_gate.py`) checks every scheme-month; one that
@@ -129,7 +130,11 @@ findit intake --month 2026-09          # check, parse, print the load command
 Each folder is named as the database names the fund house ("SBI AMC",
 "Nippon India AMC"); `findit/ingest/amfi_amcs.json` lists all 57 from AMFI,
 with each one's disclosure page, and the report ends with the ones not yet
-downloaded. Zips are unpacked. An AMC is refused, with nothing written for it,
+downloaded. ZIP extraction is temporary: intake removes `_unzipped` afterward,
+including when processing fails; source archives and accepted parsed CSVs are
+retained. For UTI's official portfolio ZIP, intake selects the
+`Sebi Exposure as on ...` holdings workbook and excludes auxiliary riskometer,
+dividend and futures tables. An AMC is refused, with nothing written for it,
 when its files would load wrong data silently: a folder name AMFI does not
 list, the same sheet in two files (a consolidated and a per-scheme download),
 a sheet titled as another fund house's scheme, a workbook dated another month,
@@ -220,9 +225,10 @@ would publish quarantined schemes as though they had passed.
 
 ### Scheme identity (`findit.cli.alias`)
 
-A scheme's stored name is the AMC's Excel *sheet* name (`SCRF`, `SETFNIF50`,
-`SBI  Bluechip Fund`). Punctuation, casing and spacing drift between months is
-absorbed automatically by `db.normalize_scheme_name`, so a re-punctuated sheet
+A scheme's stored name normally comes from the AMC's Excel *sheet* name
+(`SCRF`, `SETFNIF50`, `SBI  Bluechip Fund`); UTI's stacked layout uses each
+section's `SCHEME:` title. Punctuation, casing and spacing drift between months
+is absorbed automatically by `db.normalize_scheme_name`, so a re-punctuated name
 keeps its existing `scheme_id` instead of forking the fund into two identities
 and manufacturing a phantom full exit plus a phantom new fund in the deltas.
 
@@ -269,12 +275,22 @@ measurement honest:
    equity-savings funds, FoFs and debt funds are excluded -- decided from the
    workbook's own scheme name ("SBI Arbitrage Fund"), not the sheet code
    ("SAOF"), which the old heuristic could not read. New ingests record it
-   automatically; for an existing DB:
+   automatically; backfill missing titles in an existing DB from workbooks:
 
    ```bash
    findit scheme-titles --db tracker.db --amc "SBI AMC" \
      real_data/sbi_aug2026.xlsx --dry-run
    ```
+
+   To reclassify using already stored titles, without workbooks:
+
+   ```bash
+   findit scheme-titles --db tracker.db --from-db --dry-run
+   ```
+
+   Omit `--dry-run` to apply classification changes. Schemes without stored
+   titles still need workbook backfill. These commands update classification
+   flags, not holdings.
 4. **Months, not stocks, are the sample.** Stocks in one month move together,
    so the track record reports each period's excess return per group and a
    t-statistic *across periods*.
@@ -332,6 +348,10 @@ size-neutral -- each stock against stocks in the same third of that quarter's
 universe by entry-day turnover, because MF ownership swings are larger in
 smaller, riskier stocks. Survivorship (delisted firms are missing) is printed
 with every run.
+
+Newly persisted shareholding source attachments are gzip-compressed in the
+fetch cache as `attachments/<sha256>.ixbrl.gz`. SHA-256 is calculated from the
+original uncompressed bytes; existing cache files are not automatically migrated.
 
 **Two sources.** BSE's filing API rate-limits heavy use (a full history run
 was blocked for over a day). `--source nse` reads the same filings from NSE's
