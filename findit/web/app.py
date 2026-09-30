@@ -7,6 +7,7 @@ holdings signals at request time.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -357,6 +358,10 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
 def create_app(db_path: str | Path | None = None) -> FastAPI:
     resolved_db = _resolve_db_path(db_path)
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
+    # Fingerprints prevent cached assets from outliving a deployed UI change.
+    assets = {name: hashlib.sha256((_WEB_DIR / "static" / name).read_bytes()).hexdigest()[:12]
+              for name in ("style.css", "dashboard.js")}
+    templates.env.globals["asset_url"] = lambda name: f"/static/{name}?v={assets[name]}"
     templates.env.filters.update(crore=_crore, signed=_signed, month_label=_month_label,
                                  scheme_label=_scheme_label)
 

@@ -774,3 +774,18 @@ def test_missing_database_is_reported_not_a_server_error(tmp_path):
         res = client.get(url)
         assert res.status_code == 503 and "No database at" in res.json()["detail"]
     assert not missing.exists()  # read-only: nothing is created
+
+
+def test_dashboard_serves_fingerprinted_local_assets(tmp_path):
+    import re
+
+    client = TestClient(create_app(str(_copy_db(tmp_path))))
+    html = client.get("/").text
+    urls = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
+    assert len(urls) == 2
+    for url in urls:
+        assert re.search(r"\?v=[a-f0-9]{12}$", url)
+        response = client.get(url)
+        assert response.status_code == 200
+        assert response.content
+    assert "function combobox" in client.get(urls[1]).text

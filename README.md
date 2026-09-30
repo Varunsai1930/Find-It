@@ -68,6 +68,7 @@ Python 3.12 or newer.
 pip install -e ".[dev]"
 python3 -m pytest -q          # every test builds its own temporary database
 ruff check .
+node --test tests/web.test.cjs  # Node 22+, no npm dependencies
 ```
 
 The dashboard reads `./tracker.db`. To try it without real data, build one
