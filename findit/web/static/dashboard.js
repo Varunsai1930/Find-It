@@ -1,5 +1,22 @@
 (function () {
   "use strict";
+  var sectionNav = document.getElementById("section-nav");
+  function updateNavigation() {
+    if (!sectionNav) return;
+    var links = sectionNav.querySelectorAll("a");
+    var hash = new URL(location.href).hash;
+    var selected = Array.from(links).find(function (link) {
+      return link.getAttribute("href") === hash;
+    }) || links[0];
+    links.forEach(function (link) {
+      if (link === selected) link.setAttribute("aria-current", "location");
+      else link.removeAttribute("aria-current");
+    });
+  }
+  if (sectionNav) {
+    window.addEventListener("hashchange", updateNavigation);
+    updateNavigation();
+  }
   var themeToggle = document.getElementById("theme-toggle");
   if (themeToggle) {
     function themeLabel() {
@@ -103,7 +120,9 @@
       viewStatus.className = "controls__status";
       viewStatus.textContent = "";
       q.set("month", month);
-      history.replaceState(null, "", "/?" + q);
+      var url = new URL(location.href);
+      url.search = q.toString();
+      history.replaceState(null, "", url);
       if (hadFocus) {
         var title = document.getElementById("consensus-title");
         if (title) title.focus();

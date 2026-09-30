@@ -21,23 +21,32 @@ class Element {
     for (const fn of this.listeners[name] || []) fn({ target: this, preventDefault() {}, ...extra });
   }
   setAttribute(key, value) { this.attributes[key] = value; }
+  getAttribute(key) { return this.attributes[key] ?? null; }
   removeAttribute(key) { delete this.attributes[key]; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   querySelector() { return null; }
-  querySelectorAll() { return this.children.filter(n => n.attributes?.role === 'option'); }
+  querySelectorAll(selector) {
+    return selector === 'a' ? this.children : this.children.filter(n => n.attributes?.role === 'option');
+  }
   contains() { return false; }
   focus() {}
   scrollIntoView() {}
 }
 
-function boot({ schemes = false, controls = false } = {}) {
+function boot({ schemes = false, controls = false, hash = '' } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
-    'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status'];
+    'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
   if (schemes) ids.push('scheme-data', 'scheme-search', 'scheme-options', 'scheme-search-status',
     'summary-box', 'summary-form');
   if (controls) ids.push('view-controls', 'equity-only', 'active-only');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
+  const navLinks = ['#month-view', '#scheme-summary', '#notes-title'].map(href => {
+    const link = new Element(); link.setAttribute('href', href); return link;
+  });
+  elements['section-nav'].append(...navLinks);
+  const location = { href: 'http://localhost/' + hash };
+  const window = new Element();
   elements['month-select'].value = '2026-08';
   elements['month-select'].options = [{ text: 'Aug 2026' }];
   elements['month-select'].selectedIndex = 0;
@@ -52,7 +61,7 @@ function boot({ schemes = false, controls = false } = {}) {
       createElement: () => new Element(),
       addEventListener() {},
     },
-    location: { href: 'http://localhost/' }, history: { replaceState() {} },
+    location, window, history: { replaceState(_state, _title, url) { location.href = String(url); } },
     URL, URLSearchParams, AbortController, DOMException,
     FormData: class { get() { return null; } },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
@@ -63,13 +72,32 @@ function boot({ schemes = false, controls = false } = {}) {
       }));
     },
   });
-  return { elements, requests, async type(id, value) {
+  return { elements, requests, navLinks, location, window, async type(id, value) {
     elements[id].value = value;
     elements[id].emit('input');
     for (const [id, fn] of timers) { timers.delete(id); fn(); }
     await settle();
   } };
 }
+
+test('navigation underline follows the loaded hash and later section changes', () => {
+  const ui = boot({ hash: '#scheme-summary' });
+  assert.equal(ui.navLinks[1].getAttribute('aria-current'), 'location');
+  assert.equal(ui.navLinks[0].getAttribute('aria-current'), null);
+  ui.location.href = 'http://localhost/#notes-title';
+  ui.window.emit('hashchange');
+  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
+  assert.equal(ui.navLinks[1].getAttribute('aria-current'), null);
+});
+
+test('refreshing the month preserves the selected section in the URL', async () => {
+  const ui = boot({ controls: true, hash: '#scheme-summary' });
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  ui.requests[0].respond('<section>New month</section>');
+  await settle();
+  assert.equal(new URL(ui.location.href).hash, '#scheme-summary');
+  assert.equal(new URL(ui.location.href).searchParams.get('month'), '2026-08');
+});
 const stockResponse = name => JSON.stringify({ results: [{ name, isin: 'INE002A01018' }] });
 
 for (const action of ['blur', 'input']) {
