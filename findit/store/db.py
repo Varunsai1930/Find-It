@@ -7,6 +7,7 @@ writers (see the build plan, section 11).
 """
 import re
 import sqlite3
+import json
 from pathlib import Path
 import pandas as pd
 
@@ -67,6 +68,32 @@ CREATE TABLE IF NOT EXISTS shareholding_quarterly (
 
 # Additive v2 tables (never modifies SCHEMA above; applied alongside it).
 V2_SCHEMA = """
+CREATE TABLE IF NOT EXISTS disclosure_sources (
+    sha256 TEXT PRIMARY KEY,
+    workbook_name TEXT NOT NULL,
+    source_url TEXT,
+    retrieved_at TEXT,
+    published_at TEXT
+);
+CREATE TABLE IF NOT EXISTS snapshot_sources (
+    scheme_id INTEGER NOT NULL,
+    report_month TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL REFERENCES disclosure_sources(sha256),
+    parser_version TEXT NOT NULL,
+    PRIMARY KEY(scheme_id, report_month, source_sha256)
+);
+CREATE TABLE IF NOT EXISTS holding_evidence (
+    scheme_id INTEGER NOT NULL,
+    report_month TEXT NOT NULL,
+    isin TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL REFERENCES disclosure_sources(sha256),
+    sheet TEXT NOT NULL,
+    row_number INTEGER NOT NULL,
+    raw_json TEXT,
+    normalized_json TEXT NOT NULL,
+    parser_version TEXT NOT NULL,
+    PRIMARY KEY(scheme_id, report_month, source_sha256, sheet, row_number, parser_version)
+);
 CREATE TABLE IF NOT EXISTS coverage_inventories (
     amc_name TEXT NOT NULL,
     report_month TEXT NOT NULL,
@@ -640,6 +667,30 @@ def _write_parsed(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
     for (amc, scheme), _ in df.groupby(["amc_name", "scheme_name"]):
         scheme_ids[(amc, scheme)] = resolve_scheme_id(conn, amc, scheme, commit=False)
 
+    # Original evidence is append-only across corrections. snapshot_sources
+    # identifies which version supports the currently loaded numbers.
+    if "source_sha256" in df:
+        for (amc, scheme, month), group in df.groupby(["amc_name", "scheme_name", "report_month"]):
+            sid = scheme_ids[(amc, scheme)]
+            conn.execute("DELETE FROM snapshot_sources WHERE scheme_id = ? AND report_month = ?", (sid, month))
+            for source_hash, source in group.groupby("source_sha256"):
+                first = source.iloc[0]
+                conn.execute("INSERT INTO disclosure_sources VALUES (?, ?, ?, ?, ?) "
+                             "ON CONFLICT(sha256) DO UPDATE SET "
+                             "source_url=COALESCE(excluded.source_url,source_url), "
+                             "retrieved_at=COALESCE(retrieved_at,excluded.retrieved_at), "
+                             "published_at=COALESCE(excluded.published_at,published_at)",
+                             (source_hash, first["source_workbook"], _value(first.get("source_url")),
+                              _value(first.get("source_retrieved_at")), _value(first.get("source_published_at"))))
+                conn.execute("INSERT INTO snapshot_sources VALUES (?, ?, ?, ?)",
+                             (sid, month, source_hash, first["parser_version"]))
+                for _, row in source.dropna(subset=["isin", "source_row"]).iterrows():
+                    normalized = {k: _value(row.get(k)) for k in _HOLDING_COLUMNS}
+                    conn.execute("INSERT OR IGNORE INTO holding_evidence VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                 (sid, month, row["isin"], source_hash, row["source_sheet"],
+                                  int(row["source_row"]), _value(row.get("source_raw_json")),
+                                  json.dumps(normalized, sort_keys=True), first["parser_version"]))
+
     # Full scheme names from the sheet headers drive the passive/arbitrage
     # filter. Every flag they change is printed, never applied silently.
     if "scheme_title" in df:
@@ -685,6 +736,9 @@ def _write_parsed(conn: sqlite3.Connection, df: pd.DataFrame) -> int:
             "WHERE scheme_id = ? AND report_month = ?", (scheme_id, month)).fetchall())
         if stored == set(rows.values()):
             continue  # the same snapshot again: nothing derived from it is stale
+        if "source_sha256" not in df:
+            conn.execute("DELETE FROM snapshot_sources WHERE scheme_id = ? AND report_month = ?",
+                         (scheme_id, month))
         # The file replaces the month; an upsert would keep holdings the
         # corrected file no longer lists.
         conn.execute("DELETE FROM mf_holdings_monthly WHERE scheme_id = ? AND report_month = ?",

@@ -24,6 +24,7 @@ import pandas as pd
 
 from findit.core import consensus_signals, publication
 from findit.core.coverage import house_coverage, month_coverage
+from findit.core.evidence import stock_evidence
 from findit.store import queries
 from findit.summary import get_summary
 from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
@@ -591,6 +592,29 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             conn.close()
 
     # -- stock ------------------------------------------------------------
+    @app.get("/api/evidence/{isin}")
+    def api_evidence(isin: str, month: str, active_only: int = 1,
+                     amc: str | None = None) -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail="Unknown month")
+            return _sanitize(stock_evidence(conn, isin.upper(), month, active_only == 1, amc))
+        finally:
+            conn.close()
+
+    @app.get("/evidence/{isin}")
+    def evidence_page(request: Request, isin: str, month: str, active_only: int = 1,
+                      amc: str | None = None) -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail="Unknown month")
+            evidence = stock_evidence(conn, isin.upper(), month, active_only == 1, amc)
+            return templates.TemplateResponse(request, "evidence.html", {"e": _sanitize(evidence)})
+        finally:
+            conn.close()
+
     @app.get("/api/stock/{isin}")
     def api_stock(isin: str, month: str | None = None) -> Any:
         conn = _ro_connect(resolved_db)

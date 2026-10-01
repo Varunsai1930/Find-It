@@ -55,7 +55,8 @@ def main(argv: list[str] | None = None) -> int:
         page = None
         for amc in selected:
             try:
-                if amc in {"HDFC AMC", "Aditya Birla Sun Life AMC", "Mirae Asset AMC"} and page is None:
+                if amc in {"HDFC AMC", "Aditya Birla Sun Life AMC", "Mirae Asset AMC",
+                           "Franklin Templeton AMC"} and page is None:
                     page = _browser_page(stack)
                 try:
                     files = download.discover(args.month, amc, session, page)

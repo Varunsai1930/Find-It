@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · Evidence</title><link rel="stylesheet" href="{{ asset_url('style.css') }}"></head>
+<body><main class="page" style="max-width:1100px;margin:auto;padding:24px">
+<a href="/?{{ dict(month=e.month, active_only=e.active_only|int)|urlencode }}">← Monthly activity</a>
+<h1>View evidence · {{ e.isin }}</h1>
+<p>{{ e.amc or 'All compared fund houses' }} · {{ e.prev_month|month_label }} → {{ e.month|month_label }} · {{ 'Active stock-pickers' if e.active_only else 'All fund types' }} · domestic equity</p>
+{% if e.no_data %}<p class="state">No usable comparison in this scope. Missing snapshots are not zero holdings or trades.</p>{% else %}
+<dl class="facts"><div><dt>Previous shares, adjusted</dt><dd>{{ e.adjusted_previous_shares|signed }}</dd></div><div><dt>Current shares</dt><dd>{{ e.current_shares|signed }}</dd></div><div><dt>Net share change</dt><dd>{{ e.net_share_change|signed }}</dd></div></dl>
+<p>Added {{ e.gross_added_shares|signed }} shares; reduced {{ e.gross_reduced_shares|signed }} shares. Opposing trades are netted. Estimated net trading value: ₹{{ e.net_flow_lakhs|crore }} Cr.</p>
+{% endif %}
+<p>{{ e.price_convention }}</p><p>{{ e.ownership_note }}</p>
+<p>Independent review: pending. Unknown publication dates remain unknown; the dashboard's cutoff uses a deadline assumption.</p>
+{% for house, coverage in e.coverage.items() %}<p>{{ house }}: {{ coverage.coverage_state|replace('_',' ') }} · Expected {{ coverage.expected if coverage.expected is not none else 'unknown' }} · Loaded {{ coverage.loaded }} · Validated {{ coverage.validated_count }} · Compared {{ coverage.compared }}</p>{% endfor %}
+{% for f in e.funds %}
+<section class="panel" style="padding:20px;margin:20px 0"><h2>{{ f.scheme_name }}</h2><p>{{ f.amc_name }} · {{ f.raw_quantity_prev|signed }} raw previous shares × {{ f.split_ratio }} = {{ f.quantity_prev|signed }} adjusted → {{ f.quantity_curr|signed }} current · change {{ f.qty_change|signed }} · ₹{{ f.flow_lakhs|crore }} Cr</p>
+<p>Split/bonus adjustment: {{ f.adjustment_basis }}. {% if f.adjustment_basis == 'inferred' %}Inferred from quantities and inverse prices; not an independently confirmed corporate action.{% endif %}</p>
+{% for source in [f.previous_source, f.current_source] %}
+<details><summary>{{ source.month|month_label }} · {{ source.validation }} · provenance {{ source.provenance_status|replace('_',' ') }}</summary>
+{% if not source.sources %}<p>Original-source provenance is unavailable for this legacy snapshot.</p>{% endif %}
+{% for s in source.sources %}<p>{{ s.workbook }}{% if s.url %} · <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Official disclosure</a>{% else %} · official URL not recorded{% endif %}<br>SHA-256: <code style="overflow-wrap:anywhere">{{ s.sha256 }}</code><br>Published: {{ s.published_at or 'unknown' }} · Retrieved: {{ s.retrieved_at or 'unknown' }} · Parser: {{ s.parser_version }}</p>{% endfor %}
+{% for r in source.rows %}<p>Sheet {{ r.sheet }} · row {{ r.row }}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">Raw: {{ r.raw|tojson }}
+Normalized: {{ r.normalized|tojson }}</pre>{% endfor %}
+</details>{% endfor %}</section>{% endfor %}
+</main></body></html>

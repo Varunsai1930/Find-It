@@ -13,6 +13,7 @@ import re
 import tempfile
 import zipfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -32,9 +33,10 @@ DSP_PAGE = "https://www.dspim.com/mandatory-disclosures/portfolio-disclosures"
 PPFAS_PAGE = "https://amc.ppfas.com/downloads/portfolio-disclosure/"
 ABSL_PAGE = "https://mutualfund.adityabirlacapital.com/forms-and-downloads/portfolio"
 MIRAE_PAGE = "https://www.miraeassetmf.co.in/downloads/portfolio"
+FRANKLIN_PAGE = "https://www.franklintempletonindia.com/reports"
 SUPPORTED = ("SBI AMC", "ICICI Prudential AMC", "HDFC AMC", "Nippon India AMC",
              "UTI AMC", "Aditya Birla Sun Life AMC", "Mirae Asset AMC", "DSP AMC",
-             "PPFAS AMC")
+             "PPFAS AMC", "Franklin Templeton AMC")
 MANUAL = ("Kotak Mahindra AMC", "Axis AMC")
 SUFFIXES = {".xlsx", ".xls", ".zip"}
 MANIFEST = ".findit-download.json"
@@ -262,6 +264,18 @@ def discover_hdfc(month: str, page) -> list[SourceFile]:
     year, number, month_name = _month(month)
     page.goto(HDFC_PAGE, wait_until="domcontentloaded", timeout=30000)
     date = f"{calendar.monthrange(year, number)[1]} {month_name} {year}"
+    selector = page.get_by_role("button", name=re.compile(
+        r"^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s*-\s*\d{4}"))
+    selector.wait_for(timeout=30000)
+    if selector.inner_text().strip() != f"{calendar.month_abbr[number]} - {year}":
+        current = selector.inner_text()
+        selector.click()
+        menu = page.locator('div[class*="calenderbg"]')
+        if str(year) not in current:
+            menu.get_by_text(str(year), exact=True).click()
+        menu.locator('div[class*="greybg"]').click()
+        menu.get_by_text(calendar.month_abbr[number], exact=True).click()
+        page.get_by_role("link", name=re.compile(r"Monthly HDFC .*" + re.escape(date))).first.wait_for(timeout=30000)
     links = page.locator('a[href$=".xlsx"]').evaluate_all(
         "els => els.map(a => ({name: a.textContent.trim(), url: a.href}))")
     candidates = []
@@ -274,6 +288,17 @@ def discover_hdfc(month: str, page) -> list[SourceFile]:
     if len({item.name for item in candidates}) != len(candidates):
         raise ValueError("HDFC AMC: duplicate workbook names on disclosure page")
     return candidates
+
+
+def discover_franklin(month: str, page) -> list[SourceFile]:
+    year, number, month_name = _month(month)
+    page.goto(FRANKLIN_PAGE, wait_until="domcontentloaded", timeout=45000)
+    page.get_by_role("tab", name="Monthly Portfolio Disclosure", exact=True).click()
+    date = f"{calendar.monthrange(year, number)[1]} {month_name} {year}"
+    link = page.get_by_role("link", name=f"ISIN as on {date}", exact=True)
+    link.wait_for(timeout=30000)
+    url = urljoin(FRANKLIN_PAGE, link.get_attribute("href"))
+    return [SourceFile("Franklin Templeton AMC", _safe_name(Path(urlparse(url).path).name), url)]
 
 
 def discover(month: str, amc: str, session: requests.Session, page=None) -> list[SourceFile]:
@@ -304,6 +329,8 @@ def discover(month: str, amc: str, session: requests.Session, page=None) -> list
         return discover_absl(month, page)
     if amc == "Mirae Asset AMC":
         return discover_mirae(month, page)
+    if amc == "Franklin Templeton AMC":
+        return discover_franklin(month, page)
     raise ValueError(f"unsupported AMC: {amc}")
 
 
@@ -382,8 +409,9 @@ def save_files(files: list[SourceFile], month_dir: Path, session: requests.Sessi
         staged = [_download_file(item, Path(temporary) / _safe_name(item.name),
                                  session, page) for item in files]
         manifest = {"amc": amc, "files": [
-            {"name": path.name, "sha256": _sha256(path)}
-            for path in staged]}
+            {"name": path.name, "sha256": _sha256(path), "source_url": item.url,
+             "retrieved_at": datetime.now(timezone.utc).isoformat(), "published_at": None}
+            for item, path in zip(files, staged, strict=True)]}
         (Path(temporary) / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
         if folder.exists():
             folder.rmdir()  # only an empty pre-existing directory is safe to replace

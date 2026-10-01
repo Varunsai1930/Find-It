@@ -8,6 +8,7 @@
 
 {% if stock.month %}
 <h4>Fund activity · {{ stock.month|month_label }} <span class="muted">({{ scope(view) }})</span></h4>
+{% if stock.instrument_type == 'equity' %}<a href="/evidence/{{ stock.isin }}?{{ dict(month=stock.month, active_only=view.active_only)|urlencode }}">View evidence · compared domestic equity funds</a>{% endif %}
 {% if activity %}
 <dl class="activity">
   <div><dt>Net fund houses</dt><dd><span class="num strong">{{ activity.net_amc_count|signed }}</span><span class="sub">{{ activity.amcs_buying }} buying · {{ activity.amcs_selling }} selling</span></dd></div>

@@ -159,6 +159,69 @@ def voting_schemes(
     return {int(r[0]): str(r[1]) for r in rows}
 
 
+def comparison_rows(conn: sqlite3.Connection, report_month: str,
+                    active_equity_only: bool = True) -> pd.DataFrame:
+    """Exact adjusted contributions shared by overview, evidence and history."""
+    prev_month = (date.fromisoformat(report_month + "-01") - timedelta(days=1)).strftime("%Y-%m")
+    source, params = _eligible_deltas(conn, report_month, "equity", active_equity_only)
+    if not queries.has_status_table(conn):
+        return pd.DataFrame()
+    for required_month in ("d.report_month", "d.prev_month"):
+        source += (" AND EXISTS (SELECT 1 FROM scheme_month_status checked "
+                   f"WHERE checked.scheme_id=d.scheme_id AND checked.report_month={required_month} "
+                   "AND checked.status='ok')")
+    rows = pd.read_sql_query(
+        "WITH eligible AS (SELECT d.*, sch.amc_name, s.name AS stock_name "
+        + source + " AND d.prev_month = ?) "
+        "SELECT d.scheme_id, d.isin, d.amc_name, d.stock_name, d.flow_lakhs, "
+        "COALESCE(p.quantity, 0) AS quantity_prev, "
+        "COALESCE(c.quantity, 0) AS quantity_curr, "
+        "COALESCE(p.market_value_lakhs, 0) AS market_value_lakhs_prev, "
+        "COALESCE(c.market_value_lakhs, 0) AS market_value_lakhs_curr, "
+        "COALESCE(p.pct_nav, 0) AS pct_nav_prev, COALESCE(c.pct_nav, 0) AS pct_nav_curr "
+        "FROM eligible d LEFT JOIN mf_holdings_monthly p ON p.scheme_id = d.scheme_id "
+        "AND p.isin = d.isin AND p.report_month = d.prev_month "
+        "LEFT JOIN mf_holdings_monthly c ON c.scheme_id = d.scheme_id "
+        "AND c.isin = d.isin AND c.report_month = d.report_month "
+        "WHERE (p.scheme_id IS NOT NULL OR c.scheme_id IS NOT NULL) "
+        "AND EXISTS (SELECT 1 FROM mf_holdings_monthly h WHERE h.scheme_id = d.scheme_id "
+        "AND h.report_month = d.prev_month) "
+        "AND EXISTS (SELECT 1 FROM mf_holdings_monthly h WHERE h.scheme_id = d.scheme_id "
+        "AND h.report_month = d.report_month)", conn, params=[*params, prev_month])
+    if rows.empty:
+        return rows
+
+    def holdings(suffix: str) -> pd.DataFrame:
+        return rows[["scheme_id", "isin", *[key + suffix for key in
+                    ("quantity", "market_value_lakhs", "pct_nav")]]].rename(
+            columns={key + suffix: key for key in ("quantity", "market_value_lakhs", "pct_nav")})
+
+    prev, curr = holdings("_prev"), holdings("_curr")
+    confirmed = {}
+    if queries.has_table(conn, "corporate_actions"):
+        confirmed = {str(isin): float(ratio) for isin, ratio in conn.execute(
+            "SELECT isin, ratio FROM corporate_actions "
+            "WHERE confirmed = 1 AND effective_month = ? AND ratio > 0", (report_month,))}
+    ratios = active_weight.infer_split_ratios(prev, curr, confirmed)
+    rows["raw_quantity_prev"] = rows["quantity_prev"]
+    rows["split_ratio"] = rows["isin"].map(ratios).fillna(1.0)
+    rows["adjustment_basis"] = rows["isin"].map(
+        lambda isin: "confirmed" if isin in confirmed else "inferred" if isin in ratios else "none")
+    rows["quantity_prev"] *= rows["isin"].map(ratios).fillna(1.0)
+    rows["qty_change"] = rows["quantity_curr"] - rows["quantity_prev"]
+    if ratios:
+        prev["quantity"] *= prev["isin"].map(ratios).fillna(1.0)
+        # Reuse the pipeline's flow convention for adjusted comparisons.
+        adjusted = delta_calculator.diff_holdings(prev, curr, prev_month, report_month)
+        flows = adjusted.set_index(["scheme_id", "isin"])["flow_lakhs"]
+        split_rows = rows["isin"].isin(ratios)
+        rows.loc[split_rows, "flow_lakhs"] = [
+            flows.at[(sid, isin)] for sid, isin in
+            rows.loc[split_rows, ["scheme_id", "isin"]].itertuples(index=False, name=None)]
+
+    return rows
+
+
 def fund_house_activity(conn: sqlite3.Connection, report_month: str,
                         active_equity_only: bool = True) -> dict:
     """Net equity share changes per AMC, across comparable schemes only.
@@ -180,51 +243,9 @@ def fund_house_activity(conn: sqlite3.Connection, report_month: str,
         "GROUP BY sch.amc_name", (report_month, report_month, prev_month)).fetchall()
     houses = {str(amc): {"loaded": int(count), "compared": 0, "increased": 0,
                          "reduced": 0, "biggest": None, "compared_ids": []} for amc, count in loaded}
-    source, params = _eligible_deltas(conn, report_month, "equity", active_equity_only)
-    rows = pd.read_sql_query(
-        "WITH eligible AS (SELECT d.*, sch.amc_name, s.name AS stock_name "
-        + source + " AND d.prev_month = ?) "
-        "SELECT d.scheme_id, d.isin, d.amc_name, d.stock_name, d.flow_lakhs, "
-        "COALESCE(p.quantity, 0) AS quantity_prev, "
-        "COALESCE(c.quantity, 0) AS quantity_curr, "
-        "COALESCE(p.market_value_lakhs, 0) AS market_value_lakhs_prev, "
-        "COALESCE(c.market_value_lakhs, 0) AS market_value_lakhs_curr, "
-        "COALESCE(p.pct_nav, 0) AS pct_nav_prev, COALESCE(c.pct_nav, 0) AS pct_nav_curr "
-        "FROM eligible d LEFT JOIN mf_holdings_monthly p ON p.scheme_id = d.scheme_id "
-        "AND p.isin = d.isin AND p.report_month = d.prev_month "
-        "LEFT JOIN mf_holdings_monthly c ON c.scheme_id = d.scheme_id "
-        "AND c.isin = d.isin AND c.report_month = d.report_month "
-        "WHERE (p.scheme_id IS NOT NULL OR c.scheme_id IS NOT NULL) "
-        "AND EXISTS (SELECT 1 FROM mf_holdings_monthly h WHERE h.scheme_id = d.scheme_id "
-        "AND h.report_month = d.prev_month) "
-        "AND EXISTS (SELECT 1 FROM mf_holdings_monthly h WHERE h.scheme_id = d.scheme_id "
-        "AND h.report_month = d.report_month)", conn, params=[*params, prev_month])
+    rows = comparison_rows(conn, report_month, active_equity_only)
     if rows.empty:
         return {"prev_month": prev_month, "houses": houses}
-
-    def holdings(suffix: str) -> pd.DataFrame:
-        return rows[["scheme_id", "isin", *[key + suffix for key in
-                    ("quantity", "market_value_lakhs", "pct_nav")]]].rename(
-            columns={key + suffix: key for key in ("quantity", "market_value_lakhs", "pct_nav")})
-
-    prev, curr = holdings("_prev"), holdings("_curr")
-    confirmed = {}
-    if queries.has_table(conn, "corporate_actions"):
-        confirmed = {str(isin): float(ratio) for isin, ratio in conn.execute(
-            "SELECT isin, ratio FROM corporate_actions "
-            "WHERE confirmed = 1 AND effective_month = ? AND ratio > 0", (report_month,))}
-    ratios = active_weight.infer_split_ratios(prev, curr, confirmed)
-    rows["quantity_prev"] *= rows["isin"].map(ratios).fillna(1.0)
-    rows["qty_change"] = rows["quantity_curr"] - rows["quantity_prev"]
-    if ratios:
-        prev["quantity"] *= prev["isin"].map(ratios).fillna(1.0)
-        # Reuse the pipeline's flow convention for adjusted comparisons.
-        adjusted = delta_calculator.diff_holdings(prev, curr, prev_month, report_month)
-        flows = adjusted.set_index(["scheme_id", "isin"])["flow_lakhs"]
-        split_rows = rows["isin"].isin(ratios)
-        rows.loc[split_rows, "flow_lakhs"] = [
-            flows.at[(sid, isin)] for sid, isin in
-            rows.loc[split_rows, ["scheme_id", "isin"]].itertuples(index=False, name=None)]
 
     for amc, group in rows.groupby("amc_name", sort=True):
         house = houses.setdefault(str(amc), {"loaded": 0})

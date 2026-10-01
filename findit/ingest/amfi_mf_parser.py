@@ -21,6 +21,8 @@ worse failure than a crash you can see and fix.
 
 import re
 import sys
+import hashlib
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -70,6 +72,7 @@ COLUMN_SYNONYMS = {
 }
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
+PARSER_VERSION = "portfolio-2026-10-01"
 
 # Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
 # check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
@@ -281,6 +284,8 @@ def _scheme_sheets(xls):
                 if start is None or closing.group(1) != code:
                     raise ValueError("UTI portfolio has an unmatched scheme end")
                 section = raw.iloc[start + 1:index].reset_index(drop=True)
+                section.attrs["source_row_offset"] = start + 1
+                section.attrs["source_sheet"] = sheet_name
                 titles = section.iloc[:5, 0]
                 names = [str(v).split(":", 1)[1].strip() for v in titles
                          if str(v).startswith("SCHEME:")]
@@ -301,6 +306,12 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
     blank-ISIN metadata row, which consumers must never insert as a holding.
     """
     xls = pd.ExcelFile(path)
+    source_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    source_metadata = {}
+    manifest = path.parent / ".findit-download.json"
+    if manifest.is_file():
+        source_metadata = next((r for r in json.loads(manifest.read_text()).get("files", [])
+                                if r.get("sha256") == source_hash), {})
     all_rows = []
     reported_totals = {}
 
@@ -325,6 +336,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         header_vals = raw.iloc[header_row_idx].tolist()
         df = raw.iloc[header_row_idx + 1:].copy()
         df.columns = header_vals
+        df["source_row"] = df.index + 1 + raw.attrs.get("source_row_offset", 0)
         df = df.reset_index(drop=True)
         df = df.dropna(how="all")
 
@@ -341,7 +353,10 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             ["industry"] if "industry" in col_map else []
         )
         clean = df.rename(columns={v: k for k, v in col_map.items()})
-        clean = clean[keep_cols]
+        clean = clean[keep_cols + ["source_row"]]
+        clean["source_raw_json"] = [json.dumps({k: None if pd.isna(row[k]) else str(row[k])
+                                               for k in keep_cols}, sort_keys=True)
+                                    for _, row in clean.iterrows()]
 
         # ISIN hygiene: keep every row matching the generic ISIN shape
         # (Indian IN... plus foreign US.../etc. for later classification).
@@ -386,7 +401,8 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         if clean.empty and dropped_count:
             # CSV-compatible metadata carrier, never a holding. The loader
             # registers this scheme/provenance, then skips the blank ISIN.
-            clean = pd.DataFrame([{column: None for column in keep_cols}])
+            clean = pd.DataFrame([{column: None for column in
+                                   keep_cols + ["source_row", "source_raw_json"]}])
         clean["dropped_non_isin_count"] = dropped_count
         clean["dropped_non_isin_pct_nav"] = dropped_nav
 
@@ -395,6 +411,13 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         clean["scheme_title"] = scheme_title
         clean["amc_name"] = amc_name
         clean["report_month"] = report_month
+        clean["source_sha256"] = source_hash
+        clean["source_workbook"] = path.name
+        clean["source_sheet"] = raw.attrs.get("source_sheet", sheet_name)
+        clean["source_url"] = source_metadata.get("source_url")
+        clean["source_retrieved_at"] = source_metadata.get("retrieved_at")
+        clean["source_published_at"] = source_metadata.get("published_at")
+        clean["parser_version"] = PARSER_VERSION
         all_rows.append(clean)
 
     if not all_rows:
