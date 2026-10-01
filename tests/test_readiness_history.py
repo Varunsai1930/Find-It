@@ -17,3 +17,5 @@ def test_history_uses_one_cohort_and_never_fills_missing_month_with_zero(tmp_pat
     changed = stock_history(c, "INE002A01018", "2026-07", "2026-08")
     assert changed["cohort"] == [1, 2]
     assert [p["shares"] for p in changed["points"]] == [140, 210]
+    unknown = stock_history(c, "INE123A01012", "2026-07", "2026-08")
+    assert all(p["shares"] is None for p in unknown["points"])

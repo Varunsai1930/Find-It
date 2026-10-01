@@ -6,6 +6,7 @@ from datetime import date
 
 from findit.core.consensus_signals import comparison_rows
 from findit.store import queries
+from findit.store.releases import RULE_VERSION, content_id
 
 
 def month_range(start: str, end: str) -> list[str]:
@@ -26,6 +27,7 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
             frame = frame[frame["amc_name"] == amc]
         cohorts.append(set(int(sid) for sid in frame["scheme_id"]) if not frame.empty else set())
     cohort = set.intersection(*cohorts) if cohorts else set()
+    known_stock = bool(conn.execute("SELECT 1 FROM stocks WHERE isin=?", (isin,)).fetchone())
     source_backed = set()
     if queries.has_table(conn, "snapshot_sources"):
         source_backed = {sid for sid in cohort if all(conn.execute(
@@ -34,9 +36,11 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
     # Show a validated fixed cohort even on legacy data, naming provenance gaps.
     points = []
     for month in months:
-        if not cohort:
+        if not cohort or not known_stock:
             points.append({"month": month, "shares": None, "net_share_change": None,
-                           "net_flow_lakhs": None, "status": "unavailable", "funds": 0})
+                           "net_flow_lakhs": None, "status": "unavailable", "funds": 0,
+                           "houses_buying": None, "houses_selling": None,
+                           "adjustments": [], "source_revision": False})
             continue
         placeholders = ",".join("?" for _ in cohort)
         shares = conn.execute(
@@ -59,10 +63,20 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
                          houses_selling=int((net_by_house < -1e-6).sum()),
                          adjustments=sorted(set(subset.loc[
                              subset["adjustment_basis"] != "none", "adjustment_basis"])))
+        point["source_revision"] = bool(queries.has_table(conn, "holding_evidence") and conn.execute(
+            f"SELECT 1 FROM holding_evidence e WHERE e.report_month=? AND e.isin=? AND e.scheme_id IN ({placeholders}) "
+            "AND NOT EXISTS (SELECT 1 FROM snapshot_sources s WHERE s.scheme_id=e.scheme_id "
+            "AND s.report_month=e.report_month AND s.source_sha256=e.source_sha256) LIMIT 1",
+            (month, isin, *sorted(cohort))).fetchone())
         points.append(point)
+    maximum = max((p["shares"] or 0 for p in points), default=0)
+    for point in points:
+        point["bar_percent"] = (100 * point["shares"] / maximum if maximum and point["shares"] is not None else 0)
     return {"isin": isin, "start": start, "end": end, "amc": amc,
+            "release_id": content_id(conn), "rule_version": RULE_VERSION,
             "active_only": active_only, "cohort": sorted(cohort), "cohort_count": len(cohort),
             "source_backed_count": len(source_backed), "points": points,
             "scope": "Same validated individual funds at every snapshot and adjacent comparison in this range. Completeness of the wider fund universe remains unknown.",
-            "limitation": ("No fixed cohort is available across the full range; all points remain gaps."
+            "limitation": ("Unknown stock in this data release; all points remain unavailable." if not known_stock else
+                           "No fixed cohort is available across the full range; all points remain gaps."
                            if not cohort else "History describes this cohort only. It does not establish investment performance.")}
