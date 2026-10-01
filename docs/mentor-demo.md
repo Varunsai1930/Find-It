@@ -32,7 +32,7 @@ own official disclosures.
    Read **Monthly summary** for the eight selected fund houses. Each card
    shows how stock holdings changed and its biggest move; coverage gaps
    remain explicit. See [the selection and measurement rules](monthly-summary.md).
-   Explain that AMCs net counts fund houses, rather than treating every
+   Explain that Net fund houses counts fund houses, rather than treating every
    scheme from one house as an independent vote.
 2. Open **Data coverage**. Show which schemes were compared and withheld,
    and the publication cutoff. A missing previous month means there is no
@@ -44,7 +44,7 @@ own official disclosures.
    enter `INE002A01018`. Inspect the activity, fund holdings, and quarterly
    filings. ICICI's NAV weights now use percentage units, with the original
    source weights retained in the database.
-5. Open **Scheme summary**, type **HDFC Large Cap**, and select the fund.
+5. Open **Fund summary**, type **HDFC Large Cap**, and select the fund.
    Switch to **Jul 2026** to demonstrate that the summary follows the month
    and explains when a comparison is unavailable.
 6. Return to August. Resize to a phone width or open the browser's responsive
@@ -54,7 +54,7 @@ own official disclosures.
 
 ## Verification on 1 October 2026
 
-- 400 passing Python tests, including ingestion, validation, ranking, publication timing,
+- 401 passing Python tests, including ingestion, validation, ranking, publication timing,
   read-only access, web routes, and the launch command.
 - Seven JavaScript regressions for section navigation, stale autocomplete and summary requests.
   Four reproduced failures in the previous inline script.

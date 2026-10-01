@@ -138,7 +138,7 @@ test('editing a scheme clears and cancels its pending summary', async () => {
   assert.equal(ui.requests[0].signal.aborted, true);
   ui.requests[0].respond(JSON.stringify({ has_data: true, summary: 'Old summary' }));
   await settle();
-  assert.match(ui.elements['summary-box'].children[0].textContent, /Pick a scheme/);
+  assert.match(ui.elements['summary-box'].children[0].textContent, /Pick a fund/);
 });
 
 test('changing month refreshes a selected scheme while its summary is still loading', async () => {

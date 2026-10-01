@@ -268,6 +268,12 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 .panel__head h2:focus { outline: none; }
 .panel__head h2:focus-visible { outline: 2px solid var(--accent); }
 .panel__meta { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
+.fund-terms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); max-width: 620px; }
+.fund-terms p { margin: 0; font-size: 12px; }
+.fund-terms strong { display: block; margin-bottom: 3px; }
+.fund-terms span { color: var(--ink-3); font-weight: 400; }
+.fund-counts { display: flex; flex-wrap: wrap; gap: 3px 12px; font-size: 12px; }
 .panel__foot { padding: 10px 16px; border-top: 1px solid var(--line); }
 .panel > .state, .panel > .result, .panel > .inline-form { margin: 16px; }
 
@@ -455,6 +461,7 @@ table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
   .intro h1 { letter-spacing: -1px; }
   .footer { flex-direction: column; gap: 4px; }
   .panel__head { padding: 16px; }
+  .fund-terms { gap: 12px; }
   /* Brand on one line above a compact two-column filter grid:
      month | rows, then Buying | Selling, then the checkboxes and search. */
   .topbar__inner { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px 8px; padding-top: 14px; padding-bottom: 12px; }

@@ -552,7 +552,7 @@ def test_default_table_is_the_scannable_columns(tmp_path):
     db = _copy_db(tmp_path)
     client = TestClient(create_app(str(db)))
     core = client.get("/fragments/month/2026-08").text
-    for heading in ("AMCs net", "Schemes<br>buy / sell", "Existing-position<br>flow ₹ Cr", ">Filing<"):
+    for heading in ("Net fund houses", "Individual funds", "Net buying ₹ Cr", ">Filing<"):
         assert heading in core
     for heading in ("Discretionary", "New positions", "FII Δ pp", "DII Δ pp"):
         assert heading not in core
@@ -567,11 +567,28 @@ def test_default_table_is_the_scannable_columns(tmp_path):
     assert "cols=core" in wide
 
 
+def test_buying_bar_represents_fund_houses_not_individual_funds(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        # Two A-house funds buy, one B-house fund sells: two houses split
+        # evenly, while individual funds are two-to-one.
+        conn.execute("UPDATE mf_holdings_monthly SET quantity = 50, market_value_lakhs = 5 "
+                     "WHERE scheme_id = 3 AND isin = 'INE002A01018' AND report_month = '2026-08'")
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-07", "2026-08"))
+    html = TestClient(create_app(db)).get("/fragments/month/2026-08").text
+    row = _row(html, "INE002A01018")
+    houses = row.split('data-label="Net fund houses"')[1].split("</td>")[0]
+    funds = row.split('data-label="Individual funds"')[1].split("</td>")[0]
+    assert "1 buying · 1 selling" in houses and "width: 50%" in houses
+    assert "2 buying" in funds and "1 selling" in funds
+    assert 'class="bar"' not in funds
+
+
 def test_dashboard_reflects_query_filters(tmp_path):
     db = _copy_db(tmp_path)
     client = TestClient(create_app(str(db)))
     html = client.get("/", params={"side": "sell", "equity_only": 0}).text
-    assert "Broadest selling" in html
+    assert "Stocks ranked by fund-house selling" in html
     assert 'id="equity-only" value="1" checked' not in html
     # An unknown month falls back to the latest rather than failing the page.
     assert "Aug 2026" in client.get("/", params={"month": "1900-01"}).text
@@ -653,9 +670,9 @@ def test_compared_count_is_the_set_the_ranking_counts(tmp_path):
             assert set(voters) == expected, (equity, active)
             html = client.get("/fragments/month/2026-08",
                               params={"equity_only": equity, "active_only": active}).text
-            compared = _fact(html, "Schemes compared")
+            compared = _fact(html, "Individual funds compared")
             assert f'<dd class="fact__value">{len(expected)}</dd>' in compared
-            assert "1 AMC · vs Jul 2026" in compared if expected == {1, 2} else "2 AMCs" in compared
+            assert "1 fund house · vs Jul 2026" in compared if expected == {1, 2} else "2 fund houses" in compared
             # Scheme 3 is quarantined: withheld under every filter.
             assert '<dd class="fact__value">1</dd>' in _fact(html, "Withheld")
     finally:
@@ -686,7 +703,7 @@ def test_validation_wording_never_assumes_a_pass(tmp_path):
     w.commit()
     w.close()
     html = client.get("/fragments/month/2026-08").text
-    assert "none of 4 active schemes failed validation" in _fact(html, "Withheld")
+    assert "none of 4 active funds failed validation" in _fact(html, "Withheld")
     html = client.get("/fragments/month/2026-08", params={"active_only": 0}).text
     assert '<dd class="fact__value">1</dd>' in _fact(html, "Withheld")
     w = sqlite3.connect(str(db))
@@ -751,12 +768,12 @@ def test_stock_detail_follows_the_selected_month_and_filters(tmp_path):
     # The detail adds the columns the default table hides.
     for label in ("Discretionary net", "New positions", "FII Δ pp", "DII Δ pp"):
         assert label in aug
-    assert "+2" in aug and "2 buy · 0 sell" in aug  # schemes 1-2 are one AMC
+    assert "+2" in aug and "2 buying · 0 selling" in aug  # schemes 1-2 are one AMC
     assert "(active stock-pickers, equity holdings)" in aug
     # July is the first month: holdings but nothing compared, so not ranked.
     jul = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-07"}).text
     assert "Fund holdings · Jul 2026" in jul
-    assert "Not in the Jul 2026 ranking: no counted scheme bought or sold it" in jul
+    assert "Not in the Jul 2026 ranking: no counted fund bought or sold it" in jul
     # Filters carry through: the NCD is ranked only without the equity filter.
     ncd = {"q": "INE001A07PB6", "month": "2026-08"}
     assert "it is not equity" in client.get("/fragments/stock", params=ncd).text
@@ -765,7 +782,7 @@ def test_stock_detail_follows_the_selected_month_and_filters(tmp_path):
     assert "Not in the" not in wide
     # A name that matches several stocks lists them with their month's holdings.
     several = client.get("/fragments/stock", params={"q": "HDFC", "month": "2026-08"}).text
-    assert "2 stocks match" in several and "held by 1 scheme in Aug 2026" in several
+    assert "2 stocks match" in several and "held by 1 fund in Aug 2026" in several
 
 
 def test_page_keeps_the_selected_month_everywhere(tmp_path):
@@ -774,7 +791,7 @@ def test_page_keeps_the_selected_month_everywhere(tmp_path):
     html = client.get("/", params={"month": "2026-07", "side": "sell", "cols": "all"}).text
     assert '<option value="2026-07" selected>' in html
     assert 'id="cols-input" value="all"' in html
-    assert "Broadest selling" in html
+    assert "Stocks ranked by fund-house selling" in html
     # The first-render table is exactly the fragment for the same view.
     frag = client.get("/fragments/month/2026-07", params={"side": "sell", "cols": "all"}).text
     assert frag.strip() in html
@@ -848,14 +865,14 @@ def test_stock_detail_marks_withheld_and_unvalidated_rows(tmp_path):
     assert 'class="is-withheld"' in row and ">withheld<" in row
     assert "raw: added · not validated" in row
     assert "tag--added" not in row  # never styled as validated activity
-    assert "1 scheme failed validation for Aug 2026: its row is shown for inspection only" in html
+    assert "1 fund failed validation for Aug 2026: its row is shown for inspection only" in html
     assert "1 has no validation result for this month." in html
     unvalidated = _holding_row(html, "A Mid Cap")
     assert "tag--added" in unvalidated and "not validated" in unvalidated
     assert "not validated" not in _holding_row(html, "A Flexi Cap")
     # The activity block is the ranking's, which leaves scheme 3 out: one AMC buys.
     activity = html[html.index("Fund activity"):html.index("Fund holdings")]
-    assert "1 buy · 0 sell" in activity
+    assert "1 buying · 0 selling" in activity
 
 
 def test_stock_detail_without_a_status_table_says_validation_never_ran(tmp_path):

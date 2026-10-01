@@ -301,7 +301,7 @@
   function clearSummary() {
     pickedScheme = null;
     if (inflight.summary) inflight.summary.abort();
-    summaryBox.replaceChildren(stateNode("empty", "Pick a scheme to read its monthly change summary."));
+    summaryBox.replaceChildren(stateNode("empty", "Pick a fund to read its monthly change summary."));
   }
 
   async function showSummary() {
@@ -312,7 +312,7 @@
                          encodeURIComponent(currentMonth()));
       if (r.status === 404) {
         summaryBox.replaceChildren(stateNode("empty",
-          "No holding-change data available for this scheme and month yet."));
+          "No holding-change data available for this fund and month yet."));
         return;
       }
       if (!r.ok) throw new Error("HTTP " + r.status);
@@ -345,7 +345,7 @@
           return words.every(function (w) { return s.haystack.indexOf(w) !== -1; });
         }));
       },
-      emptyText: function (query) { return "No scheme matches “" + query + "”."; },
+      emptyText: function (query) { return "No fund matches “" + query + "”."; },
       onType: clearSummary,
       onPick: function (item) { pickedScheme = item.value; showSummary(); }
     });
@@ -368,7 +368,7 @@
         var r = await load("suggest", "/api/stocks/search?" + q);
         if (!r.ok) throw new Error("HTTP " + r.status);
         return JSON.parse(r.body).results.map(function (s) {
-          var held = s.schemes_holding ? "held by " + s.schemes_holding + " scheme" + (s.schemes_holding === 1 ? "" : "s")
+          var held = s.schemes_holding ? "held by " + s.schemes_holding + " fund" + (s.schemes_holding === 1 ? "" : "s")
                                        : "not held";
           return { value: s.isin, label: s.name,
                    detail: s.isin + (s.industry ? " · " + s.industry : "") + " · " + held + " in " + monthLabel() };

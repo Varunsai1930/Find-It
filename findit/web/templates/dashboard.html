@@ -27,7 +27,7 @@ try {
     <nav class="nav" id="section-nav" aria-label="Main navigation">
       {% if month %}<a href="#monthly-summary" aria-current="location">Monthly summary</a>{% endif %}
       <a href="{{ '#monthly-activity' if month else '#month-view' }}">Monthly activity</a>
-      {% if scheme_options %}<a href="#scheme-summary">Scheme summary</a>{% endif %}
+      {% if scheme_options %}<a href="#scheme-summary">Fund summary</a>{% endif %}
       <a href="#notes-title">Reading guide</a>
     </nav>
     <span class="edition">India / Monthly disclosures</span>
@@ -107,24 +107,24 @@ try {
   {% if scheme_options %}
   <section class="panel panel--narrow" id="scheme-summary" aria-labelledby="summary-title">
     <div class="panel__head">
-      <h2 id="summary-title">Scheme summary</h2>
-      <p class="panel__meta">What one scheme changed in the selected month, in plain English.</p>
+      <h2 id="summary-title">Individual fund summary</h2>
+      <p class="panel__meta">Choose one fund, such as HDFC Large Cap Fund, to see what it changed this month.</p>
     </div>
     <form class="inline-form" id="summary-form" autocomplete="off">
       <div class="field field--grow">
-        <label class="field__label" for="scheme-search">Scheme</label>
+        <label class="field__label" for="scheme-search">Individual fund</label>
         <div class="combo">
           <input id="scheme-search" type="text" role="combobox" aria-autocomplete="list"
                  aria-expanded="false" aria-controls="scheme-options" spellcheck="false"
-                 placeholder="Type a scheme or AMC name, or press ↓" aria-describedby="scheme-search-hint">
-          <ul class="combo__list" id="scheme-options" role="listbox" aria-label="Matching schemes" hidden></ul>
+                 placeholder="Fund name or fund house, or press ↓" aria-describedby="scheme-search-hint">
+          <ul class="combo__list" id="scheme-options" role="listbox" aria-label="Matching funds" hidden></ul>
         </div>
-        <span class="visually-hidden" id="scheme-search-hint">Use the arrow keys to browse schemes; type to narrow the list.</span>
+        <span class="visually-hidden" id="scheme-search-hint">Use the arrow keys to browse individual funds; type to narrow the list.</span>
         <span class="visually-hidden" id="scheme-search-status" role="status" aria-live="polite"></span>
       </div>
     </form>
     <div class="result" id="summary-box" aria-live="polite">
-      <p class="state state--empty">Pick a scheme to read its monthly change summary.</p>
+      <p class="state state--empty">Pick a fund to read its monthly change summary.</p>
     </div>
   </section>
   <script type="application/json" id="scheme-data">{{ scheme_options|tojson }}</script>
@@ -133,10 +133,14 @@ try {
   <section class="notes" aria-labelledby="notes-title">
     <h2 id="notes-title">Reading this page</h2>
     <dl>
+      <dt>Fund houses and individual funds</dt>
+      <dd>A fund house (AMC), such as HDFC Mutual Fund, runs many individual funds (schemes). HDFC Large Cap Fund is one of those funds, with its own portfolio.</dd>
       <dt>Monthly change</dt>
-      <dd>Every figure compares a scheme's holdings with the previous month. Stocks no fund bought or sold are not ranked, and a stock with no monthly change is never shown as a buy.</dd>
-      <dt>AMCs net and discretionary net</dt>
-      <dd>AMCs net counts fund houses buying minus those selling; it is the ranking key. Discretionary net counts only AMCs whose change beats the drift that price moves alone would cause. It, new-position flow and the FII/DII changes are under <em>More columns</em> and in each stock's detail.</dd>
+      <dd>Every figure compares an individual fund's holdings with the previous month. Stocks no fund bought or sold are not ranked, and a stock with no monthly change is never shown as a buy.</dd>
+      <dt>Net fund houses</dt>
+      <dd>Fund houses buying minus those selling. For example, 5 buying and 2 selling gives +3; 2 buying and 5 selling gives −3. Buying puts the highest balance first; selling puts the lowest first. Individual-fund counts show how many portfolios changed, rather than how many fund houses.</dd>
+      <dt>Net buying and discretionary net</dt>
+      <dd>Net buying is estimated purchases minus sales in stocks the funds already held, in ₹ crore; a negative amount means net selling. Discretionary net counts only fund houses whose change beats the drift that price moves alone would cause. It, new-position flow and FII/DII changes are under <em>More columns</em> and in each stock's detail.</dd>
       <dt>Units</dt>
       <dd>Flows are in ₹ crore. FII and DII changes are percentage points of the company's shares between its two latest quarterly filings.</dd>
       <dt>Missing, no increase and stale</dt>

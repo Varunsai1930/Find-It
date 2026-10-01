@@ -28,5 +28,9 @@
 {%- endmacro -%}
 
 {%- macro scope(view) -%}
-{{ 'active stock-pickers' if view.active_only else 'all scheme types' }}, {{ 'equity holdings' if view.equity_only else 'all holdings' }}
+{{ 'active stock-pickers' if view.active_only else 'all fund types' }}, {{ 'equity holdings' if view.equity_only else 'all holdings' }}
+{%- endmacro -%}
+
+{%- macro fund_counts(buying, selling) -%}
+<span class="fund-counts"><span class="num pos">{{ buying }} buying</span><span class="num neg">{{ selling }} selling</span></span>
 {%- endmacro -%}

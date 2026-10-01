@@ -1,5 +1,5 @@
 {#- Stock detail, rendered by /fragments/stock into the page's stock dialog. -#}
-{%- from "_macros.html" import holder_change, filing_status, scope -%}
+{%- from "_macros.html" import holder_change, filing_status, scope, fund_counts -%}
 {%- if stock -%}
 <div class="stock-head" data-stock-isin="{{ stock.isin }}">
   <h3 tabindex="-1">{{ stock.name }}</h3>
@@ -10,27 +10,27 @@
 <h4>Fund activity · {{ stock.month|month_label }} <span class="muted">({{ scope(view) }})</span></h4>
 {% if activity %}
 <dl class="activity">
-  <div><dt>AMCs net</dt><dd><span class="num strong">{{ activity.net_amc_count|signed }}</span><span class="sub">{{ activity.amcs_buying }} buy · {{ activity.amcs_selling }} sell</span></dd></div>
+  <div><dt>Net fund houses</dt><dd><span class="num strong">{{ activity.net_amc_count|signed }}</span><span class="sub">{{ activity.amcs_buying }} buying · {{ activity.amcs_selling }} selling</span></dd></div>
   <div><dt>Discretionary net</dt><dd><span class="num">{{ activity.net_active_amc_count|signed }}</span><span class="sub">beats price drift</span></dd></div>
-  <div><dt>Schemes buy / sell</dt><dd><span class="num">{{ activity.schemes_buying }} / {{ activity.schemes_selling }}</span></dd></div>
-  <div><dt>Existing-position flow</dt><dd><span class="num">₹ {{ activity.accumulation_flow_lakhs|crore }} Cr</span></dd></div>
-  <div><dt>New positions</dt><dd><span class="num">₹ {{ activity.new_position_flow_lakhs|crore }} Cr</span><span class="sub">{{ activity.amcs_opening or 0 }} AMC{{ 's' if activity.amcs_opening != 1 }} opening</span></dd></div>
+  <div><dt>Individual funds</dt><dd>{{ fund_counts(activity.schemes_buying, activity.schemes_selling) }}</dd></div>
+  <div><dt>Net buying (existing holdings)</dt><dd><span class="num">₹ {{ activity.accumulation_flow_lakhs|crore }} Cr</span></dd></div>
+  <div><dt>New positions</dt><dd><span class="num">₹ {{ activity.new_position_flow_lakhs|crore }} Cr</span><span class="sub">{{ activity.amcs_opening or 0 }} fund house{{ 's' if activity.amcs_opening != 1 }} opening</span></dd></div>
   <div><dt>FII Δ pp</dt><dd>{{ holder_change(activity, 'fii') }}</dd></div>
   <div><dt>DII Δ pp <span class="muted">(MF+banks+insurance)</span></dt><dd>{{ holder_change(activity, 'dii') }}</dd></div>
   <div><dt>Filing</dt><dd>{{ filing_status(activity, stock.portfolios_public_on) }}</dd></div>
 </dl>
 {% else %}
-<p class="state state--empty">Not in the {{ stock.month|month_label }} ranking: {% if view.equity_only and stock.instrument_type != 'equity' %}it is not equity, and the equity-only filter is on{% else %}no counted scheme bought or sold it{% endif %}. The holdings below list every scheme, counted or not.</p>
+<p class="state state--empty">Not in the {{ stock.month|month_label }} ranking: {% if view.equity_only and stock.instrument_type != 'equity' %}it is not equity, and the equity-only filter is on{% else %}no counted fund bought or sold it{% endif %}. The holdings below list every fund, counted or not.</p>
 {% endif %}
 {% endif %}
 
-<h4>Fund holdings · {{ stock.month|month_label }} <span class="muted">({{ stock.holdings_count }} schemes, all types)</span></h4>
+<h4>Fund holdings · {{ stock.month|month_label }} <span class="muted">({{ stock.holdings_count }} individual funds, all types)</span></h4>
 {% if stock.holdings %}
 {% if stock.validation == 'not_run' %}
 <p class="state state--warn">Validation has not been run on this database, so none of these rows has been checked.</p>
 {% elif stock.withheld_count or stock.not_validated_count %}
 <p class="state state--warn">
-  {%- if stock.withheld_count %}{{ stock.withheld_count }} scheme{{ 's' if stock.withheld_count != 1 }} failed validation for {{ stock.month|month_label }}: {{ 'their rows are' if stock.withheld_count != 1 else 'its row is' }} shown for inspection only, withheld from the ranking and not validated activity.{% endif %}
+  {%- if stock.withheld_count %}{{ stock.withheld_count }} fund{{ 's' if stock.withheld_count != 1 }} failed validation for {{ stock.month|month_label }}: {{ 'their rows are' if stock.withheld_count != 1 else 'its row is' }} shown for inspection only, withheld from the ranking and not validated activity.{% endif %}
   {%- if stock.withheld_count and stock.not_validated_count %} {% endif %}
   {%- if stock.not_validated_count %}{{ stock.not_validated_count }} {{ 'have' if stock.not_validated_count != 1 else 'has' }} no validation result for this month.{% endif -%}
 </p>
@@ -39,7 +39,7 @@
 <table class="data data--compact">
   <thead>
     <tr>
-      <th scope="col">Scheme</th>
+      <th scope="col">Individual fund</th>
       <th scope="col">Change</th>
       <th scope="col" class="n">Qty change</th>
       <th scope="col" class="n">Holding ₹ Cr</th>
@@ -58,7 +58,7 @@
         <span class="tag tag--{{ h.action }}">{{ h.action }}</span>
         {%- if h.validation_status == 'not_validated' %}<span class="sub">not validated</span>{% endif -%}
         {%- else -%}
-        <span class="tag tag--missing" title="No delta row: the scheme was not compared with a previous month">no comparison</span>
+        <span class="tag tag--missing" title="This fund was not compared with a previous month">no comparison</span>
         {%- endif -%}
       </td>
       <td class="n num{% if withheld %} muted{% endif %}">{{ h.qty_change|signed }}</td>
@@ -111,7 +111,7 @@
 <p class="state state--empty" role="status">{{ matches|length }} stocks match “{{ query }}”. Pick one:</p>
 <ul class="matches">
   {% for m in matches %}
-  <li><button type="button" class="stock-link" data-isin="{{ m.isin }}">{{ m.name }}</button> <span class="sub">{{ m.isin }}{% if m.industry %} · {{ m.industry }}{% endif %}{% if view.month %} · held by {{ m.schemes_holding }} scheme{{ 's' if m.schemes_holding != 1 }} in {{ view.month|month_label }}{% endif %}</span></li>
+  <li><button type="button" class="stock-link" data-isin="{{ m.isin }}">{{ m.name }}</button> <span class="sub">{{ m.isin }}{% if m.industry %} · {{ m.industry }}{% endif %}{% if view.month %} · held by {{ m.schemes_holding }} fund{{ 's' if m.schemes_holding != 1 }} in {{ view.month|month_label }}{% endif %}</span></li>
   {% endfor %}
 </ul>
 {%- else -%}

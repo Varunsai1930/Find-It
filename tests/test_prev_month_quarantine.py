@@ -159,7 +159,7 @@ def test_dashboard_shows_prev_withheld_and_matches_voting_schemes(tmp_path):
     assert set(voters) == {1}
 
     html = client.get("/fragments/month/2026-08").text
-    schemes_fact = _fact(html, "Schemes")
+    schemes_fact = _fact(html, "Individual funds")
     assert "<strong>1</strong> compared" in schemes_fact
     assert "1 compared against a withheld previous month" in schemes_fact
     assert "hold nothing the equity filter keeps" not in schemes_fact

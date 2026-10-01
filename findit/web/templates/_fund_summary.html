@@ -11,12 +11,12 @@
       <article class="fund-card{% if not fund.compared %} fund-card--unavailable{% endif %}" aria-label="{{ fund.name }} monthly summary">
         <h4>{{ fund.name }}</h4>
         {% if fund.compared %}
-        <p class="fund-card__changes"><span class="pos">Increased {{ fund.increased }}</span><span aria-hidden="true"> · </span><span class="neg">Reduced {{ fund.reduced }}</span><span class="sub">stock holdings, net across compared schemes</span></p>
+        <p class="fund-card__changes"><span class="pos">Increased {{ fund.increased }}</span><span aria-hidden="true"> · </span><span class="neg">Reduced {{ fund.reduced }}</span><span class="sub">stock holdings, net across compared funds</span></p>
         {% if fund.biggest %}
         <div class="fund-card__move">
           <span class="field__label">Biggest {{ 'priced ' if fund.unpriced }}{{ 'increase' if fund.biggest.qty_change > 0 else 'reduction' }}</span>
           <button type="button" class="stock-link" data-isin="{{ fund.biggest.isin }}">{{ fund.biggest.stock_name|stock_label }}</button>
-          <p class="fund-card__stake {{ 'pos' if fund.biggest.qty_change > 0 else 'neg' }}">{{ fund.biggest.qty_change|signed }} shares{% if fund.biggest.change_pct is not none %} <span class="sub">{{ fund.biggest.change_pct|signed(1) }}% vs previous holding</span>{% else %} <span class="sub">New holding in compared schemes</span>{% endif %}</p>
+          <p class="fund-card__stake {{ 'pos' if fund.biggest.qty_change > 0 else 'neg' }}">{{ fund.biggest.qty_change|signed }} shares{% if fund.biggest.change_pct is not none %} <span class="sub">{{ fund.biggest.change_pct|signed(1) }}% vs previous holding</span>{% else %} <span class="sub">New holding in compared funds</span>{% endif %}</p>
           <span class="sub">Estimated net {{ 'purchase' if fund.biggest.qty_change > 0 else 'sale' }} · ₹{{ fund.biggest.flow_lakhs|abs|crore }} Cr</span>
         </div>
         {% elif fund.increased or fund.reduced %}
@@ -24,10 +24,10 @@
         {% else %}
         <p class="fund-card__empty">No net change in stock holdings.</p>
         {% endif %}
-        <p class="fund-card__coverage">{{ fund.compared }} of {{ fund.loaded }} loaded scheme{{ 's' if fund.loaded != 1 }} compared{% if fund.unpriced %} · {{ fund.unpriced }} unpriced stock change{{ 's' if fund.unpriced != 1 }} excluded from biggest move{% endif %}.</p>
+        <p class="fund-card__coverage">{{ fund.compared }} of {{ fund.loaded }} loaded individual fund{{ 's' if fund.loaded != 1 }} compared{% if fund.unpriced %} · {{ fund.unpriced }} unpriced stock change{{ 's' if fund.unpriced != 1 }} excluded from biggest move{% endif %}.</p>
         {% elif fund.loaded %}
         <p class="fund-card__empty">No usable comparison with {{ summary_prev_month|month_label }}.</p>
-        <p class="fund-card__coverage">{{ fund.loaded }} scheme{{ 's' if fund.loaded != 1 }} loaded for {{ month|month_label }}. Both months must be available and pass the data gate.</p>
+        <p class="fund-card__coverage">{{ fund.loaded }} individual fund{{ 's' if fund.loaded != 1 }} loaded for {{ month|month_label }}. Both months must be available and pass the data gate.</p>
         {% else %}
         <p class="fund-card__empty">{{ month|month_label }} portfolios not loaded.</p>
         <p class="fund-card__coverage">Monthly changes will appear when comparable disclosures are available.</p>
@@ -37,6 +37,6 @@
     </div>
   </div>
   {% endfor %}
-  <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All scheme types' }} · equity holdings only. Biggest move uses estimated net trading value, including new holdings and exits; splits and bonuses are adjusted. These are loaded schemes, not necessarily the full AMC portfolio.</p>
+  <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All fund types' }} · equity holdings only. Biggest move uses estimated net trading value, including new holdings and exits; splits and bonuses are adjusted. These are loaded individual funds, not necessarily everything the fund house manages.</p>
   <p class="fund-summary__source">Top five by <a href="{{ aum_source }}" target="_blank" rel="noopener noreferrer">AMFI average AUM</a>, {{ aum_period }} (excluding domestic FoFs). Foreign-owned houses are three additional selections; Nippon is already in the top five.</p>
 </section>
