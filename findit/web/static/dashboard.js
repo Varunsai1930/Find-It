@@ -111,9 +111,13 @@
       if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
     }
   }
+  var watchlistSequence = 0;
   async function refreshWatchlist() {
     if (!watchResults || !currentMonth()) return;
+    var sequence = ++watchlistSequence;
+    if (inflight.watchlist) inflight.watchlist.abort();
     var download = document.getElementById("watchlist-report");
+    download.hidden = true;
     if (!watchlist.length) {
       watchResults.textContent = "Your watchlist is empty. Open a stock and choose Follow stock.";
       download.hidden = true;
@@ -124,6 +128,7 @@
     watchResults.textContent = "Loading monthly changes…";
     try {
       var result = await load("watchlist", "/api/watchlist?" + q);
+      if (sequence !== watchlistSequence) return;
       if (!result.ok) throw new Error("HTTP " + result.status);
       var report = JSON.parse(result.body);
       watchResults.replaceChildren();
@@ -145,9 +150,10 @@
         remove.addEventListener("click", function () { watchlist = watchlist.filter(function (s) { return s !== stock.isin; }); saveWatchlist(); refreshWatchlist(); });
         row.append(remove); watchResults.append(row);
       });
+      q.set("release", report.release_id); q.set("rules", report.rule_version);
       download.href = "/watchlist/report?" + q; download.hidden = false;
     } catch (e) {
-      if (e.name !== "AbortError") watchResults.replaceChildren(stateNode("error", "Could not load your watchlist. " + e.message, refreshWatchlist));
+      if (sequence === watchlistSequence && e.name !== "AbortError") watchResults.replaceChildren(stateNode("error", "Could not load your watchlist. " + e.message, refreshWatchlist));
     }
   }
   if (watchResults) {

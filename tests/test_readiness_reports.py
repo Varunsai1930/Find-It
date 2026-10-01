@@ -73,11 +73,16 @@ def test_report_a_reopens_after_switch_to_b_and_rejects_tampering(tmp_path):
     ca = TestClient(create_app(folder / f"{a['release_id']}.db"))
     report = ca.get('/api/watchlist?month=2026-08&stocks=INE002A01018').json()
     url = report['stocks'][0]['evidence_url']
+    download_query = {'month': '2026-08', 'stocks': 'INE002A01018',
+                      'release': a['release_id'], 'rules': a['rule_version']}
+    downloaded_a = ca.get('/watchlist/report', params=download_query)
+    assert downloaded_a.status_code == 200 and url in downloaded_a.text
     original = ca.get(url.replace('/evidence/', '/api/evidence/')).json()
     with sqlite3.connect(path) as c:
         c.execute("UPDATE mf_holdings_monthly SET quantity=quantity+17 WHERE scheme_id=1 AND report_month='2026-08'")
     b = snapshot(path, folder, 'B', parent=a['release_id'], notes='Test quantity revision')
     cb = TestClient(create_app(folder / f"{b['release_id']}.db"))
+    assert cb.get('/watchlist/report', params=download_query).content == downloaded_a.content
     reopened = cb.get(url.replace('/evidence/', '/api/evidence/'))
     assert reopened.status_code == 200
     assert reopened.json() == original

@@ -39,12 +39,13 @@ class Element {
   }
 }
 
-function boot({ schemes = false, controls = false, hash = '', sections = false } = {}) {
+function boot({ schemes = false, controls = false, hash = '', sections = false, watch = null } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
     'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
   if (schemes) ids.push('scheme-data', 'scheme-search', 'scheme-options', 'scheme-search-status',
     'summary-box', 'summary-form');
   if (controls) ids.push('view-controls', 'equity-only', 'active-only');
+  if (watch) ids.push('watchlist-status', 'watchlist-results', 'watchlist-report', 'watchlist-export', 'watchlist-import', 'active-only');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
   const navLinks = ['#monthly-summary', '#monthly-activity', '#scheme-summary', '#notes-title'].map(href => {
     const link = new Element(); link.setAttribute('href', href); return link;
@@ -78,6 +79,7 @@ function boot({ schemes = false, controls = false, hash = '', sections = false }
     },
     location, window, history: { replaceState(_state, _title, url) { location.href = String(url); } },
     URL, URLSearchParams, AbortController, DOMException,
+    localStorage: { getItem() { return watch ? JSON.stringify({ version: 1, stocks: watch }) : null; }, setItem() {} },
     getComputedStyle(element) { return { scrollMarginTop: (element.scrollMargin || 0) + 'px' }; },
     FormData: class { get() { return null; } },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
@@ -216,4 +218,38 @@ test('changing month refreshes a selected scheme while its summary is still load
   summaries[0].respond(JSON.stringify({ has_data: true, summary: 'August summary' }));
   await settle();
   assert.equal(ui.elements['summary-box'].children[0].textContent, 'No comparison in July');
+});
+
+
+test('watchlist downloads pin the displayed release and clearing aborts stale work', async () => {
+  const ui = boot({ watch: ['INE002A01018'], controls: true });
+  const report = { release_id: 'a'.repeat(64), rule_version: 'rules-a', scope: 'Test', stocks: [
+    { isin: 'INE002A01018', name: 'Reliance', evidence_url: '/evidence/test', status: 'changed',
+      houses_buying: 1, houses_selling: 0, net_share_change: 10, additions: 0, exits: 0,
+      largest_compared_changes: [] } ] };
+  ui.requests[0].respond(JSON.stringify(report)); await settle();
+  assert.match(ui.elements['watchlist-report'].href, /release=aaaa/);
+  assert.match(ui.elements['watchlist-report'].href, /rules=rules-a/);
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] }); await settle();
+  assert.equal(ui.elements['watchlist-report'].hidden, true);
+  const pending = ui.requests.filter(r => r.url.startsWith('/api/watchlist')).at(-1);
+  const row = ui.elements['watchlist-results'].children[1];
+  row.children.at(-1).emit('click');
+  assert.equal(pending.signal.aborted, true);
+  pending.respond(JSON.stringify(report)); await settle();
+  assert.match(ui.elements['watchlist-results'].textContent, /empty/);
+  assert.equal(ui.elements['watchlist-report'].hidden, true);
+});
+
+test('malformed watchlist imports preserve the existing list', async () => {
+  const ui = boot({ watch: ['INE002A01018'], controls: true });
+  const importer = ui.elements['watchlist-import'];
+  importer.files = [{ size: 10, text: async () => '{bad json' }];
+  importer.emit('change'); await settle();
+  assert.match(ui.elements['watchlist-status'].textContent, /Import failed/);
+  assert.equal(ui.requests.length, 1);
+  importer.files = [{ size: 10, text: async () => JSON.stringify({ version: 1, stocks: ['invalid'] }) }];
+  importer.emit('change'); await settle();
+  assert.match(ui.elements['watchlist-status'].textContent, /valid ISINs/);
+  assert.equal(ui.requests.length, 1);
 });
