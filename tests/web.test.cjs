@@ -15,6 +15,7 @@ class Element {
     this.listeners = {};
     this.attributes = {};
     this.dataset = {};
+    this.style = { setProperty() {} };
   }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
   emit(name, extra = {}) {
@@ -32,7 +33,10 @@ class Element {
   contains() { return false; }
   focus() {}
   scrollIntoView() {}
-  getBoundingClientRect() { return { top: this.top || 0, bottom: (this.top || 0) + (this.height || 0) }; }
+  getBoundingClientRect() {
+    return { left: this.left || 0, width: this.width || 0,
+      top: this.top || 0, bottom: (this.top || 0) + (this.height || 0) };
+  }
 }
 
 function boot({ schemes = false, controls = false, hash = '', sections = false } = {}) {

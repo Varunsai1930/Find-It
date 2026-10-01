@@ -9,6 +9,14 @@
       if (link === selected) link.setAttribute("aria-current", "location");
       else link.removeAttribute("aria-current");
     });
+    if (selected) {
+      var navBounds = sectionNav.getBoundingClientRect();
+      var linkBounds = selected.getBoundingClientRect();
+      sectionNav.style.setProperty("--nav-x", (linkBounds.left - navBounds.left) + "px");
+      sectionNav.style.setProperty("--nav-y", (linkBounds.bottom - navBounds.top - 2) + "px");
+      sectionNav.style.setProperty("--nav-width", linkBounds.width + "px");
+      sectionNav.dataset.indicator = "ready";
+    }
   }
   function updateNavigation() {
     if (!sectionNav) return;
