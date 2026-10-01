@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import contextlib
 import difflib
+import hashlib
 import io
 import json
 import re
@@ -193,6 +194,20 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
             # The parser logs every sheet; keep the log out of the report.
             with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
                 frame = amfi_mf_parser.parse_workbook(book, amc, month)
+            # An extracted workbook is still linked to its original official
+            # archive. Keep its own checksum and use the archive's observed
+            # retrieval/publication metadata, without inventing either date.
+            parts = book.relative_to(folder).parts
+            manifest = folder / ".findit-download.json"
+            if parts[0] == UNZIPPED_DIR and manifest.is_file():
+                archive_name = parts[1] + ".zip"
+                source = next((r for r in json.loads(manifest.read_text()).get("files", [])
+                               if r["name"] == archive_name), {})
+                if source and source.get("sha256") != hashlib.sha256((folder / archive_name).read_bytes()).hexdigest():
+                    raise ValueError("archive checksum differs from the acquisition manifest")
+                for key, column in (("source_url", "source_url"), ("retrieved_at", "source_retrieved_at"),
+                                    ("published_at", "source_published_at")):
+                    frame[column] = source.get(key)
         except Exception as exc:  # the parser fails loudly by design; report it
             result.problems.append(f"{name}: {type(exc).__name__}: {exc}")
             continue

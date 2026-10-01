@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from findit.core.coverage import house_coverage
 from findit.core.consensus_signals import fund_house_activity
 from findit.store import db, queries
+from findit.ingest.intake import load_registry
 
 
 def import_inventory(conn: sqlite3.Connection, document: dict) -> None:
@@ -59,8 +60,9 @@ def import_inventory(conn: sqlite3.Connection, document: dict) -> None:
 
 
 def audit(conn: sqlite3.Connection, months: list[str]) -> dict:
-    """Wider loaded universe plus every inventoried fund, without guessing gaps."""
-    houses = {str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM schemes")}
+    """Registered houses, loaded portfolios and reviewed inventories; no guessed gaps."""
+    houses = {a.amc for a in load_registry()}
+    houses.update(str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM schemes"))
     if queries.has_table(conn, "coverage_inventories"):
         houses.update(str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM coverage_inventories"))
     statuses = queries.scheme_statuses(conn)
@@ -79,7 +81,7 @@ def audit(conn: sqlite3.Connection, months: list[str]) -> dict:
                  "validation": statuses.get((sid, month), "not_validated"),
                  "compared": sid in compared} for sid, name, title, active in snapshots]
             results.append({"amc": amc, "month": month, **result})
-    return {"scope": "active stock-pickers, domestic equity; wider loaded universe",
+    return {"scope": "active stock-pickers, domestic equity; registered-house audit, unknown denominators explicit",
             "market_completeness": "unknown", "houses": results}
 
 

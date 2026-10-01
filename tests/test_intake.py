@@ -6,6 +6,8 @@ Synthetic workbooks in tmp folders only; no network, never ./tracker.db.
 from __future__ import annotations
 
 import sqlite3
+import json
+import hashlib
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -53,6 +55,9 @@ def test_accepted_folders_give_csvs_and_the_load_command(tmp_path):
     (month / "DSP AMC").mkdir(parents=True)
     with zipfile.ZipFile(month / "DSP AMC" / "dsp.zip", "w") as zf:
         zf.write(inner, "dsp.xlsx")
+    (month / "DSP AMC" / ".findit-download.json").write_text(json.dumps({"files": [
+        {"name": "dsp.zip", "sha256": hashlib.sha256((month / "DSP AMC" / "dsp.zip").read_bytes()).hexdigest(),
+         "source_url": "https://official.example/dsp.zip", "retrieved_at": "2026-10-01T12:00:00Z"}]}))
 
     report = intake.prepare(month, "2026-08")
 
@@ -62,6 +67,9 @@ def test_accepted_folders_give_csvs_and_the_load_command(tmp_path):
         frame = pd.read_csv(csvs[amc])
         assert set(frame["amc_name"]) == {amc} and set(frame["report_month"]) == {"2026-08"}
         assert set(frame["scheme_name"]) == {sheet}
+        if amc == "DSP AMC":
+            assert set(frame["source_url"]) == {"https://official.example/dsp.zip"}
+            assert frame["source_published_at"].isna().all()
     command = intake.pipeline_command(report)
     assert "--prev 2026-07 --curr 2026-08" in command
     assert all(str(path) in command for path in csvs.values())

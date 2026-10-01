@@ -45,6 +45,7 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
             "ORDER BY official_key", (amc, month)).fetchall()
     known = {str(m) for m, complete in inventories if complete == 1} == {prev, month}
     eligible = [r for r in expected_rows if r[4] and (not active_only or r[3])]
+    current_expected = len(eligible) if any(m == month and complete == 1 for m, complete in inventories) else None
     # Include portfolios present only in the official previous inventory.
     # A closed/merged portfolio must be accounted for, never silently dropped
     # from a completeness denominator or interpreted as a sale.
@@ -61,7 +62,8 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
         elif sid not in loaded:
             state = "missing_current"
         elif sid not in previous:
-            state = "missing_previous"
+            state = ("not_in_previous_official_inventory" if known and
+                     sid not in {r[2] for r in prior_rows} else "missing_previous")
         elif any(statuses.get((sid, m)) == queries.STATUS_QUARANTINED for m in (prev, month)):
             state = "withheld"
         elif any(statuses.get((sid, m)) != queries.STATUS_OK for m in (prev, month)):
@@ -79,7 +81,8 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
              "complete" if details and all(r["state"] == "compared" for r in details)
              and not extras else "partial")
     return {"coverage_state": state, "inventory_known": known,
-            "expected": len(eligible) if known else None, "loaded": len(loaded),
+            "expected": len(eligible) if known else None, "expected_current": current_expected,
+            "loaded": len(loaded),
             "validated_count": len(passed), "compared": len(compared_ids),
             "expected_details": details,
             "outside_inventory": len(extras),

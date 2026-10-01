@@ -59,3 +59,18 @@ def test_read_only_audit_does_not_migrate_original(tmp_path):
     before = path.read_bytes()
     assert main(["--db", str(path), "--month", "2026-08", "--out", str(tmp_path / "audit.json")]) == 0
     assert path.read_bytes() == before
+
+
+def test_new_official_portfolio_and_known_current_inventory(tmp_path):
+    c, doc = setup_inventory(tmp_path)
+    import_inventory(c, dict(doc, report_month="2026-08"))
+    result = house_coverage(c, "2026-08", "House", {1})
+    assert result["expected"] is None and result["expected_current"] == 1
+    c.execute("INSERT INTO schemes(scheme_id,amc_name,scheme_name,is_active_equity) VALUES(2,'House','New',1)")
+    c.execute("INSERT INTO mf_holdings_monthly(scheme_id,isin,report_month,quantity) VALUES(2,'INE123A01012','2026-08',10)")
+    import_inventory(c, dict(doc, report_month="2026-07"))
+    new = dict(doc["funds"][0], official_key="New", official_name="New", scheme_id=2)
+    import_inventory(c, dict(doc, report_month="2026-08", funds=doc["funds"] + [new]))
+    result = house_coverage(c, "2026-08", "House", {1})
+    assert result["coverage_state"] == "partial" and result["expected"] == 2
+    assert result["expected_details"][1]["state"] == "not_in_previous_official_inventory"

@@ -420,7 +420,8 @@ table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
 .fund-card__move > .sub { font-size: 11px; }
 .fund-card__coverage { margin: auto 0 0; color: var(--ink-3); font-size: 11px; line-height: 1.5; }
 .fund-card__empty { color: var(--ink-2); margin: 0 0 18px; font-size: 13px; }
-.fund-card--unavailable { border-top-color: var(--line-strong); }
+.fund-card--unavailable { border-top-color: var(--line-strong); background: transparent; }
+.fund-card--unavailable .fund-card__empty { margin: 8px 0; font-size: 14px; }
 .fund-summary__method, .fund-summary__source { font-size: 11px; color: var(--ink-3); margin: 6px 0; max-width: 1000px; }
 .activity-heading { margin-bottom: 16px; }
 

@@ -12,6 +12,7 @@
         <h4>{{ fund.name }}</h4>
         <p class="tag tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_', ' ')|capitalize }}{% if fund.compared %}: {{ fund.compared }} funds compared{% endif %}</p>
         <p class="fund-card__coverage">Expected: {{ fund.expected if fund.expected is not none else 'unknown' }} · Loaded: {{ fund.loaded }} · Validated: {{ fund.validated_count }} · Compared: {{ fund.compared }}</p>
+        {% if fund.expected is none and fund.expected_current is not none %}<p class="sub">Current official eligible inventory: {{ fund.expected_current }} funds. Comparison inventory for both months is unknown.</p>{% endif %}
         {% if not fund.inventory_known %}<p class="sub">Official eligible inventory not established for both months.</p>{% endif %}
         {% if fund.compared %}
         <p class="fund-card__changes"><span class="pos">Increased {{ fund.increased }}</span><span aria-hidden="true"> · </span><span class="neg">Reduced {{ fund.reduced }}</span><span class="sub">stock holdings, net across compared funds</span></p>
@@ -29,7 +30,6 @@
         <p class="fund-card__empty">No net change in stock holdings.</p>
         {% endif %}
         <p class="fund-card__coverage">{{ fund.compared }} of {{ fund.loaded }} loaded individual fund{{ 's' if fund.loaded != 1 }} compared{% if fund.unpriced %} · {{ fund.unpriced }} unpriced stock change{{ 's' if fund.unpriced != 1 }} excluded from biggest move{% endif %}.</p>
-        {% if fund.expected_details %}<details><summary>Coverage breakdown</summary><ul>{% for item in fund.expected_details %}<li>{{ item.name }}: {{ item.state|replace('_', ' ') }}{% if item.reason %} · {{ item.reason }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}
         {% elif fund.loaded %}
         <p class="fund-card__empty">No usable comparison with {{ summary_prev_month|month_label }}.</p>
         <p class="fund-card__coverage">{{ fund.loaded }} individual fund{{ 's' if fund.loaded != 1 }} loaded for {{ month|month_label }}. Both months must be available and pass the data gate.</p>
@@ -37,11 +37,12 @@
         <p class="fund-card__empty">{{ month|month_label }} portfolios not loaded.</p>
         <p class="fund-card__coverage">Monthly changes will appear when comparable disclosures are available.</p>
         {% endif %}
+        {% if fund.expected_details %}<details><summary>Coverage breakdown</summary><ul>{% for item in fund.expected_details %}<li>{{ item.name }}: {{ item.state|replace('_', ' ') }}{% if item.reason %} · {{ item.reason }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}
       </article>
       {% endfor %}
     </div>
   </div>
   {% endfor %}
-  <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All fund types' }} · equity holdings only. Biggest move uses estimated net trading value, including new holdings and exits; splits and bonuses are adjusted. These are loaded individual funds, not necessarily everything the fund house manages.</p>
+  <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All fund types' }} · domestic equity holdings only. Loaded and validated count portfolios, including those without domestic equity. Expected counts the official eligible comparison universe. Biggest move uses estimated net trading value, including new holdings and exits; splits and bonuses are adjusted.</p>
   <p class="fund-summary__source">Top five by <a href="{{ aum_source }}" target="_blank" rel="noopener noreferrer">AMFI average AUM</a>, {{ aum_period }} (excluding domestic FoFs). Foreign-owned houses are three additional selections; Nippon is already in the top five.</p>
 </section>
