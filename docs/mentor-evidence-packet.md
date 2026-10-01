@@ -25,3 +25,7 @@ No source result becomes independently reviewed merely because a test passes. Do
 The two-person source reproduction result is pending. Five unassisted comprehension sessions are pending. All-eight usable coverage is pending official Kotak/HSBC access. Record actual pass/fail findings and fixes against the plan; do not substitute this demonstration for these gates.
 
 The [customer-validation kit](customer-validation-kit.md) contains task scoring, interview and paid-pilot preparation. [Source-use review](source-use-review.md) records permission decisions needed before public paid distribution. The [VC evidence register](vc-evidence-packet.md) separates current product evidence from the real customer observations still required.
+
+## 2 October 2026 reliability follow-up
+
+See [pre-pilot reliability results](pre-pilot-reliability.md) for exact-cohort evidence, retained-release reopening, performance measurements and regression results. The [acceptance pack](pre-pilot-acceptance.md) lists remaining source acquisition, independent review and real-participant steps. Earlier coverage and commercial-evidence limitations remain unless explicitly resolved there.

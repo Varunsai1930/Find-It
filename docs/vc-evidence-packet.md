@@ -22,3 +22,7 @@ Do not calculate acquisition conversion from page views alone. Use qualified con
 ## Update after the pilot
 
 Attach source-review and coverage releases, actual interview/competitor task summaries, payments/refunds, two release cohorts, invoices/time records and the business calculation. Explain failed targets and conflicting observations. Choose continue/change/stop the audience or job before adding unrelated features. Reassess source access, support burden and distribution permissions before promising wider coverage.
+
+## 2 October 2026 reliability follow-up
+
+See [pre-pilot reliability results](pre-pilot-reliability.md) for exact-cohort evidence, retained-release reopening, performance measurements and regression results. The [acceptance pack](pre-pilot-acceptance.md) lists remaining source acquisition, independent review and real-participant steps. Earlier coverage and commercial-evidence limitations remain unless explicitly resolved there.

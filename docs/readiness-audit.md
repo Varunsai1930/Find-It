@@ -82,3 +82,7 @@ Device watchlists, share changes, house counts, additions/exits, largest compare
 Obtain official Kotak/HSBC originals and reviewed inventories, or explicitly decide a narrower disclosed pilot scope. Independently reproduce selected calculations. Recruit and consent 10–15 interviewees and five unassisted usability participants, then decide the priority job and audience. Resolve applicable source-use permissions, price hypotheses, merchant identity and authorization for external actions. Observe actual payments, renewals and two subsequent monthly publication cycles. No participants, payment results, retention or competitor task scores are invented.
 
 Use the [mentor guide](mentor-demo.md), [mentor evidence packet](mentor-evidence-packet.md), [customer-validation kit](customer-validation-kit.md), [refresh runbook](refresh-runbook.md), [source-use review](source-use-review.md) and [VC evidence register](vc-evidence-packet.md).
+
+## 2 October 2026 reliability follow-up
+
+See [pre-pilot reliability results](pre-pilot-reliability.md) for exact-cohort evidence, retained-release reopening, performance measurements and regression results. The [acceptance pack](pre-pilot-acceptance.md) lists remaining source acquisition, independent review and real-participant steps. Earlier coverage and commercial-evidence limitations remain unless explicitly resolved there.
