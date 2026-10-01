@@ -18,10 +18,10 @@ def parse_stocks(value: str) -> list[str]:
 
 
 def monthly_report(conn: sqlite3.Connection, month: str, stocks: list[str],
-                   active_only: bool = True) -> dict:
+                   active_only: bool = True, release_id: str | None = None) -> dict:
     items = []
     comparison = comparison_rows(conn, month, active_only)
-    release_id = content_id(conn)
+    release_id = release_id or content_id(conn)
     for isin in sorted(set(stocks)):
         stock = conn.execute("SELECT name,instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
         e = stock_evidence(conn, isin, month, active_only, comparison=comparison, release_id=release_id)
@@ -42,7 +42,7 @@ def monthly_report(conn: sqlite3.Connection, month: str, stocks: list[str],
                       "largest_compared_changes": [{"fund": f["scheme_name"], "shares": f["qty_change"],
                                                      "flow_lakhs": f["flow_lakhs"]} for f in sorted(
                           e["funds"], key=lambda f: abs(f["qty_change"]), reverse=True)[:3]],
-                      "evidence_url": f"/evidence/{isin}?" + urlencode({"month": month, "active_only": int(active_only)}),
+                      "evidence_url": f"/evidence/{isin}?" + urlencode({"month": month, "active_only": int(active_only), "release": release_id, "rules": RULE_VERSION}),
                       "review_status": e["review_status"]})
     return {"month": month, "release_id": release_id, "rule_version": RULE_VERSION,
             "scope": "Domestic equity; " + ("active stock-pickers" if active_only else "all fund types"),
@@ -56,7 +56,8 @@ def render_report(report: dict) -> str:
     lines = [f"# Changes in my stocks — {report['month']}", "",
              f"Data release: {report['release_id']}", f"Rules: {report['rule_version']}",
              f"Scope: {report['scope']}. All-market completeness: unknown.", "",
-             report["claims"], ""]
+             report["claims"], "",
+             "Reopen evidence locally: start FindIt with the retained release database and its matching .json manifest in the releases directory. Use the matching application/rules version. Prefix each evidence path below with your local server address (for example http://127.0.0.1:65100). A missing or mismatched release is rejected, never replaced with current data.", ""]
     for stock in report["stocks"]:
         lines += [f"## {stock['name']} ({stock['isin']})", f"Status: {stock['status']}",
                   f"Fund houses buying/selling: {available(stock['houses_buying'])}/{available(stock['houses_selling'])}",

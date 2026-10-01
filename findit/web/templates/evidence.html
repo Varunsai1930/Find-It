@@ -11,35 +11,39 @@
 <p class="eyebrow">Sources and calculations</p>
 <h1>View evidence</h1>
 <p class="evidence-id">{{ e.isin }}</p>
-<p>{{ e.amc or 'All compared fund houses' }} · {{ e.prev_month|month_label }} → {{ e.month|month_label }} · {{ 'Active stock-pickers' if e.active_only else 'All fund types' }} · domestic equity</p>
-{% if e.no_data %}<p class="state">No usable comparison in this scope. Missing snapshots are not zero holdings or trades.</p>{% else %}
+<p>{{ e.amc or 'All compared fund houses' }} · {% if not e.baseline %}{{ e.prev_month|month_label }} →{% endif %} {{ e.month|month_label }} · {{ 'Active stock-pickers' if e.active_only else 'All fund types' }} · domestic equity</p>
+{% if e.cohort is defined %}<p><strong>{{ e.cohort_count }} funds in the fixed historical cohort</strong> · {{ e.history_start|month_label }} → {{ e.history_end|month_label }}. {{ e.funds|length }} contributing funds shown below; cohort members without this stock contribute zero.</p>
+<details class="evidence-method"><summary>Fixed cohort fund IDs</summary><p>{{ e.cohort|join(', ') }}</p></details>{% endif %}
+{% if e.history_url %}<p><a href="{{ e.history_url }}">Holding history · same release and filters →</a></p>{% endif %}
+{% if e.baseline %}<p>First snapshot in this historical range. No prior-period trade is implied.</p><dl class="evidence-metrics"><div><dt>Shares held</dt><dd>{{ e.current_shares|signed|replace('+','') }}</dd></div></dl>
+{% elif e.no_data %}<p class="state">No usable comparison in this scope. Missing snapshots are not zero holdings or trades.</p>{% else %}
 <dl class="evidence-metrics"><div><dt>Previous shares, adjusted</dt><dd>{{ e.adjusted_previous_shares|signed|replace('+','') }}</dd></div><div><dt>Current shares</dt><dd>{{ e.current_shares|signed|replace('+','') }}</dd></div><div><dt>Net share change</dt><dd>{{ e.net_share_change|signed }}</dd></div></dl>
 <p>Added {{ e.gross_added_shares|signed }} shares; reduced {{ e.gross_reduced_shares|signed }} shares. Opposing trades are netted. Estimated net trading value: ₹{{ e.net_flow_lakhs|crore }} Cr.</p>
 {% endif %}
 <details class="evidence-method"><summary>How these changes are calculated</summary><p>{{ e.price_convention }}</p><p>{{ e.ownership_note }}</p></details>
 <p class="evidence-notice">Independent review: pending. Unknown publication dates remain unknown; the dashboard's cutoff uses a deadline assumption.</p>
 <details class="evidence-method"><summary>Data release and calculation rules</summary><p style="overflow-wrap:anywhere">Release: {{ e.release_id }} · Rules: {{ e.rule_version }}</p></details>
-<section class="evidence-scope" aria-labelledby="evidence-scope-title">
+{% if e.coverage %}<section class="evidence-scope" aria-labelledby="evidence-scope-title">
 <h2 id="evidence-scope-title">Comparison coverage</h2>
 {% for house, coverage in e.coverage.items() %}
 <div class="evidence-house"><h3>{{ house }} <span class="tag tag--{{ 'ok' if coverage.coverage_state == 'complete' else 'stale' }}">{{ coverage.coverage_state|replace('_',' ') }}</span></h3>
 <dl class="coverage-totals"><div><dt>Expected</dt><dd>{{ coverage.expected if coverage.expected is not none else 'Unknown' }}</dd></div><div><dt>Loaded</dt><dd>{{ coverage.loaded }}</dd></div><div><dt>Validated</dt><dd>{{ coverage.validated_count }}</dd></div><div><dt>Compared</dt><dd>{{ coverage.compared }}</dd></div></dl></div>
 {% endfor %}
 <p class="muted">Expected counts eligible funds. Loaded and validated count portfolios, including those outside eligible scope. Compared funds passed validation in both months.</p>
-</section>
+</section>{% endif %}
 <h2 class="evidence-funds-title">Evidence by individual fund <span class="muted">· {{ e.funds|length }}</span></h2>
 {% for f in e.funds %}
 <section class="panel evidence-fund"><h3>{{ f.scheme_name }}</h3><p class="muted">{{ f.amc_name }}</p>
 <dl class="evidence-metrics evidence-metrics--fund">
-<div><dt>Previous shares, adjusted</dt><dd>{{ f.quantity_prev|signed|replace('+','') }}</dd></div>
+{% if not e.baseline %}<div><dt>Previous shares, adjusted</dt><dd>{{ f.quantity_prev|signed|replace('+','') }}</dd></div>{% endif %}
 <div><dt>Current shares</dt><dd>{{ f.quantity_curr|signed|replace('+','') }}</dd></div>
-<div><dt>Net share change</dt><dd>{{ f.qty_change|signed }}</dd></div>
-<div><dt>Estimated net trading value</dt><dd>₹{{ f.flow_lakhs|crore }} Cr</dd></div>
+{% if not e.baseline %}<div><dt>Net share change</dt><dd>{{ f.qty_change|signed }}</dd></div>
+<div><dt>Estimated net trading value</dt><dd>₹{{ f.flow_lakhs|crore }} Cr</dd></div>{% endif %}
 </dl>
-<details class="evidence-method"><summary>Adjustment calculation</summary>
+{% if not e.baseline %}<details class="evidence-method"><summary>Adjustment calculation</summary>
 <p>{{ f.raw_quantity_prev|signed|replace('+','') }} raw previous shares × {{ f.split_ratio }} = {{ f.quantity_prev|signed|replace('+','') }} adjusted shares.</p>
-<p>Split/bonus adjustment: {{ f.adjustment_basis }}. {% if f.adjustment_basis == 'inferred' %}Inferred from quantities and inverse prices; not an independently confirmed corporate action.{% endif %}</p></details>
-{% for source in [f.previous_source, f.current_source] %}
+<p>Split/bonus adjustment: {{ f.adjustment_basis }}. {% if f.adjustment_basis == 'inferred' %}Inferred from quantities and inverse prices; not an independently confirmed corporate action.{% endif %}</p></details>{% endif %}
+{% for source in ([f.current_source] if e.baseline else [f.previous_source, f.current_source]) %}
 <details class="evidence-source"><summary>{{ source.month|month_label }} · {{ source.validation }} · provenance {{ source.provenance_status|replace('_',' ') }}</summary>
 {% if not source.sources %}<p>Original-source provenance is unavailable for this legacy snapshot.</p>{% endif %}
 {% for s in source.sources %}<p>{{ s.workbook }}{% if s.url %} · <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Official disclosure</a>{% else %} · official URL not recorded{% endif %}<br>Workbook SHA-256 (named file after extraction if downloaded in an archive): <code style="overflow-wrap:anywhere">{{ s.sha256 }}</code><br>Published: {{ s.published_at or 'unknown' }} · Retrieved: {{ s.retrieved_at or 'unknown' }} · Parser: {{ s.parser_version }}</p>{% endfor %}

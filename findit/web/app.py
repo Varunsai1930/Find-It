@@ -14,6 +14,7 @@ import os
 import re
 import sqlite3
 import threading
+from urllib.parse import urlencode
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,8 @@ import pandas as pd
 from findit.core import consensus_signals, publication
 from findit.core.coverage import house_coverage, month_coverage
 from findit.core.evidence import stock_evidence
-from findit.core.history import stock_history
+from findit.core.history import stock_history, history_evidence
+from findit.store.releases import ReleaseStore, RULE_VERSION
 from findit.core.watchlist import monthly_report, parse_stocks, render_report
 from findit.store import queries
 from findit.summary import get_summary
@@ -401,8 +403,29 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
     return [dict(r) for r in rows]
 
 
-def create_app(db_path: str | Path | None = None) -> FastAPI:
+def create_app(db_path: str | Path | None = None, release_dir: Path | None = None) -> FastAPI:
     resolved_db = _resolve_db_path(db_path)
+    releases = ReleaseStore(Path(resolved_db), release_dir)
+
+    def release_connection(release=None, rules=None):
+        try:
+            return releases.connect(release, rules)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    def scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort):
+        if any((start, end, cohort)):
+            if not all((start, end, cohort)):
+                raise HTTPException(status_code=400, detail="historical evidence requires start, end and cohort")
+            try:
+                return history_evidence(conn, isin.upper(), month, start, end, active_only == 1,
+                                        amc, identity, cohort)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if month not in _known_months(conn):
+            raise HTTPException(status_code=404, detail="Unknown month")
+        return stock_evidence(conn, isin.upper(), month, active_only == 1, amc, release_id=identity)
+
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
     # Fingerprints prevent cached assets from outliving a deployed UI change.
     assets = {name: hashlib.sha256((_WEB_DIR / "static" / name).read_bytes()).hexdigest()[:12]
@@ -609,26 +632,26 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     # -- stock ------------------------------------------------------------
     @app.get("/api/watchlist")
-    def api_watchlist(month: str, stocks: str = "", active_only: int = 1) -> Any:
-        conn = _ro_connect(resolved_db)
+    def api_watchlist(month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
+        conn, identity = release_connection(release, rules)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail="Unknown month")
             try:
-                return _sanitize(monthly_report(conn, month, parse_stocks(stocks), active_only == 1))
+                return _sanitize(monthly_report(conn, month, parse_stocks(stocks), active_only == 1, release_id=identity))
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
             conn.close()
 
     @app.get("/watchlist/report")
-    def watchlist_download(month: str, stocks: str = "", active_only: int = 1) -> Any:
-        conn = _ro_connect(resolved_db)
+    def watchlist_download(month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
+        conn, identity = release_connection(release, rules)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail="Unknown month")
             try:
-                report = monthly_report(conn, month, parse_stocks(stocks), active_only == 1)
+                report = monthly_report(conn, month, parse_stocks(stocks), active_only == 1, release_id=identity)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             return Response(render_report(report), media_type="text/markdown",
@@ -638,11 +661,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/api/history/{isin}")
     def api_history(isin: str, start: str, end: str, active_only: int = 1,
-                    amc: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db)
+                    amc: str | None = None, release: str | None = None, rules: str | None = None) -> Any:
+        conn, identity = release_connection(release, rules)
         try:
             try:
-                return _sanitize(stock_history(conn, isin.upper(), start, end, active_only == 1, amc))
+                return _sanitize(stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity))
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
@@ -650,11 +673,11 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
 
     @app.get("/history/{isin}")
     def history_page(request: Request, isin: str, start: str, end: str,
-                     active_only: int = 1, amc: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db)
+                     active_only: int = 1, amc: str | None = None, release: str | None = None, rules: str | None = None) -> Any:
+        conn, identity = release_connection(release, rules)
         try:
             try:
-                result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc)
+                result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             return templates.TemplateResponse(request, "history.html", {"h": _sanitize(result)})
@@ -662,24 +685,30 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             conn.close()
 
     @app.get("/api/evidence/{isin}")
-    def api_evidence(isin: str, month: str, active_only: int = 1,
-                     amc: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db)
+    def api_evidence(isin: str, month: str, active_only: int = 1, amc: str | None = None,
+                     release: str | None = None, rules: str | None = None,
+                     start: str | None = None, end: str | None = None, cohort: str | None = None) -> Any:
+        if cohort and not release:
+            raise HTTPException(status_code=400, detail="historical evidence requires a release")
+        conn, identity = release_connection(release, rules)
         try:
-            if month not in _known_months(conn):
-                raise HTTPException(status_code=404, detail="Unknown month")
-            return _sanitize(stock_evidence(conn, isin.upper(), month, active_only == 1, amc))
+            return _sanitize(scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort))
         finally:
             conn.close()
 
     @app.get("/evidence/{isin}")
     def evidence_page(request: Request, isin: str, month: str, active_only: int = 1,
-                      amc: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db)
+                      amc: str | None = None, release: str | None = None, rules: str | None = None,
+                      start: str | None = None, end: str | None = None, cohort: str | None = None) -> Any:
+        if cohort and not release:
+            raise HTTPException(status_code=400, detail="historical evidence requires a release")
+        conn, identity = release_connection(release, rules)
         try:
-            if month not in _known_months(conn):
-                raise HTTPException(status_code=404, detail="Unknown month")
-            evidence = stock_evidence(conn, isin.upper(), month, active_only == 1, amc)
+            evidence = scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort)
+            evidence["history_url"] = evidence.get("history_url") or ("/history/" + isin.upper() + "?" +
+                urlencode({
+                    "start": min(_known_months(conn)), "end": month, "active_only": active_only,
+                    "amc": amc or "", "release": identity, "rules": RULE_VERSION}))
             return templates.TemplateResponse(request, "evidence.html", {"e": _sanitize(evidence)})
         finally:
             conn.close()

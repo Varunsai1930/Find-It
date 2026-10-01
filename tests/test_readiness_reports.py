@@ -64,3 +64,37 @@ def test_release_preserves_original_and_failed_refresh_retains_pointer(tmp_path)
     with pytest.raises(SystemExit):
         release_main(["--out", str(folder), "--rollback", first["release_id"]])
     assert (folder / "current.json").read_bytes() == pointer
+
+
+def test_report_a_reopens_after_switch_to_b_and_rejects_tampering(tmp_path):
+    path = _copy_db(tmp_path)
+    folder = tmp_path / 'releases'
+    a = snapshot(path, folder, 'A')
+    ca = TestClient(create_app(folder / f"{a['release_id']}.db"))
+    report = ca.get('/api/watchlist?month=2026-08&stocks=INE002A01018').json()
+    url = report['stocks'][0]['evidence_url']
+    original = ca.get(url.replace('/evidence/', '/api/evidence/')).json()
+    with sqlite3.connect(path) as c:
+        c.execute("UPDATE mf_holdings_monthly SET quantity=quantity+17 WHERE scheme_id=1 AND report_month='2026-08'")
+    b = snapshot(path, folder, 'B', parent=a['release_id'], notes='Test quantity revision')
+    cb = TestClient(create_app(folder / f"{b['release_id']}.db"))
+    reopened = cb.get(url.replace('/evidence/', '/api/evidence/'))
+    assert reopened.status_code == 200
+    assert reopened.json() == original
+    assert reopened.json()['net_share_change'] == report['stocks'][0]['net_share_change']
+    assert cb.get(url).status_code == 200
+    assert cb.get(url.replace(a['release_id'], 'f'*64)).status_code == 409
+    assert cb.get(url.replace(a['rule_version'], 'unsupported')).status_code == 409
+    # A mutable DB has no identity cache, including commits in a WAL file.
+    with sqlite3.connect(path) as c:
+        c.execute('PRAGMA journal_mode=WAL')
+        mutable = TestClient(create_app(path, release_dir=tmp_path / 'absent'))
+        first = mutable.get('/api/watchlist?month=2026-08&stocks=INE002A01018').json()
+        c.execute("UPDATE mf_holdings_monthly SET quantity=quantity+1 WHERE report_month='2026-08'")
+        c.commit()
+        second = mutable.get('/api/watchlist?month=2026-08&stocks=INE002A01018').json()
+        assert first['release_id'] != second['release_id']
+        assert mutable.get(first['stocks'][0]['evidence_url']).status_code == 409
+    # Previously cached verification must not hide changes to a retained file.
+    (folder / f"{a['release_id']}.db").write_bytes(b'corrupt')
+    assert cb.get(url).status_code == 409

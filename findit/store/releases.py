@@ -95,3 +95,70 @@ def snapshot(source: Path, output: Path, label: str, parent: str | None = None,
         pointer.write_text(json.dumps({"release_id": release_id}) + "\n")
         pointer.replace(output / "current.json")
         return manifest
+
+
+class ReleaseStore:
+    """Resolve only local retained releases; cache verification until files change.
+
+    Mutable databases are deliberately never cached. A read transaction ties their
+    identity to the exact rows used by the caller, including WAL-backed updates.
+    """
+
+    def __init__(self, current: Path, directory: Path | None = None):
+        self.current = current.resolve()
+        self.directory = directory or (self.current.parent if len(self.current.stem) == 64
+                                       else self.current.parent / "releases")
+        self._verified: dict[str, tuple] = {}
+
+    def retained(self, release_id: str) -> tuple[Path, dict]:
+        import re
+        if not re.fullmatch(r"[a-f0-9]{64}", release_id):
+            raise ValueError("invalid release ID")
+        path = self.directory / f"{release_id}.db"
+        manifest = path.with_suffix(".json")
+        try:
+            signatures = tuple((p.stat().st_ino, p.stat().st_size, p.stat().st_mtime_ns,
+                                p.stat().st_ctime_ns) for p in (path, manifest))
+        except OSError as exc:
+            raise ValueError("retained release is unavailable; reopen with its retained database and manifest") from exc
+        if any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-journal")):
+            raise ValueError("retained release has a mutable journal")
+        cached = self._verified.get(release_id)
+        if cached and cached[0] == signatures:
+            return path, cached[1]
+        stored = verify_release(self.directory, release_id)
+        if stored.get("rule_version") != RULE_VERSION:
+            raise ValueError("release calculation rules are unsupported by this application version")
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
+            if content_id(conn) != release_id:
+                raise ValueError("retained release content identity does not match")
+        self._verified[release_id] = (signatures, stored)
+        return path, stored
+
+    def connect(self, release_id: str | None = None, rules: str | None = None):
+        if rules and rules != RULE_VERSION:
+            raise ValueError("requested calculation rules do not match this application version")
+        import re
+        retained_id = release_id or (self.current.stem if re.fullmatch(r"[a-f0-9]{64}", self.current.stem) else None)
+        if retained_id:
+            try:
+                path, metadata = self.retained(retained_id)
+            except ValueError:
+                # A mutable report may still be reproduced while the current DB
+                # has exactly that content. Never substitute different content.
+                if not release_id or self.current.parent == self.directory:
+                    raise
+                path, metadata = self.current, None
+        else:
+            path, metadata = self.current, None
+        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN")
+        try:
+            identity = metadata["release_id"] if metadata else content_id(conn)
+            if release_id and identity != release_id:
+                raise ValueError("requested release is unavailable or mismatched; current data was not substituted")
+            return conn, identity
+        except Exception:
+            conn.close()
+            raise

@@ -19,3 +19,36 @@ def test_history_uses_one_cohort_and_never_fills_missing_month_with_zero(tmp_pat
     assert [p["shares"] for p in changed["points"]] == [140, 210]
     unknown = stock_history(c, "INE123A01012", "2026-07", "2026-08")
     assert all(p["shares"] is None for p in unknown["points"])
+
+
+def test_history_links_reproduce_cohort_and_baseline(tmp_path):
+    from fastapi.testclient import TestClient
+    from findit.web.app import create_app
+    path = _copy_db(tmp_path)
+    # Exclude a fund from the first comparison only; it remains in August's
+    # broader comparison. Three snapshots exercise true range-wide scope.
+    with sqlite3.connect(path) as c:
+        c.execute("INSERT INTO mf_holdings_monthly(scheme_id,report_month,isin,quantity,market_value_lakhs,pct_nav) SELECT scheme_id, '2026-06', isin, quantity, market_value_lakhs, pct_nav FROM mf_holdings_monthly WHERE report_month='2026-07'")
+        c.execute("INSERT INTO scheme_month_status(scheme_id,report_month,status) SELECT scheme_id,'2026-06','ok' FROM scheme_month_status WHERE report_month='2026-07' AND scheme_id<>3")
+        from findit.core.delta_calculator import compute_deltas
+        compute_deltas(c, '2026-06', '2026-07').to_sql('mf_holding_deltas', c, if_exists='append', index=False)
+        c.commit()
+    client = TestClient(create_app(path))
+    h = client.get('/api/history/INE002A01018', params={'start':'2026-06','end':'2026-08'}).json()
+    assert h['cohort'] == [1, 2]
+    for point in h['points']:
+        url = point['evidence_url'].replace('/evidence/', '/api/evidence/')
+        response = client.get(url)
+        assert response.status_code == 200, response.text
+        e = response.json()
+        assert e['current_shares'] == point['shares']
+        assert e['net_share_change'] == point['net_share_change']
+        assert {f['scheme_id'] for f in e['funds']} <= set(h['cohort'])
+        assert client.get(point['evidence_url']).status_code == 200
+    assert client.get(url.replace('start=2026-06','start=2026-07')).status_code == 400
+    assert client.get(url.replace('active_only=1','active_only=0')).status_code == 400
+    assert client.get(url.replace('month=2026-08','month=2026-09')).status_code == 400
+    broad = client.get('/api/evidence/INE002A01018?month=2026-08').json()
+    assert broad['net_share_change'] != e['net_share_change']
+    gap = client.get('/api/history/INE002A01018?start=2026-06&end=2026-09').json()
+    assert all(p['evidence_url'] is None for p in gap['points'])
