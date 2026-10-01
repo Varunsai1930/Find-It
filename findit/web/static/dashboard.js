@@ -88,6 +88,12 @@
         var row = document.createElement("p"), link = document.createElement("a"), remove = document.createElement("button");
         link.href = stock.evidence_url; link.textContent = stock.name + " · View evidence";
         row.append(link, " — " + stock.status.replaceAll("_", " ") + "; " + (stock.houses_buying === null ? "unavailable" : stock.houses_buying) + " houses buying / " + (stock.houses_selling === null ? "unavailable" : stock.houses_selling) + " selling. ");
+        var number = function (v) { return v === null ? "unavailable" : new Intl.NumberFormat("en-IN").format(v); };
+        row.append("Net change: " + number(stock.net_share_change) + " shares. Individual-fund additions / exits: " + number(stock.additions) + " / " + number(stock.exits) + ". ");
+        if (stock.largest_compared_changes.length) {
+          var largest = stock.largest_compared_changes[0];
+          row.append("Largest compared fund change: " + largest.fund + ", " + number(largest.shares) + " shares. Independent review pending. ");
+        }
         remove.type = "button"; remove.className = "btn btn--quiet"; remove.textContent = "Unfollow";
         remove.setAttribute("aria-label", "Unfollow " + stock.name);
         remove.addEventListener("click", function () { watchlist = watchlist.filter(function (s) { return s !== stock.isin; }); saveWatchlist(); refreshWatchlist(); });

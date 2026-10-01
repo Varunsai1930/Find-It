@@ -34,6 +34,17 @@ def test_report_api_validation_and_download(tmp_path):
     assert parse_stocks("ine002a01018,INE002A01018") == ["INE002A01018"]
 
 
+def test_net_unchanged_can_still_contain_opposing_fund_changes(tmp_path):
+    c = sqlite3.connect(_copy_db(tmp_path))
+    # Existing fixture: Infosys -20 in fund 1, +30 in fund 3.
+    # Make the positive change +20, so gross activity still exists at net zero.
+    c.execute("UPDATE mf_holdings_monthly SET quantity=quantity-10 WHERE scheme_id=3 AND isin='INE009A01021' AND report_month='2026-08'")
+    stock = monthly_report(c, "2026-08", ["INE009A01021"])["stocks"][0]
+    assert stock["status"] == "net_unchanged_with_opposing_changes"
+    assert stock["net_share_change"] == 0
+    assert stock["houses_buying"] == stock["houses_selling"] == 1
+
+
 def test_release_preserves_original_and_failed_refresh_retains_pointer(tmp_path):
     path = _copy_db(tmp_path)
     before = path.read_bytes()
