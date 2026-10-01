@@ -10,6 +10,7 @@
 {% endif %}
 <p>{{ e.price_convention }}</p><p>{{ e.ownership_note }}</p>
 <p>Independent review: pending. Unknown publication dates remain unknown; the dashboard's cutoff uses a deadline assumption.</p>
+<details><summary>Data release and calculation rules</summary><p style="overflow-wrap:anywhere">Release: {{ e.release_id }} · Rules: {{ e.rule_version }}</p></details>
 {% for house, coverage in e.coverage.items() %}<p>{{ house }}: {{ coverage.coverage_state|replace('_',' ') }} · Expected {{ coverage.expected if coverage.expected is not none else 'unknown' }} · Loaded {{ coverage.loaded }} · Validated {{ coverage.validated_count }} · Compared {{ coverage.compared }}</p>{% endfor %}
 {% for f in e.funds %}
 <section class="panel" style="padding:20px;margin:20px 0"><h2>{{ f.scheme_name }}</h2><p>{{ f.amc_name }} · {{ f.raw_quantity_prev|signed }} raw previous shares × {{ f.split_ratio }} = {{ f.quantity_prev|signed }} adjusted → {{ f.quantity_curr|signed }} current · change {{ f.qty_change|signed }} · ₹{{ f.flow_lakhs|crore }} Cr</p>

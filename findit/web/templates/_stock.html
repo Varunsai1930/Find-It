@@ -3,12 +3,14 @@
 {%- if stock -%}
 <div class="stock-head" data-stock-isin="{{ stock.isin }}">
   <h3 tabindex="-1">{{ stock.name }}</h3>
+  {% if stock.instrument_type == 'equity' %}<button class="btn btn--quiet" type="button" data-watch-stock="{{ stock.isin }}">Follow stock on this device</button>{% endif %}
   <p class="sub">{{ stock.isin }}{% if stock.industry %} · {{ stock.industry }}{% endif %}{% if stock.instrument_type %} · {{ stock.instrument_type }}{% endif %}</p>
 </div>
 
 {% if stock.month %}
 <h4>Fund activity · {{ stock.month|month_label }} <span class="muted">({{ scope(view) }})</span></h4>
 {% if stock.instrument_type == 'equity' %}<a href="/evidence/{{ stock.isin }}?{{ dict(month=stock.month, active_only=view.active_only)|urlencode }}">View evidence · compared domestic equity funds</a>{% endif %}
+{% if stock.instrument_type == 'equity' and history_start %} · <a href="/history/{{ stock.isin }}?{{ dict(start=history_start,end=stock.month,active_only=view.active_only)|urlencode }}">Holding history · fixed cohort</a>{% endif %}
 {% if activity %}
 <dl class="activity">
   <div><dt>Net fund houses</dt><dd><span class="num strong">{{ activity.net_amc_count|signed }}</span><span class="sub">{{ activity.amcs_buying }} buying · {{ activity.amcs_selling }} selling</span></dd></div>

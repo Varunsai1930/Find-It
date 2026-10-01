@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from findit.core.consensus_signals import comparison_rows
 from findit.core.coverage import house_coverage
 from findit.store import queries
+from findit.store.releases import RULE_VERSION, content_id
 
 
 def public_url(value: str | None) -> str | None:
@@ -51,9 +52,10 @@ def snapshot_evidence(conn: sqlite3.Connection, sid: int, month: str, isin: str)
 
 
 def stock_evidence(conn: sqlite3.Connection, isin: str, month: str,
-                   active_only: bool = True, amc: str | None = None) -> dict:
+                   active_only: bool = True, amc: str | None = None,
+                   comparison=None, release_id: str | None = None) -> dict:
     prev = (date.fromisoformat(month + "-01") - timedelta(days=1)).strftime("%Y-%m")
-    rows = comparison_rows(conn, month, active_only)
+    rows = comparison if comparison is not None else comparison_rows(conn, month, active_only)
     cohort = rows
     if not rows.empty:
         rows = rows[rows["isin"] == isin]
@@ -73,6 +75,7 @@ def stock_evidence(conn: sqlite3.Connection, isin: str, month: str,
     all_priced = bool(funds) and all(row["flow_lakhs"] is not None and
                                     row["flow_lakhs"] == row["flow_lakhs"] for row in funds)
     return {"isin": isin, "month": month, "prev_month": prev, "amc": amc,
+            "release_id": release_id or content_id(conn), "rule_version": RULE_VERSION,
             "active_only": active_only, "funds": funds, "coverage": coverage,
             "raw_previous_shares": sum(row["raw_quantity_prev"] for row in funds),
             "adjusted_previous_shares": sum(row["quantity_prev"] for row in funds),

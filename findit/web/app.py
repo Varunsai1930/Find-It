@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import pandas as pd
@@ -26,6 +27,7 @@ from findit.core import consensus_signals, publication
 from findit.core.coverage import house_coverage, month_coverage
 from findit.core.evidence import stock_evidence
 from findit.core.history import stock_history
+from findit.core.watchlist import monthly_report, parse_stocks, render_report
 from findit.store import queries
 from findit.summary import get_summary
 from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
@@ -593,6 +595,34 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             conn.close()
 
     # -- stock ------------------------------------------------------------
+    @app.get("/api/watchlist")
+    def api_watchlist(month: str, stocks: str = "", active_only: int = 1) -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail="Unknown month")
+            try:
+                return _sanitize(monthly_report(conn, month, parse_stocks(stocks), active_only == 1))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            conn.close()
+
+    @app.get("/watchlist/report")
+    def watchlist_download(month: str, stocks: str = "", active_only: int = 1) -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail="Unknown month")
+            try:
+                report = monthly_report(conn, month, parse_stocks(stocks), active_only == 1)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return Response(render_report(report), media_type="text/markdown",
+                            headers={"Content-Disposition": f'attachment; filename="findit-{month}-{report["release_id"][:12]}.md"'})
+        finally:
+            conn.close()
+
     @app.get("/api/history/{isin}")
     def api_history(isin: str, start: str, end: str, active_only: int = 1,
                     amc: str | None = None) -> Any:

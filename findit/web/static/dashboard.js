@@ -41,6 +41,82 @@
   var stockBox = document.getElementById("stock-box");
   var inflight = {};
   var stockOpener = null;
+  var watchlist = [];
+  var watchStatus = document.getElementById("watchlist-status");
+  var watchResults = document.getElementById("watchlist-results");
+  function validateWatchlist(value) {
+    if (!value || value.version !== 1 || !Array.isArray(value.stocks) || value.stocks.length > 100 ||
+        value.stocks.some(function (s) { return typeof s !== "string" || !/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(s); })) {
+      throw new Error("Use a FindIt watchlist export with up to 100 valid ISINs.");
+    }
+    return Array.from(new Set(value.stocks)).sort();
+  }
+  try {
+    var saved = localStorage.getItem("findit-watchlist-v1");
+    if (saved) watchlist = validateWatchlist(JSON.parse(saved));
+  } catch (e) {
+    if (watchStatus) watchStatus.textContent = "Saved watchlist could not be read. Import a valid export to recover it.";
+  }
+  function saveWatchlist() {
+    try {
+      localStorage.setItem("findit-watchlist-v1", JSON.stringify({ version: 1, stocks: watchlist }));
+      if (watchStatus) watchStatus.textContent = "Saved on this device.";
+    } catch (e) {
+      if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
+    }
+  }
+  async function refreshWatchlist() {
+    if (!watchResults || !currentMonth()) return;
+    var download = document.getElementById("watchlist-report");
+    if (!watchlist.length) {
+      watchResults.textContent = "Your watchlist is empty. Open a stock and choose Follow stock.";
+      download.hidden = true;
+      return;
+    }
+    var q = new URLSearchParams({ month: currentMonth(), stocks: watchlist.join(","),
+                                 active_only: document.getElementById("active-only").checked ? "1" : "0" });
+    watchResults.textContent = "Loading monthly changes…";
+    try {
+      var result = await load("watchlist", "/api/watchlist?" + q);
+      if (!result.ok) throw new Error("HTTP " + result.status);
+      var report = JSON.parse(result.body);
+      watchResults.replaceChildren();
+      var note = document.createElement("p");
+      note.textContent = report.scope + "; market completeness unknown. Release " + report.release_id.slice(0, 12) + ".";
+      watchResults.append(note);
+      report.stocks.forEach(function (stock) {
+        var row = document.createElement("p"), link = document.createElement("a"), remove = document.createElement("button");
+        link.href = stock.evidence_url; link.textContent = stock.name + " · View evidence";
+        row.append(link, " — " + stock.status.replaceAll("_", " ") + "; " + (stock.houses_buying === null ? "unavailable" : stock.houses_buying) + " houses buying / " + (stock.houses_selling === null ? "unavailable" : stock.houses_selling) + " selling. ");
+        remove.type = "button"; remove.className = "btn btn--quiet"; remove.textContent = "Unfollow";
+        remove.setAttribute("aria-label", "Unfollow " + stock.name);
+        remove.addEventListener("click", function () { watchlist = watchlist.filter(function (s) { return s !== stock.isin; }); saveWatchlist(); refreshWatchlist(); });
+        row.append(remove); watchResults.append(row);
+      });
+      download.href = "/watchlist/report?" + q; download.hidden = false;
+    } catch (e) {
+      if (e.name !== "AbortError") watchResults.replaceChildren(stateNode("error", "Could not load your watchlist. " + e.message, refreshWatchlist));
+    }
+  }
+  if (watchResults) {
+    document.getElementById("watchlist-export").addEventListener("click", function () {
+      var url = URL.createObjectURL(new Blob([JSON.stringify({ version: 1, stocks: watchlist }, null, 2)], { type: "application/json" }));
+      var link = document.createElement("a"); link.href = url; link.download = "findit-watchlist.json"; link.click(); URL.revokeObjectURL(url);
+    });
+    document.getElementById("watchlist-import").addEventListener("change", async function (event) {
+      try {
+        var file = event.target.files[0]; if (!file) return;
+        if (file.size > 20000) throw new Error("Watchlist file is too large.");
+        var imported = validateWatchlist(JSON.parse(await file.text()));
+        var combined = Array.from(new Set(watchlist.concat(imported))).sort();
+        if (combined.length > 100) throw new Error("Keep at most 100 stocks.");
+        watchlist = combined;
+        saveWatchlist(); refreshWatchlist();
+      } catch (e) { watchStatus.textContent = "Import failed: " + e.message; }
+      event.target.value = "";
+    });
+    refreshWatchlist();
+  }
 
   function stateNode(kind, text, retry) {
     var p = document.createElement("p");
@@ -385,6 +461,7 @@
   if (form) {
     form.addEventListener("change", function (e) {
       refreshView();
+      refreshWatchlist();
       // The summary follows the month once the reader has opened one.
       if (e.target.id === "month-select") {
         if (stockPicker) stockPicker.close();
@@ -395,6 +472,15 @@
   }
 
   document.addEventListener("click", function (e) {
+    var follow = e.target.closest("[data-watch-stock]");
+    if (follow) {
+      var isin = follow.dataset.watchStock;
+      if (watchlist.includes(isin)) { if (watchStatus) watchStatus.textContent = "Already followed on this device."; return; }
+      if (watchlist.length >= 100) { if (watchStatus) watchStatus.textContent = "Keep at most 100 followed stocks."; return; }
+      watchlist.push(isin); watchlist.sort(); saveWatchlist(); refreshWatchlist();
+      follow.textContent = "Following on this device";
+      return;
+    }
     var link = e.target.closest(".stock-link");
     if (link) { openStock(link.dataset.isin); return; }
     // "Show all" and the column toggle carry their view in the href; apply it
