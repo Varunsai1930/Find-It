@@ -41,7 +41,7 @@ function boot({ schemes = false, controls = false, hash = '' } = {}) {
     'summary-box', 'summary-form');
   if (controls) ids.push('view-controls', 'equity-only', 'active-only');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
-  const navLinks = ['#month-view', '#scheme-summary', '#notes-title'].map(href => {
+  const navLinks = ['#monthly-summary', '#monthly-activity', '#scheme-summary', '#notes-title'].map(href => {
     const link = new Element(); link.setAttribute('href', href); return link;
   });
   elements['section-nav'].append(...navLinks);
@@ -82,12 +82,12 @@ function boot({ schemes = false, controls = false, hash = '' } = {}) {
 
 test('navigation underline follows the loaded hash and later section changes', () => {
   const ui = boot({ hash: '#scheme-summary' });
-  assert.equal(ui.navLinks[1].getAttribute('aria-current'), 'location');
+  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
   assert.equal(ui.navLinks[0].getAttribute('aria-current'), null);
   ui.location.href = 'http://localhost/#notes-title';
   ui.window.emit('hashchange');
-  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
-  assert.equal(ui.navLinks[1].getAttribute('aria-current'), null);
+  assert.equal(ui.navLinks[3].getAttribute('aria-current'), 'location');
+  assert.equal(ui.navLinks[2].getAttribute('aria-current'), null);
 });
 
 test('refreshing the month preserves the selected section in the URL', async () => {

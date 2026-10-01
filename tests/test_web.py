@@ -15,7 +15,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from findit.store import db as db_module
-from findit.core import delta_calculator
+from findit.core import consensus_signals, delta_calculator
 from findit.summary import build_summary
 from findit.web.app import create_app
 
@@ -89,6 +89,126 @@ def _walk_numbers(obj, out: list):
 def _latest_month(conn) -> str | None:
     row = conn.execute("SELECT MAX(report_month) FROM mf_holdings_monthly").fetchone()
     return str(row[0]) if row and row[0] else None
+
+
+def test_fund_house_summary_nets_stakes_and_excludes_debt(tmp_path):
+    db = _copy_db(tmp_path)
+    with _ro_conn(db) as conn:
+        summary = consensus_signals.fund_house_activity(conn, "2026-08")
+    assert summary["prev_month"] == "2026-07"
+    a, b = summary["houses"]["A AMC"], summary["houses"]["B AMC"]
+    assert (a["loaded"], a["compared"], a["increased"], a["reduced"]) == (2, 2, 1, 1)
+    assert a["biggest"]["isin"] == "INE002A01018"
+    assert a["biggest"]["qty_change"] == 70
+    assert a["biggest"]["change_pct"] == 50
+    assert a["biggest"]["flow_lakhs"] == 7
+    assert b["biggest"]["isin"] == "INE009A01021"
+
+
+def test_fund_house_summary_offsets_trades_within_the_same_amc(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE mf_holdings_monthly SET quantity = CASE scheme_id WHEN 1 THEN 130 "
+                     "ELSE 10 END, market_value_lakhs = CASE scheme_id WHEN 1 THEN 13 ELSE 1 END "
+                     "WHERE isin = 'INE002A01018' AND report_month = '2026-08' AND scheme_id IN (1, 2)")
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-07", "2026-08"))
+        house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
+    assert (house["increased"], house["reduced"]) == (0, 1)
+    assert house["biggest"]["isin"] == "INE009A01021"
+    assert house["biggest"]["qty_change"] == -20
+
+
+def test_fund_house_summary_withholds_bad_previous_month(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE scheme_month_status SET status = 'quarantined' "
+                     "WHERE scheme_id = 1 AND report_month = '2026-07'")
+        house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
+    assert (house["loaded"], house["compared"]) == (2, 1)
+    assert house["biggest"]["qty_change"] == 20
+
+
+def test_fund_house_summary_requires_adjacent_months_and_actual_snapshots(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE mf_holding_deltas SET prev_month = '2026-06'")
+        assert consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]["compared"] == 0
+        conn.execute("UPDATE mf_holding_deltas SET prev_month = '2026-07'")
+        conn.execute("DELETE FROM mf_holdings_monthly WHERE report_month = '2026-07'")
+        assert consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]["compared"] == 0
+
+
+def test_fund_house_summary_does_not_treat_a_split_as_a_purchase(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE mf_holdings_monthly SET quantity = 100 "
+                     "WHERE isin = 'INE040A01034' AND report_month = '2026-08'")
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-07", "2026-08"))
+        house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
+    assert (house["increased"], house["reduced"]) == (1, 1)
+    assert house["biggest"]["qty_change"] == 70
+
+
+def test_fund_house_summary_cannot_rank_partially_unpriced_changes(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE mf_holding_deltas SET flow_lakhs = NULL "
+                     "WHERE scheme_id = 1 AND isin = 'INE002A01018'")
+        house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
+    assert house["increased"] == 1
+    assert house["unpriced"] == 1
+    assert house["biggest"]["isin"] == "INE009A01021"
+
+
+def test_fund_house_summary_tracks_scope_and_new_holdings_and_exits(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE schemes SET is_active_equity = 0 WHERE scheme_id = 3")
+        assert "B AMC" not in consensus_signals.fund_house_activity(conn, "2026-08")["houses"]
+        assert "B AMC" in consensus_signals.fund_house_activity(conn, "2026-08", False)["houses"]
+        conn.execute("DELETE FROM mf_holdings_monthly WHERE isin = 'INE002A01018' "
+                     "AND report_month = '2026-07'")
+        conn.execute("DELETE FROM mf_holdings_monthly WHERE isin = 'INE009A01021' "
+                     "AND report_month = '2026-08'")
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-07", "2026-08"))
+        house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
+    assert (house["increased"], house["reduced"]) == (1, 1)
+    assert house["biggest"]["change_pct"] is None
+    assert house["biggest"]["qty_change"] == 210
+    assert house["biggest"]["flow_lakhs"] == 21
+
+
+def test_fund_house_summary_adjusts_confirmed_split_and_keeps_real_trade(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO corporate_actions (isin, effective_month, kind, ratio, confirmed) "
+                     "VALUES ('INE040A01034', '2026-08', 'split', 2, 1)")
+        conn.execute("UPDATE mf_holdings_monthly SET quantity = 300, market_value_lakhs = 15 "
+                     "WHERE isin = 'INE040A01034' AND report_month = '2026-08'")
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-07", "2026-08"))
+        house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
+    assert house["biggest"]["isin"] == "INE040A01034"
+    assert house["biggest"]["qty_change"] == 200
+    assert house["biggest"]["change_pct"] == 200
+    assert house["biggest"]["flow_lakhs"] == 10
+
+
+def test_monthly_summary_roster_order_missing_data_and_fragment_refresh(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE schemes SET amc_name = 'SBI AMC' WHERE amc_name = 'A AMC'")
+    client = TestClient(create_app(db))
+    page = client.get("/").text
+    assert page.index('id="monthly-summary"') < page.index('id="monthly-activity"')
+    assert page.count('<article class="fund-card') == 8
+    assert 'Biggest increase' in page
+    assert '+70 shares' in page
+    assert 'Jul 2026' in page
+    assert 'Aug 2026 portfolios not loaded.' in page
+    fragment = client.get("/fragments/month/2026-07").text
+    assert 'No usable comparison with Jun 2026.' in fragment
+    assert 'Biggest increase' not in fragment
+    assert fragment.count('<article class="fund-card') == 8
 
 
 # -- read-only ---------------------------------------------------------------

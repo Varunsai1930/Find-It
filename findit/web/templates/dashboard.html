@@ -25,7 +25,8 @@ try {
       <span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span>
     </a>
     <nav class="nav" id="section-nav" aria-label="Main navigation">
-      <a href="#month-view" aria-current="location">Monthly activity</a>
+      {% if month %}<a href="#monthly-summary" aria-current="location">Monthly summary</a>{% endif %}
+      <a href="{{ '#monthly-activity' if month else '#month-view' }}">Monthly activity</a>
       {% if scheme_options %}<a href="#scheme-summary">Scheme summary</a>{% endif %}
       <a href="#notes-title">Reading guide</a>
     </nav>

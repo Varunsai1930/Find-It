@@ -1,8 +1,8 @@
 """Read-only web layer over precomputed holdings tables.
 
 Every route opens SQLite in read-only mode and only reads tables that the
-offline pipeline already filled. No route writes, and no route derives fresh
-holdings signals at request time.
+offline pipeline already filled. The web layer ranks and summarizes those
+stored monthly comparisons; no route writes or ingests new disclosures.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from findit.core import consensus_signals, publication
 from findit.core.coverage import month_coverage
 from findit.store import queries
 from findit.summary import get_summary
+from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
 
 _WEB_DIR = Path(__file__).resolve().parent
 
@@ -179,12 +180,13 @@ def _no_signal_message(conn: sqlite3.Connection, month: str) -> str:
 
 
 def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any]:
-    """Template context for one month: coverage facts plus the consensus table.
+    """One month: fund-house overview, coverage facts and consensus table.
 
     The page renders it on first load and /fragments/month re-renders it when
     a filter changes, so the table markup has one implementation.
     """
     month = view["month"]
+    activity = consensus_signals.fund_house_activity(conn, month, bool(view["active_only"]))
     ranked = _ranked(conn, month, bool(view["equity_only"]), bool(view["active_only"]))
     ordered = consensus_signals.broadest_selling(ranked) if view["side"] == "sell" else ranked
     rows = _records(ordered if view["limit"] == 0 else ordered.head(view["limit"]))
@@ -208,6 +210,10 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any
         "coverage": month_coverage(conn, month, bool(view["equity_only"]),
                                    bool(view["active_only"])),
         "filings": filings,
+        "fund_groups": selected_groups(activity),
+        "summary_prev_month": activity["prev_month"],
+        "aum_period": AUM_PERIOD,
+        "aum_source": AUM_SOURCE,
     }
 
 

@@ -5,6 +5,9 @@
 {%- set all_cols = cols == 'all' -%}
 {%- set side_title = 'Broadest selling' if side == 'sell' else 'Broadest buying' -%}
 
+{% include "_fund_summary.html" %}
+<div id="monthly-activity">
+<h2 class="activity-heading">Monthly activity <span class="muted">· {{ month|month_label }}</span></h2>
 <dl class="facts" aria-label="Coverage for {{ month|month_label }}">
   <div class="fact">
     <dt class="fact__label">Schemes compared</dt>
@@ -133,3 +136,4 @@
   <p class="state state--empty" role="status">{{ message }}</p>
   {% endif %}
 </section>
+</div>

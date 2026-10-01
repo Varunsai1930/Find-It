@@ -29,6 +29,9 @@ own official disclosures.
 ## A five-minute walkthrough
 
 1. Start with **Aug 2026**, **Buying**, **Top 25**, and both scope filters on.
+   Read **Monthly summary** for the eight selected fund houses. Each card
+   shows how stock holdings changed and its biggest move; coverage gaps
+   remain explicit. See [the selection and measurement rules](monthly-summary.md).
    Explain that AMCs net counts fund houses, rather than treating every
    scheme from one house as an independent vote.
 2. Open **Data coverage**. Show which schemes were compared and withheld,
@@ -51,9 +54,9 @@ own official disclosures.
 
 ## Verification on 1 October 2026
 
-- 391 passing Python tests, including ingestion, validation, ranking, publication timing,
+- 400 passing Python tests, including ingestion, validation, ranking, publication timing,
   read-only access, web routes, and the launch command.
-- Five JavaScript regressions for stale autocomplete and summary requests.
+- Seven JavaScript regressions for section navigation, stale autocomplete and summary requests.
   Four reproduced failures in the previous inline script.
 - Ruff, dependency compatibility, wheel build, and installed-wheel rendering across
   all 32 combinations of month, buying/selling, scope, and column mode. The
@@ -69,6 +72,8 @@ unavailable rather than being displayed as zero. The coverage in this
 workspace is a limited monthly dataset, not the entire mutual fund market.
 
 ## Design previews
+
+![Monthly fund-house summary](screenshots/monthly-summary.jpg)
 
 ![Desktop dashboard](screenshots/dashboard.jpg)
 

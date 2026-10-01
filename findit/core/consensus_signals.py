@@ -10,11 +10,11 @@ with missing filings kept as no_data (never zero) and stale quarters
 flagged via ``as_of_month``.
 """
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 
-from findit.core import active_weight, publication
+from findit.core import active_weight, delta_calculator, publication
 from findit.store import queries
 
 
@@ -157,6 +157,96 @@ def voting_schemes(
     source, params = _eligible_deltas(conn, report_month, instrument_type, active_equity_only)
     rows = conn.execute(f"SELECT DISTINCT d.scheme_id, sch.amc_name {source}", params).fetchall()
     return {int(r[0]): str(r[1]) for r in rows}
+
+
+def fund_house_activity(conn: sqlite3.Connection, report_month: str,
+                        active_equity_only: bool = True) -> dict:
+    """Net equity share changes per AMC, across comparable schemes only.
+
+    The monthly overview uses the same validation gates as the activity
+    table, requires the immediately preceding month, and nets purchases
+    against sales within each fund house before counting stocks. Splits and
+    bonuses adjust the previous share count, never becoming purchases.
+    """
+    prev_month = (date.fromisoformat(report_month + "-01") - timedelta(days=1)).strftime("%Y-%m")
+    scope = queries.active_equity_sql(conn, "sch") if active_equity_only else ""
+    loaded = conn.execute(
+        "SELECT sch.amc_name, COUNT(DISTINCT h.scheme_id) "
+        "FROM mf_holdings_monthly h JOIN schemes sch ON sch.scheme_id = h.scheme_id "
+        f"WHERE h.report_month = ?{scope} AND EXISTS ("
+        "SELECT 1 FROM mf_holdings_monthly eq JOIN stocks s ON s.isin = eq.isin "
+        "WHERE eq.scheme_id = h.scheme_id AND eq.report_month IN (?, ?) "
+        "AND s.instrument_type = 'equity') "
+        "GROUP BY sch.amc_name", (report_month, report_month, prev_month)).fetchall()
+    houses = {str(amc): {"loaded": int(count), "compared": 0, "increased": 0,
+                         "reduced": 0, "biggest": None} for amc, count in loaded}
+    source, params = _eligible_deltas(conn, report_month, "equity", active_equity_only)
+    rows = pd.read_sql_query(
+        "WITH eligible AS (SELECT d.*, sch.amc_name, s.name AS stock_name "
+        + source + " AND d.prev_month = ?) "
+        "SELECT d.scheme_id, d.isin, d.amc_name, d.stock_name, d.flow_lakhs, "
+        "COALESCE(p.quantity, 0) AS quantity_prev, "
+        "COALESCE(c.quantity, 0) AS quantity_curr, "
+        "COALESCE(p.market_value_lakhs, 0) AS market_value_lakhs_prev, "
+        "COALESCE(c.market_value_lakhs, 0) AS market_value_lakhs_curr, "
+        "COALESCE(p.pct_nav, 0) AS pct_nav_prev, COALESCE(c.pct_nav, 0) AS pct_nav_curr "
+        "FROM eligible d LEFT JOIN mf_holdings_monthly p ON p.scheme_id = d.scheme_id "
+        "AND p.isin = d.isin AND p.report_month = d.prev_month "
+        "LEFT JOIN mf_holdings_monthly c ON c.scheme_id = d.scheme_id "
+        "AND c.isin = d.isin AND c.report_month = d.report_month "
+        "WHERE (p.scheme_id IS NOT NULL OR c.scheme_id IS NOT NULL) "
+        "AND EXISTS (SELECT 1 FROM mf_holdings_monthly h WHERE h.scheme_id = d.scheme_id "
+        "AND h.report_month = d.prev_month) "
+        "AND EXISTS (SELECT 1 FROM mf_holdings_monthly h WHERE h.scheme_id = d.scheme_id "
+        "AND h.report_month = d.report_month)", conn, params=[*params, prev_month])
+    if rows.empty:
+        return {"prev_month": prev_month, "houses": houses}
+
+    def holdings(suffix: str) -> pd.DataFrame:
+        return rows[["scheme_id", "isin", *[key + suffix for key in
+                    ("quantity", "market_value_lakhs", "pct_nav")]]].rename(
+            columns={key + suffix: key for key in ("quantity", "market_value_lakhs", "pct_nav")})
+
+    prev, curr = holdings("_prev"), holdings("_curr")
+    confirmed = {}
+    if queries.has_table(conn, "corporate_actions"):
+        confirmed = {str(isin): float(ratio) for isin, ratio in conn.execute(
+            "SELECT isin, ratio FROM corporate_actions "
+            "WHERE confirmed = 1 AND effective_month = ? AND ratio > 0", (report_month,))}
+    ratios = active_weight.infer_split_ratios(prev, curr, confirmed)
+    rows["quantity_prev"] *= rows["isin"].map(ratios).fillna(1.0)
+    rows["qty_change"] = rows["quantity_curr"] - rows["quantity_prev"]
+    if ratios:
+        prev["quantity"] *= prev["isin"].map(ratios).fillna(1.0)
+        # Reuse the pipeline's flow convention for adjusted comparisons.
+        adjusted = delta_calculator.diff_holdings(prev, curr, prev_month, report_month)
+        flows = adjusted.set_index(["scheme_id", "isin"])["flow_lakhs"]
+        split_rows = rows["isin"].isin(ratios)
+        rows.loc[split_rows, "flow_lakhs"] = [
+            flows.at[(sid, isin)] for sid, isin in
+            rows.loc[split_rows, ["scheme_id", "isin"]].itertuples(index=False, name=None)]
+
+    for amc, group in rows.groupby("amc_name", sort=True):
+        house = houses.setdefault(str(amc), {"loaded": 0})
+        stocks = group.groupby("isin", sort=True).agg(
+            stock_name=("stock_name", "first"), quantity_prev=("quantity_prev", "sum"),
+            quantity_curr=("quantity_curr", "sum"), qty_change=("qty_change", "sum"),
+            flow_lakhs=("flow_lakhs", lambda values: values.sum(min_count=len(values))))
+        changed = stocks[stocks["qty_change"].abs() > 1e-6]
+        priced = changed[changed["flow_lakhs"].notna()].copy()
+        biggest = None
+        if not priced.empty:
+            priced["magnitude"] = priced["flow_lakhs"].abs()
+            move = priced.sort_values("magnitude", ascending=False, kind="stable").iloc[0]
+            biggest = {"isin": str(move.name), "stock_name": str(move.stock_name),
+                       "qty_change": float(move.qty_change), "flow_lakhs": float(move.flow_lakhs),
+                       "change_pct": (100 * float(move.qty_change / move.quantity_prev)
+                                      if move.quantity_prev > 0 else None)}
+        house.update(compared=int(group["scheme_id"].nunique()),
+                     increased=int((changed["qty_change"] > 0).sum()),
+                     reduced=int((changed["qty_change"] < 0).sum()), biggest=biggest,
+                     unpriced=int(changed["flow_lakhs"].isna().sum()))
+    return {"prev_month": prev_month, "houses": houses}
 
 
 def compute_consensus(
