@@ -146,7 +146,9 @@ class ReleaseStore:
             except ValueError:
                 # A mutable report may still be reproduced while the current DB
                 # has exactly that content. Never substitute different content.
-                if not release_id or self.current.parent == self.directory:
+                if (not release_id or self.current.parent == self.directory or
+                        (self.directory / f"{retained_id}.db").exists() or
+                        (self.directory / f"{retained_id}.json").exists()):
                     raise
                 path, metadata = self.current, None
         else:

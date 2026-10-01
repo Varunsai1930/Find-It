@@ -18,13 +18,16 @@ def parse_stocks(value: str) -> list[str]:
 
 
 def monthly_report(conn: sqlite3.Connection, month: str, stocks: list[str],
-                   active_only: bool = True, release_id: str | None = None) -> dict:
+                   active_only: bool = True, release_id: str | None = None, comparison=None) -> dict:
     items = []
-    comparison = comparison_rows(conn, month, active_only)
+    if stocks and comparison is None:
+        comparison = comparison_rows(conn, month, active_only)
+    coverage_cache = {}
     release_id = release_id or content_id(conn)
     for isin in sorted(set(stocks)):
         stock = conn.execute("SELECT name,instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
-        e = stock_evidence(conn, isin, month, active_only, comparison=comparison, release_id=release_id)
+        e = stock_evidence(conn, isin, month, active_only, comparison=comparison, release_id=release_id,
+                           include_sources=False, coverage_cache=coverage_cache)
         by_house = {}
         for fund in e["funds"]:
             by_house[fund["amc_name"]] = by_house.get(fund["amc_name"], 0) + fund["qty_change"]

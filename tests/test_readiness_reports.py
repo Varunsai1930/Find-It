@@ -94,7 +94,27 @@ def test_report_a_reopens_after_switch_to_b_and_rejects_tampering(tmp_path):
         c.commit()
         second = mutable.get('/api/watchlist?month=2026-08&stocks=INE002A01018').json()
         assert first['release_id'] != second['release_id']
+        assert first['stocks'][0]['net_share_change'] != second['stocks'][0]['net_share_change']
         assert mutable.get(first['stocks'][0]['evidence_url']).status_code == 409
     # Previously cached verification must not hide changes to a retained file.
     (folder / f"{a['release_id']}.db").write_bytes(b'corrupt')
     assert cb.get(url).status_code == 409
+
+
+def test_report_reuses_coverage_without_building_source_panels(tmp_path, monkeypatch):
+    from findit.core import evidence, watchlist
+    c = sqlite3.connect(_copy_db(tmp_path))
+    original = evidence.house_coverage
+    calls = []
+    def coverage(*args, **kwargs):
+        calls.append(args[2])
+        return original(*args, **kwargs)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('report must not construct source panels')
+    monkeypatch.setattr(evidence, 'snapshot_evidence', forbidden)
+    monkeypatch.setattr(evidence, 'house_coverage', coverage)
+    report = monthly_report(c, '2026-08', ['INE002A01018', 'INE009A01021'])
+    assert len(calls) == len(set(calls)) == 2
+    assert report['stocks'][0]['net_share_change'] == 90
+    monkeypatch.setattr(watchlist, 'comparison_rows', forbidden)
+    assert monthly_report(c, '2026-08', [], release_id=report['release_id'])['stocks'] == []

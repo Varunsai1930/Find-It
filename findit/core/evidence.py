@@ -53,7 +53,8 @@ def snapshot_evidence(conn: sqlite3.Connection, sid: int, month: str, isin: str)
 
 def stock_evidence(conn: sqlite3.Connection, isin: str, month: str,
                    active_only: bool = True, amc: str | None = None,
-                   comparison=None, release_id: str | None = None) -> dict:
+                   comparison=None, release_id: str | None = None,
+                   include_sources: bool = True, coverage_cache: dict | None = None) -> dict:
     prev = (date.fromisoformat(month + "-01") - timedelta(days=1)).strftime("%Y-%m")
     rows = comparison if comparison is not None else comparison_rows(conn, month, active_only)
     cohort = rows
@@ -65,13 +66,22 @@ def stock_evidence(conn: sqlite3.Connection, isin: str, month: str,
     for row in rows.to_dict("records"):
         sid = int(row["scheme_id"])
         label = conn.execute("SELECT scheme_name,scheme_title FROM schemes WHERE scheme_id=?", (sid,)).fetchone()
-        funds.append({**row, "scheme_name": label[1] or label[0],
-                      "previous_source": snapshot_evidence(conn, sid, prev, isin),
-                      "current_source": snapshot_evidence(conn, sid, month, isin)})
+        fund = {**row, "scheme_name": label[1] or label[0]}
+        if include_sources:
+            fund.update(previous_source=snapshot_evidence(conn, sid, prev, isin),
+                        current_source=snapshot_evidence(conn, sid, month, isin))
+        funds.append(fund)
     houses = sorted({row["amc_name"] for row in funds} | ({amc} if amc else set()))
-    coverage = {house: house_coverage(conn, month, house,
-                    set(int(v) for v in cohort.loc[cohort["amc_name"] == house, "scheme_id"])
-                    if not cohort.empty else set(), active_only) for house in houses}
+    # One report uses one comparison frame. Share house coverage within that
+    # request, while source rows are only constructed for an evidence view.
+    coverage_cache = coverage_cache if coverage_cache is not None else {}
+    coverage = {}
+    for house in houses:
+        if house not in coverage_cache:
+            ids = (set(int(v) for v in cohort.loc[cohort["amc_name"] == house, "scheme_id"])
+                   if not cohort.empty else set())
+            coverage_cache[house] = house_coverage(conn, month, house, ids, active_only)
+        coverage[house] = coverage_cache[house]
     all_priced = bool(funds) and all(row["flow_lakhs"] is not None and
                                     row["flow_lakhs"] == row["flow_lakhs"] for row in funds)
     return {"isin": isin, "month": month, "prev_month": prev, "amc": amc,

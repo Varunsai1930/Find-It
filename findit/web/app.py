@@ -406,6 +406,26 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
 def create_app(db_path: str | Path | None = None, release_dir: Path | None = None) -> FastAPI:
     resolved_db = _resolve_db_path(db_path)
     releases = ReleaseStore(Path(resolved_db), release_dir)
+    # Verify a retained launch release before accepting requests. Later access
+    # checks file signatures and re-verifies if either DB or manifest changed.
+    if re.fullmatch(r"[a-f0-9]{64}", Path(resolved_db).stem):
+        releases.retained(Path(resolved_db).stem)
+    report_comparisons = {}
+    report_lock = threading.Lock()
+
+    def report_for(conn, month, stocks, active_only, identity):
+        path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+        immutable = path == releases.directory / f"{identity}.db" and identity in releases._verified
+        comparison = None
+        if stocks and immutable:
+            key = (identity, month, active_only)
+            with report_lock:
+                if key not in report_comparisons:
+                    if len(report_comparisons) >= 4:
+                        report_comparisons.pop(next(iter(report_comparisons)))
+                    report_comparisons[key] = consensus_signals.comparison_rows(conn, month, active_only)
+                comparison = report_comparisons[key]
+        return monthly_report(conn, month, stocks, active_only, release_id=identity, comparison=comparison)
 
     def release_connection(release=None, rules=None):
         try:
@@ -633,12 +653,27 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     # -- stock ------------------------------------------------------------
     @app.get("/api/watchlist")
     def api_watchlist(month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
+        try:
+            selected = parse_stocks(stocks)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not selected and not release and not rules and not re.fullmatch(r"[a-f0-9]{64}", Path(resolved_db).stem):
+            # No results exist to pin. Avoid hashing a mutable database simply
+            # to tell a new user that their list is empty. Downloads still pin.
+            conn = _ro_connect(resolved_db)
+            try:
+                if month not in _known_months(conn):
+                    raise HTTPException(status_code=404, detail="Unknown month")
+                return {"month": month, "stocks": [], "release_id": None,
+                        "rule_version": RULE_VERSION, "status": "empty_watchlist"}
+            finally:
+                conn.close()
         conn, identity = release_connection(release, rules)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail="Unknown month")
             try:
-                return _sanitize(monthly_report(conn, month, parse_stocks(stocks), active_only == 1, release_id=identity))
+                return _sanitize(report_for(conn, month, parse_stocks(stocks), active_only == 1, identity))
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
@@ -651,7 +686,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail="Unknown month")
             try:
-                report = monthly_report(conn, month, parse_stocks(stocks), active_only == 1, release_id=identity)
+                report = report_for(conn, month, parse_stocks(stocks), active_only == 1, identity)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             return Response(render_report(report), media_type="text/markdown",
