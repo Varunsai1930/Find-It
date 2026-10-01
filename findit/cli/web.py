@@ -25,7 +25,9 @@ def main(argv: list[str] | None = None) -> int:
     import uvicorn
     from findit.web.app import create_app
 
-    uvicorn.run(create_app(args.db), host=args.host, port=args.port)
+    # Watchlist/search query strings contain user research choices. Retain
+    # startup/error logs without recording every URL and its stock list.
+    uvicorn.run(create_app(args.db), host=args.host, port=args.port, access_log=False)
     return 0
 
 

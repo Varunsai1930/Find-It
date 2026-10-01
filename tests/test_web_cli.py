@@ -13,7 +13,7 @@ def test_launch_uses_selected_database_and_local_address(tmp_path, monkeypatch):
     monkeypatch.setattr("uvicorn.run", lambda app, **kw: started.append((app, kw)))
     assert web.main(["--db", str(path), "--port", "8123"]) == 0
     app, options = started[0]
-    assert options == {"host": "127.0.0.1", "port": 8123}
+    assert options == {"host": "127.0.0.1", "port": 8123, "access_log": False}
     assert TestClient(app).get("/api/coverage").status_code == 200
 
 
