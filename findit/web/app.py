@@ -260,6 +260,18 @@ def _signed(value: Any, digits: int = 0) -> str:
     return f"{rounded:+,.{digits}f}".replace("-", "−")
 
 
+def _compact_shares(value: Any) -> str:
+    """Rounded display only; exact quantities remain in the expanded card."""
+    if value is None or not math.isfinite(float(value)):
+        return "–"
+    number = float(value)
+    for scale, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(number) >= scale or round(abs(number) / (scale / 1000), 1) >= 1000:
+            text = f"{abs(number) / scale:.1f}".removesuffix(".0")
+            return ("+" if number > 0 else "−") + text + suffix
+    return _signed(number)
+
+
 def _month_label(iso: Any, with_day: bool = False) -> str:
     if not iso:
         return "–"
@@ -396,7 +408,8 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
     assets = {name: hashlib.sha256((_WEB_DIR / "static" / name).read_bytes()).hexdigest()[:12]
               for name in ("style.css", "dashboard.js")}
     templates.env.globals["asset_url"] = lambda name: f"/static/{name}?v={assets[name]}"
-    templates.env.filters.update(crore=_crore, signed=_signed, month_label=_month_label,
+    templates.env.filters.update(crore=_crore, signed=_signed, compact_shares=_compact_shares,
+                                 month_label=_month_label,
                                  scheme_label=_scheme_label, stock_label=_stock_label)
 
     app = FastAPI(title="FindIt holdings dashboard (read-only)")
@@ -726,6 +739,26 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             conn.close()
 
     # -- month view fragment ---------------------------------------------
+    @app.get("/coverage")
+    def coverage_page(request: Request, month: str, amc: str | None = None,
+                      equity_only: int = 1, active_only: int = 1, side: str = "buy",
+                      limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
+            view = _view(month, equity_only, active_only, side, limit, cols)
+            ctx = _month_view(conn, view)
+            funds = [f for group in ctx["fund_groups"] for f in group["funds"]]
+            if amc is not None:
+                funds = [f for f in funds if f["amc"] == amc]
+                if not funds:
+                    raise HTTPException(status_code=404, detail="Unknown featured fund house")
+            ctx["funds"] = funds
+            return templates.TemplateResponse(request, "coverage.html", _sanitize(ctx))
+        finally:
+            conn.close()
+
     @app.get("/fragments/month/{month}")
     def month_fragment(request: Request, month: str, equity_only: int = 1,
                        active_only: int = 1, side: str = "buy",

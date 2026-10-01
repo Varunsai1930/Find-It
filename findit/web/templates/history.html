@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · History</title><link rel="stylesheet" href="{{ asset_url('style.css') }}"></head><body><main style="max-width:1100px;margin:auto;padding:24px">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · History</title>{% include "_theme_init.html" %}<link rel="stylesheet" href="{{ asset_url('style.css') }}"></head><body><main style="max-width:1100px;margin:auto;padding:24px">
 <a href="/?{{ dict(month=h.end)|urlencode }}">← Monthly activity</a><h1>Holding history · {{ h.isin }}</h1>
 <p>{{ h.start|month_label }} → {{ h.end|month_label }} · {{ h.amc or 'All compared houses' }} · {{ 'Active stock-pickers' if h.active_only else 'All fund types' }} · domestic equity</p>
 <p><strong>{{ h.cohort_count }} individual funds in the fixed cohort</strong> · {{ h.source_backed_count }} with recorded original-source provenance at every snapshot.</p>

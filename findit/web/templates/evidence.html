@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · Evidence</title><link rel="stylesheet" href="{{ asset_url('style.css') }}"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · Evidence</title>{% include "_theme_init.html" %}<link rel="stylesheet" href="{{ asset_url('style.css') }}"></head>
 <body><main class="page" style="max-width:1100px;margin:auto;padding:24px">
 <a href="/?{{ dict(month=e.month, active_only=e.active_only|int)|urlencode }}">← Monthly activity</a>
 <h1>View evidence · {{ e.isin }}</h1>

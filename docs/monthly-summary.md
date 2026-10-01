@@ -34,13 +34,14 @@ selection and this source record together when a new ranking is adopted.
 
 ## What the cards measure
 
-- **Increased / reduced:** number of equities whose total shares held rose
+- **Increased / decreased:** number of equities whose total shares held rose
   or fell across the fund house's compared schemes. Opposing trades within
   the same house offset one another. An unchanged holding is neither.
 - **Biggest move:** the stock with the largest absolute estimated net
   trading value across those schemes, including new positions and exits.
-  Share changes and their percentage relative to the prior share count
-  accompany the stock name. This percentage is a change in the fund's
+  The collapsed card shows a rounded share change (for example, +16.8M).
+  **More info** shows exact shares and the percentage relative to the prior share count.
+  This percentage is a change in the fund's
   holding; it is not the fund's percentage ownership of the company.
 - **Estimated value:** uses the pipeline's month-end price convention,
   with full exits valued at their previous recorded value. It is not a
@@ -55,9 +56,12 @@ that scheme. Confirmed or inferred split/bonus ratios adjust the previous
 share count using the existing corporate-action rules. Missing prices
 exclude that stock from the biggest-move ranking and are disclosed.
 
-Coverage counts are shown on every card. These are changes among the
-loaded, comparable schemes, not necessarily the AMC's complete portfolio.
-Missing disclosures and missing comparisons display an unavailable state,
-never a zero-change claim. The local August dataset currently supports four
-of the eight selected houses. Mirae lacks July; Kotak, Franklin Templeton
-and HSBC have no loaded portfolios.
+The coverage badge stays visible on every card. **More info** shows expected,
+loaded, validated and compared counts once, plus value and scope explanations.
+**Coverage breakdown** opens a separate page with eligible-fund states and source
+notes, preserving the selected month and filters. These changes describe the
+declared comparison scope; missing disclosures never become zero-change claims.
+
+The repaired August release has five complete house scopes, SBI partial at
+39/40, and Kotak/HSBC unavailable. Wider-market completeness remains unknown.
+See the [readiness audit](readiness-audit.md) for official inventories and remaining gaps.

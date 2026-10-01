@@ -29,25 +29,25 @@
 }
 
 :root[data-theme="dark"] {
-    --bg: #101b19;
-    --surface: #172622;
-    --surface-2: #1e302b;
-    --ink: #e8eee6;
-    --ink-2: #b4c6bb;
-    --ink-3: #9bb1a5;
-    --line: #2e443c;
-    --line-strong: #486255;
-    --accent: #a9d6b9;
-    --accent-ink: #10251b;
-    --accent-soft: #284333;
-    --pos: #4cc79a;
-    --pos-soft: #16302a;
-    --neg: #f08b80;
-    --neg-soft: #3a1d1b;
-    --warn: #e8b567;
-    --warn-soft: #362a17;
-    --info: #a9b6ef;
-    --info-soft: #232a45;
+    --bg: #101216;
+    --surface: #191d24;
+    --surface-2: #222833;
+    --ink: #edf0f5;
+    --ink-2: #bdc5d3;
+    --ink-3: #9ca9bb;
+    --line: #303743;
+    --line-strong: #4d596c;
+    --accent: #a8c7fa;
+    --accent-ink: #13213b;
+    --accent-soft: #26354d;
+    --pos: #73d3ad;
+    --pos-soft: #1c3630;
+    --neg: #ff9b94;
+    --neg-soft: #402b30;
+    --warn: #edc17c;
+    --warn-soft: #3c3326;
+    --info: #b6c2ff;
+    --info-soft: #2c304a;
     --shadow: none;
     color-scheme: dark;
   }
@@ -106,6 +106,7 @@ em { font-style: italic; }
 .brand__mark { display: inline-flex; justify-content: center; align-items: baseline; width: 40px; height: 40px;
   background: var(--ink); color: var(--bg); border-radius: 10px; font: 700 35px/40px Georgia, serif; }
 .brand__mark span { color: #c9de91; font-size: 24px; }
+:root[data-theme="dark"] .brand__mark span { color: #426798; }
 .brand__name { font-weight: 750; font-size: 22px; letter-spacing: -0.8px; line-height: 1.2; }
 .brand__tag { display: block; font-size: 10px; font-weight: 500; letter-spacing: 0.02em; color: var(--ink-3); margin-top: 3px; }
 .nav { display: flex; gap: 28px; align-items: center; }
@@ -405,27 +406,55 @@ table.data { width: 100%; border-collapse: separate; border-spacing: 0; font-siz
 .fund-summary__head p { color: var(--ink-2); margin: 7px 0 0; }
 .fund-summary__group { margin-bottom: 20px; }
 .fund-summary__group h3 { font-size: 12px; color: var(--ink-2); margin-bottom: 10px; font-weight: 600; }
-.fund-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; }
+.fund-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .fund-summary__group:last-of-type .fund-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .fund-card { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--accent);
   border-radius: var(--radius); padding: 18px; display: flex; flex-direction: column; min-width: 0; }
-.fund-card h4 { margin: 0 0 16px; font-size: 14px; color: var(--ink); text-transform: none; letter-spacing: -0.2px; line-height: 1.4; }
-.fund-card__changes { margin: 0 0 16px; font-size: 12px; }
+.fund-card h4 { margin: 0 0 8px; font-size: 15px; color: var(--ink); text-transform: none; letter-spacing: -0.2px; line-height: 1.4; }
+.fund-card__badge { align-self: flex-start; margin: 0 0 18px; }
+.fund-card__changes { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 0 0 18px; }
+.fund-card__changes dt { color: var(--ink-3); font-size: 11px; }
+.fund-card__changes dd { margin: 3px 0 0; font-size: 22px; font-variant-numeric: tabular-nums; }
 .fund-card__changes .sub { margin-top: 5px; font-size: 11px; }
 .fund-card__move { border-top: 1px solid var(--line); padding-top: 14px; margin-bottom: 16px; }
 .fund-card__move .field__label { display: block; margin-bottom: 6px; font-size: 10px; }
 .fund-card .stock-link { font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; text-align: left; }
-.fund-card__stake { margin: 10px 0 5px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.fund-card__stake { margin: 10px 0 5px; font-size: 19px; font-variant-numeric: tabular-nums; }
 .fund-card__stake .sub { font-size: 11px; margin-top: 3px; }
 .fund-card__move > .sub { font-size: 11px; }
 .fund-card__coverage { margin: auto 0 0; color: var(--ink-3); font-size: 11px; line-height: 1.5; }
 .fund-card__empty { color: var(--ink-2); margin: 0 0 18px; font-size: 13px; }
 .fund-card--unavailable { border-top-color: var(--line-strong); background: transparent; }
 .fund-card--unavailable .fund-card__empty { margin: 8px 0; font-size: 14px; }
+.fund-card__details { margin: 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.fund-card__details > summary { padding: 5px 0; font-size: 12px; }
+.fund-card__info { padding-top: 10px; font-size: 12px; color: var(--ink-2); }
+.fund-card__info > p { margin: 0 0 12px; }
+.fund-card__exact { font-size: 17px; font-variant-numeric: tabular-nums; }
+.fund-card:has(.fund-card__details[open]) .fund-card__stake { display: none; }
+.fund-card__counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 14px 0; }
+.fund-card__counts dt { font-size: 11px; color: var(--ink-3); }
+.fund-card__counts dd { margin: 0; color: var(--ink); font-weight: 600; }
+.fund-card__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.fund-card__actions a { font-size: 12px; }
+.coverage-page { max-width: 1100px; }
+.coverage-back { color: var(--ink-2); text-decoration: none; }
+.coverage-page h1 { font-size: clamp(26px, 4vw, 36px); letter-spacing: -1px; }
+.coverage-page__intro { font-size: 15px; color: var(--ink-2); }
+.coverage-house { margin-top: 24px; }
+.coverage-house h2 .tag { margin-left: 10px; vertical-align: middle; }
+.coverage-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 20px 0; }
+.coverage-totals dt { color: var(--ink-3); font-size: 12px; }
+.coverage-totals dd { margin: 3px 0 0; font-size: 22px; font-variant-numeric: tabular-nums; }
+.coverage-table th:first-child { min-width: 220px; white-space: normal; }
+.coverage-table td { white-space: normal; }
 .fund-summary__method, .fund-summary__source { font-size: 11px; color: var(--ink-3); margin: 6px 0; max-width: 1000px; }
 .activity-heading { margin-bottom: 16px; }
 
 /* -- narrow screens ------------------------------------------------------ */
+@media (max-width: 600px) {
+  .coverage-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 @media (max-width: 1200px) {
   .edition { display: none; }

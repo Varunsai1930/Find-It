@@ -1,0 +1,6 @@
+<script>
+try {
+  document.documentElement.dataset.theme = localStorage.getItem("findit-theme") ||
+    (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+} catch (e) { /* Storage is optional; the default light palette remains usable. */ }
+</script>

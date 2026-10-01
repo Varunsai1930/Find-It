@@ -6,12 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="Explore monthly changes in Indian mutual fund holdings, fund-house consensus, and quarterly ownership filings.">
 <title>FindIt · Monthly fund activity</title>
-<script>
-try {
-  document.documentElement.dataset.theme = localStorage.getItem("findit-theme") ||
-    (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-} catch (e) { /* Storage is optional; the default light palette remains usable. */ }
-</script>
+{% include "_theme_init.html" %}
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="{{ asset_url('style.css') }}">
 </head>

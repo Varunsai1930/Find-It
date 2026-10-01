@@ -211,6 +211,43 @@ def test_monthly_summary_roster_order_missing_data_and_fragment_refresh(tmp_path
     assert fragment.count('<article class="fund-card') == 8
 
 
+def test_card_details_and_separate_coverage_preserve_month_and_scope(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE schemes SET amc_name = 'SBI AMC' WHERE amc_name = 'A AMC'")
+    client = TestClient(create_app(db))
+    html = client.get("/?month=2026-08&active_only=0&side=sell").text
+    assert html.count('<details class="coverage fund-card__details">') == 8
+    assert '<summary>Coverage breakdown' not in html
+    assert 'Stock holdings, net across compared funds.' in html
+    assert '/coverage?month=2026-08' in html
+    page = client.get('/coverage', params={"month": "2026-08", "amc": "SBI AMC",
+                                          "active_only": 0, "side": "sell"})
+    assert page.status_code == 200
+    assert '<h1>Coverage breakdown</h1>' in page.text
+    assert 'Jul 2026 → Aug 2026 · All fund types' in page.text
+    assert 'Expected</dt><dd>Unknown' in page.text
+    assert 'Loaded</dt><dd>2' in page.text
+    assert 'Compared</dt><dd>2' in page.text
+    assert 'No reviewed eligible-fund inventory' in page.text
+    assert 'side=sell' in page.text and 'active_only=0' in page.text
+    assert client.get('/coverage?month=1900-01').status_code == 404
+    assert client.get('/coverage?month=2026-08&amc=Unknown').status_code == 404
+
+
+def test_compact_shares_keep_sign_and_unit_boundaries():
+    from findit.web.app import _compact_shares
+
+    assert _compact_shares(16756378) == '+16.8M'
+    assert _compact_shares(-8255207) == '−8.3M'
+    assert _compact_shares(950000) == '+950K'
+    assert _compact_shares(999950) == '+1M'
+    assert _compact_shares(1500000000) == '+1.5B'
+    assert _compact_shares(70) == '+70'
+    assert _compact_shares(0) == '0'
+    assert _compact_shares(None) == '–'
+
+
 # -- read-only ---------------------------------------------------------------
 
 

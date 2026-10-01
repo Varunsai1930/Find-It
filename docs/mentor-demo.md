@@ -23,9 +23,9 @@ Original `tracker.db`, the prior mentor database and original disclosures are pr
 
 | Time | Demonstration |
 |---|---|
-| 0:00–0:40 | Select August, equity and active stock-picker scope. HDFC compares 29/29 expected eligible funds; 30 loaded includes an active portfolio without domestic equity. Its largest displayed move is LIC, +41,618,000 shares. Explain that several funds contribute to one fund house. |
-| 0:40–1:05 | Show SBI's partial 39/40 coverage and Kotak/HSBC's unavailable cards. The wider market denominator is unknown. A missing prior snapshot is not a purchase or exit. Keep all eight houses visible. |
-| 1:05–1:50 | Open HDFC LIC's **View evidence**. Confirm the exact month, house and filter scope; reconcile previous/current shares and opposing fund changes. Show original URL, workbook checksum, sheet/row, raw/normalized values, parser and release. Estimated value is not execution value or company ownership. Second-person review is pending. |
+| 0:00–0:40 | Select August, equity and active stock-picker scope. HDFC's LIC move shows +41.6M shares; **More info** reveals +41,618,000 and 29 compared / 29 expected eligible funds. Its 30 loaded includes an active portfolio without domestic equity. Explain that several funds contribute to one fund house. |
+| 0:40–1:05 | Show SBI's partial badge, open **More info** for 39/40 and **Coverage breakdown** for the separate fund-by-fund page. Show Kotak/HSBC's unavailable cards. The wider market denominator is unknown. A missing prior snapshot is not a purchase or exit. Keep all eight houses visible. |
+| 1:05–1:50 | From HDFC's **More info**, open LIC's **View evidence**. Confirm the exact month, house and filter scope; reconcile previous/current shares and opposing fund changes. Show original URL, workbook checksum, sheet/row, raw/normalized values, parser and release. Estimated value is not execution value or company ownership. Second-person review is pending. |
 | 1:50–2:20 | Show [Franklin Reliance history](http://127.0.0.1:65100/history/INE002A01018?start=2026-02&end=2026-08&amc=Franklin%20Templeton%20AMC). Seven snapshots use the same 20-fund cohort. Explain gaps and the declared scope; do not call this all-house history or proven performance. |
 | 2:20–3:00 | Follow a stock, inspect **Changes in my stocks**, reload, export the watchlist and download the monthly report. Show shares, house counts, additions/exits and largest compared fund changes. The report retains scope and release ID. Watchlists stay on this device; import/export supports transfer. |
 

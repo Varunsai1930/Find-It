@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>FindIt · Coverage breakdown</title>
+  {% include "_theme_init.html" %}
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ asset_url('style.css') }}">
+</head>
+<body>
+  <a class="skip" href="#coverage-main">Skip to coverage</a>
+  <header class="topbar"><div class="topbar__inner">
+    <a class="brand" href="/?{{ view|urlencode }}#monthly-summary">FindIt</a>
+    <a class="coverage-back" href="/?{{ view|urlencode }}#monthly-summary">← Monthly summary</a>
+    <button class="btn btn--quiet theme-toggle" id="theme-toggle" type="button" hidden>Appearance</button>
+  </div></header>
+  <main class="page coverage-page" id="coverage-main">
+    <p class="eyebrow">Sources and scope</p>
+    <h1>Coverage breakdown</h1>
+    <p class="coverage-page__intro">{{ summary_prev_month|month_label }} → {{ month|month_label }} · {{ 'Active stock-pickers' if active_only else 'All fund types' }} · domestic equity holdings</p>
+    <p class="muted">Loaded and validated count portfolios, including those without domestic equity. Expected counts the official eligible comparison universe. Compared funds must pass validation in both months. Selected-house completeness does not establish market-wide completeness.</p>
+    {% for fund in funds %}
+    <section class="panel coverage-house" aria-labelledby="house-{{ loop.index }}">
+      <div class="panel__head">
+        <h2 id="house-{{ loop.index }}">{{ fund.name }} <span class="tag tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_',' ')|capitalize }}</span></h2>
+        <dl class="coverage-totals">
+          <div><dt>Expected</dt><dd>{{ fund.expected if fund.expected is not none else 'Unknown' }}</dd></div>
+          <div><dt>Loaded</dt><dd>{{ fund.loaded }}</dd></div>
+          <div><dt>Validated</dt><dd>{{ fund.validated_count }}</dd></div>
+          <div><dt>Compared</dt><dd>{{ fund.compared }}</dd></div>
+        </dl>
+        {% if not fund.inventory_known %}<p class="panel__meta">Official eligible inventory is not established for both months.{% if fund.expected_current is not none %} Current-month eligible inventory: {{ fund.expected_current }} funds.{% endif %}</p>{% endif %}
+        <p class="panel__meta">{{ fund.out_of_scope }} outside eligible scope · {{ fund.withheld_count }} withheld · {{ fund.not_validated_count }} current snapshots not validated · {{ fund.missing_previous }} loaded without a prior snapshot{% if fund.outside_inventory %} · {{ fund.outside_inventory }} compared outside official inventory{% endif %}</p>
+        {% if fund.inventory_source %}<p class="panel__meta"><a href="{{ fund.inventory_source }}" target="_blank" rel="noopener noreferrer">Official inventory source ↗</a></p>{% endif %}
+      </div>
+      {% if fund.expected_details %}
+      <div class="table-wrap" tabindex="0" role="region" aria-label="{{ fund.name }} eligible funds">
+        <table class="data coverage-table"><caption class="visually-hidden">Official eligible fund comparison states</caption>
+          <thead><tr><th scope="col">Individual fund</th><th scope="col">Comparison status</th><th scope="col">Source note</th></tr></thead>
+          <tbody>{% for item in fund.expected_details %}<tr><th scope="row">{{ item.name }}</th><td>{{ item.state|replace('_',' ') }}</td><td>{{ item.reason or '–' }}</td></tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      {% else %}<p class="state">No reviewed eligible-fund inventory is available. Missing disclosures do not represent zero holdings or trades.</p>{% endif %}
+    </section>
+    {% endfor %}
+    <p class="muted">A missing snapshot is not a purchase or exit. Withheld and unvalidated data stay excluded; validation thresholds are unchanged.</p>
+  </main>
+  <script src="{{ asset_url('dashboard.js') }}" defer></script>
+</body>
+</html>
