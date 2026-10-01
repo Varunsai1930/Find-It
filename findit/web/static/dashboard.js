@@ -1,21 +1,57 @@
 (function () {
   "use strict";
   var sectionNav = document.getElementById("section-nav");
-  function updateNavigation() {
+  var navigationQueued = false;
+  function selectNavigation(selected) {
     if (!sectionNav) return;
     var links = sectionNav.querySelectorAll("a");
-    var hash = new URL(location.href).hash;
-    var selected = Array.from(links).find(function (link) {
-      return link.getAttribute("href") === hash;
-    }) || links[0];
     links.forEach(function (link) {
       if (link === selected) link.setAttribute("aria-current", "location");
       else link.removeAttribute("aria-current");
     });
   }
+  function updateNavigation() {
+    if (!sectionNav) return;
+    var sections = Array.from(sectionNav.querySelectorAll("a")).map(function (link) {
+      return { link: link, target: document.getElementById(link.getAttribute("href").slice(1)) };
+    }).filter(function (section) { return section.target; });
+    if (!sections.length) return;
+    var topbar = document.querySelector(".topbar");
+    var readingLine = (topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0) + 24;
+    var selected = sections[0].link;
+    sections.forEach(function (section) {
+      var anchorMargin = parseFloat(getComputedStyle(section.target).scrollMarginTop) || 0;
+      if (section.target.getBoundingClientRect().top <= readingLine + anchorMargin) selected = section.link;
+    });
+    // The short reading guide cannot always reach the top of the viewport.
+    if (window.scrollY > 0 && Math.ceil(window.scrollY + window.innerHeight) >=
+        document.documentElement.scrollHeight - 1) selected = sections[sections.length - 1].link;
+    selectNavigation(selected);
+  }
+  function scheduleNavigation() {
+    if (!sectionNav || navigationQueued) return;
+    navigationQueued = true;
+    requestAnimationFrame(function () {
+      navigationQueued = false;
+      updateNavigation();
+    });
+  }
+  function hashNavigation() {
+    var links = sectionNav.querySelectorAll("a");
+    var hash = new URL(location.href).hash;
+    selectNavigation(Array.from(links).find(function (link) {
+      return link.getAttribute("href") === hash;
+    }) || links[0]);
+    scheduleNavigation();
+  }
   if (sectionNav) {
-    window.addEventListener("hashchange", updateNavigation);
-    updateNavigation();
+    window.addEventListener("hashchange", hashNavigation);
+    window.addEventListener("scroll", scheduleNavigation, { passive: true });
+    window.addEventListener("resize", scheduleNavigation);
+    window.addEventListener("load", scheduleNavigation);
+    window.addEventListener("pageshow", scheduleNavigation);
+    document.addEventListener("toggle", scheduleNavigation, true);
+    hashNavigation();
   }
   var themeToggle = document.getElementById("theme-toggle");
   if (themeToggle) {
@@ -188,7 +224,7 @@
     var month = currentMonth();
     if (!month) return;
     var q = viewQuery();
-    var details = view.querySelector("details.coverage");
+    var details = view.querySelector("#coverage-details");
     var coverageOpen = details && details.open;
     var hadFocus = view.contains(document.activeElement);
     view.setAttribute("aria-busy", "true");
@@ -198,7 +234,7 @@
       var r = await load("view", "/fragments/month/" + encodeURIComponent(month) + "?" + q);
       if (!r.ok) throw new Error("HTTP " + r.status);
       view.innerHTML = r.body;
-      if (coverageOpen) view.querySelector("details.coverage").open = true;
+      if (coverageOpen) view.querySelector("#coverage-details").open = true;
       viewStatus.className = "controls__status";
       viewStatus.textContent = "";
       q.set("month", month);
@@ -217,6 +253,7 @@
         "Could not load " + monthLabel() + " (" + e.message + ").", refreshView));
     } finally {
       if (!inflight.view) view.removeAttribute("aria-busy");
+      scheduleNavigation();
     }
   }
 

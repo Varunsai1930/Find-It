@@ -32,9 +32,10 @@ class Element {
   contains() { return false; }
   focus() {}
   scrollIntoView() {}
+  getBoundingClientRect() { return { top: this.top || 0, bottom: (this.top || 0) + (this.height || 0) }; }
 }
 
-function boot({ schemes = false, controls = false, hash = '' } = {}) {
+function boot({ schemes = false, controls = false, hash = '', sections = false } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
     'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
   if (schemes) ids.push('scheme-data', 'scheme-search', 'scheme-options', 'scheme-search-status',
@@ -45,34 +46,52 @@ function boot({ schemes = false, controls = false, hash = '' } = {}) {
     const link = new Element(); link.setAttribute('href', href); return link;
   });
   elements['section-nav'].append(...navLinks);
+  const sectionPositions = { 'monthly-summary': 400, 'monthly-activity': 1200,
+    'scheme-summary': 3200, 'notes-title': 4600 };
+  if (sections) for (const [id, top] of Object.entries(sectionPositions)) {
+    elements[id] = new Element(id); elements[id].top = top;
+  }
+  const topbar = new Element(); topbar.height = 80;
+  const documentRoot = new Element(); documentRoot.scrollHeight = 5000;
   const location = { href: 'http://localhost/' + hash };
   const window = new Element();
+  window.scrollY = 0; window.innerHeight = 800;
   elements['month-select'].value = '2026-08';
   elements['month-select'].options = [{ text: 'Aug 2026' }];
   elements['month-select'].selectedIndex = 0;
   if (schemes) elements['scheme-data'].textContent = JSON.stringify([
     { id: 1, label: 'Test Fund', amc: 'Test AMC', votes: true }
   ]);
-  const timers = new Map(), requests = [];
+  const timers = new Map(), requests = [], frames = [];
   let timerId = 0;
   runInNewContext(script, {
     document: {
       getElementById: id => elements[id] || null,
+      querySelector: selector => selector === '.topbar' ? topbar : null,
+      documentElement: documentRoot,
       createElement: () => new Element(),
       addEventListener() {},
     },
     location, window, history: { replaceState(_state, _title, url) { location.href = String(url); } },
     URL, URLSearchParams, AbortController, DOMException,
+    getComputedStyle(element) { return { scrollMarginTop: (element.scrollMargin || 0) + 'px' }; },
     FormData: class { get() { return null; } },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
     clearTimeout(id) { timers.delete(id); },
+    requestAnimationFrame(fn) { frames.push(fn); },
     fetch(url, { signal }) {
       return new Promise(resolve => requests.push({ url, signal,
         respond(body) { resolve({ ok: true, status: 200, text: async () => body }); }
       }));
     },
   });
-  return { elements, requests, navLinks, location, window, async type(id, value) {
+  return { elements, requests, navLinks, location, window, frames, topbar,
+    frame() { for (const fn of frames.splice(0)) fn(); },
+    scrollTo(y) {
+      window.scrollY = y;
+      for (const [id, top] of Object.entries(sectionPositions)) if (elements[id]) elements[id].top = top - y;
+      window.emit('scroll');
+    }, async type(id, value) {
     elements[id].value = value;
     elements[id].emit('input');
     for (const [id, fn] of timers) { timers.delete(id); fn(); }
@@ -88,6 +107,43 @@ test('navigation underline follows the loaded hash and later section changes', (
   ui.window.emit('hashchange');
   assert.equal(ui.navLinks[3].getAttribute('aria-current'), 'location');
   assert.equal(ui.navLinks[2].getAttribute('aria-current'), null);
+});
+
+test('manual scrolling tracks sections in both directions without changing the URL', () => {
+  const ui = boot({ sections: true, hash: '#monthly-summary' });
+  ui.frame();
+  for (const [y, active] of [[1300, 1], [3400, 2], [1300, 1], [350, 0]]) {
+    ui.scrollTo(y); ui.frame();
+    assert.equal(ui.navLinks[active].getAttribute('aria-current'), 'location');
+    assert.equal(ui.navLinks.filter(link => link.getAttribute('aria-current')).length, 1);
+    assert.equal(new URL(ui.location.href).hash, '#monthly-summary');
+  }
+});
+
+test('navigation accounts for sticky headers, short final sections and changed targets', () => {
+  const ui = boot({ sections: true });
+  ui.frame();
+  ui.scrollTo(1100); ui.frame(); // Activity starts 100px down, just below the 80px header.
+  assert.equal(ui.navLinks[1].getAttribute('aria-current'), 'location');
+  ui.elements['monthly-activity'] = new Element('monthly-activity');
+  ui.elements['monthly-activity'].top = 500; // A refreshed/expanded summary moves the target down.
+  ui.window.emit('resize'); ui.frame();
+  assert.equal(ui.navLinks[0].getAttribute('aria-current'), 'location');
+  ui.elements['scheme-summary'].top = 180;
+  ui.elements['scheme-summary'].scrollMargin = 84; // Panel margin adds to the page's anchor padding.
+  ui.window.emit('hashchange'); ui.frame();
+  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
+  ui.scrollTo(4200); ui.frame(); // Reading-guide heading cannot reach the top at document end.
+  assert.equal(ui.navLinks[3].getAttribute('aria-current'), 'location');
+});
+
+test('scroll events are coalesced into one animation-frame update', () => {
+  const ui = boot({ sections: true });
+  ui.frame();
+  ui.scrollTo(1300); ui.scrollTo(1400); ui.scrollTo(3400);
+  assert.equal(ui.frames.length, 1);
+  ui.frame();
+  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
 });
 
 test('refreshing the month preserves the selected section in the URL', async () => {
