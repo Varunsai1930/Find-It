@@ -390,6 +390,11 @@ python3 -m findit.cli web --db tracker.db
 ```
 
 For a local presentation, follow [the mentor demo guide](docs/mentor-demo.md).
+The [readiness audit](docs/readiness-audit.md) records official inventory scope,
+verified repairs and open acceptance items. Use the
+[mentor evidence packet](docs/mentor-evidence-packet.md),
+[refresh/revision runbook](docs/refresh-runbook.md) and
+[customer-validation kit](docs/customer-validation-kit.md) for the review and pilot.
 The UI supports light and dark appearances, readable phone layouts, keyboard
 stock search, and a stock detail drawer.
 

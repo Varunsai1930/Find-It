@@ -1,80 +1,40 @@
-# FindIt mentor demo
+# FindIt three-minute mentor demonstration
 
-FindIt shows what Indian mutual funds changed between monthly disclosures.
-It counts fund houses moving in the same direction and adds quarterly
-ownership filings that were available at the time. Rankings describe fund
-activity; the research does not establish an investment strategy.
+FindIt answers: “What changed in the stocks I follow, and can I verify the result?” The local release supports six of the eight requested houses, explicit coverage, original-row evidence, scoped history and reproducible reports. The full mentor acceptance milestone remains unfinished; see the [readiness audit](readiness-audit.md).
 
-## Start this workspace
+## Reproduce this workspace
 
 From the repository root:
 
 ```bash
-.venv/bin/python -m findit.cli web --db real_data/mentor-ready/tracker.db
+.venv/bin/python -m findit.cli web \
+  --db real_data/readiness/releases/28bb0fa89c482a98b86fa6d3c9f7f9b372bb63d2f8f1aee70a82593eacc756ec.db \
+  --port 65100
 ```
 
-Open http://127.0.0.1:8000. Keep this terminal running; Ctrl+C stops it.
-The server listens only on this computer unless you specify another host.
-Use `--port 8001` if another application occupies port 8000.
+Open [August 2026](http://127.0.0.1:65100/?month=2026-08). This workspace already has that local server running. Do not launch another copy on the occupied port; choose a free port if restarting alongside it. The default listens only on this computer. Keep the terminal running; Ctrl+C stops your launched server.
 
-The local presentation database is an independent SQLite copy of
-`tracker.db`. ICICI's July and August 2026 source archives were reparsed with
-the corrected NAV unit detection, then loaded and validated with the
-pipeline. The original database and disclosures are preserved. The copy,
-parsed CSVs, and intake/rebuild logs are under `real_data/mentor-ready/`.
-These local data files are intentionally excluded from Git. A fresh clone
-can instead follow the README's synthetic fixture quick start, or load its
-own official disclosures.
+Release ID: `28bb0fa89c482a98b86fa6d3c9f7f9b372bb63d2f8f1aee70a82593eacc756ec`.
+Rules: `readiness-2026-10-01`. Manifest and checksum are in `real_data/readiness/release-manifest.json`; the immutable database is under `real_data/readiness/releases/`. Retain the corresponding code and rules when reproducing old reports. Future calculation changes require a rules-version change.
 
-## A five-minute walkthrough
+Original `tracker.db`, the prior mentor database and original disclosures are preserved. Repairs, logs, manifests, source-review records and acquired history are under ignored `real_data/readiness/`. These databases are intentionally absent from Git. A fresh clone can use the README synthetic quick start or its own official disclosures. The displayed data and reports need no network once captured; opening official source URLs does.
 
-1. Start with **Aug 2026**, **Buying**, **Top 25**, and both scope filters on.
-   Read **Monthly summary** for the eight selected fund houses. Each card
-   shows how stock holdings changed and its biggest move; coverage gaps
-   remain explicit. See [the selection and measurement rules](monthly-summary.md).
-   Explain that Net fund houses counts fund houses, rather than treating every
-   scheme from one house as an independent vote.
-2. Open **Data coverage**. Show which schemes were compared and withheld,
-   and the publication cutoff. A missing previous month means there is no
-   comparison, not that every position is a new purchase.
-3. Switch to **Selling**, then **More columns**. Existing-position flow,
-   new positions, and FII/DII changes answer different questions; a high
-   AMC count does not require a positive aggregate cash flow.
-4. Search **Reliance** and choose **Reliance Industries Ltd.** (equity), or
-   enter `INE002A01018`. Inspect the activity, fund holdings, and quarterly
-   filings. ICICI's NAV weights now use percentage units, with the original
-   source weights retained in the database.
-5. Open **Fund summary**, type **HDFC Large Cap**, and select the fund.
-   Switch to **Jul 2026** to demonstrate that the summary follows the month
-   and explains when a comparison is unavailable.
-6. Return to August. Resize to a phone width or open the browser's responsive
-   view; the ranking becomes readable cards. Light/dark appearance is saved
-   locally. Keyboard arrows and Enter select suggestions; Escape closes a
-   stock drawer and returns focus.
+## Three-minute walkthrough
 
-## Verification on 1 October 2026
+| Time | Demonstration |
+|---|---|
+| 0:00–0:40 | Select August, equity and active stock-picker scope. HDFC compares 29/29 expected eligible funds; 30 loaded includes an active portfolio without domestic equity. Its largest displayed move is LIC, +41,618,000 shares. Explain that several funds contribute to one fund house. |
+| 0:40–1:05 | Show SBI's partial 39/40 coverage and Kotak/HSBC's unavailable cards. The wider market denominator is unknown. A missing prior snapshot is not a purchase or exit. Keep all eight houses visible. |
+| 1:05–1:50 | Open HDFC LIC's **View evidence**. Confirm the exact month, house and filter scope; reconcile previous/current shares and opposing fund changes. Show original URL, workbook checksum, sheet/row, raw/normalized values, parser and release. Estimated value is not execution value or company ownership. Second-person review is pending. |
+| 1:50–2:20 | Show [Franklin Reliance history](http://127.0.0.1:65100/history/INE002A01018?start=2026-02&end=2026-08&amc=Franklin%20Templeton%20AMC). Seven snapshots use the same 20-fund cohort. Explain gaps and the declared scope; do not call this all-house history or proven performance. |
+| 2:20–3:00 | Follow a stock, inspect **Changes in my stocks**, reload, export the watchlist and download the monthly report. Show shares, house counts, additions/exits and largest compared fund changes. The report retains scope and release ID. Watchlists stay on this device; import/export supports transfer. |
 
-- 401 passing Python tests, including ingestion, validation, ranking, publication timing,
-  read-only access, web routes, and the launch command.
-- Seven JavaScript regressions for section navigation, stale autocomplete and summary requests.
-  Four reproduced failures in the previous inline script.
-- Ruff, dependency compatibility, wheel build, and installed-wheel rendering across
-  all 32 combinations of month, buying/selling, scope, and column mode. The
-  packaged assets loaded successfully, and the database remained byte-identical.
-- Desktop and phone browser checks of the flows above; no console errors
-  were observed in these checks, and the phone page had no horizontal overflow.
-- The prepared database passed SQLite's integrity check. The source reload
-  completed, with 293 affected scheme-months passing validation.
+Repeat on a phone-width view. The chart has a scrollable table alternative. Keyboard search/selection, Follow, Escape focus restoration and export/download were checked locally. Five real unassisted participant sessions remain required; browser checks do not supply those results.
 
-Other schemes withheld by the existing validation rules remain visible as
-withheld. First-month comparisons and missing ownership filings remain
-unavailable rather than being displayed as zero. The coverage in this
-workspace is a limited monthly dataset, not the entire mutual fund market.
+## Backup and limitations
 
-## Design previews
+Keep the immutable database, manifest, matching code and a downloaded Markdown monthly report. Restart with the explicit retained database and a free port if needed. Captured raw evidence remains local; official web links can fail independently of the demo. The old two-fund HDFC database is the diagnostic baseline, not the repaired presentation.
 
-![Monthly fund-house summary](screenshots/monthly-summary.jpg)
+Five August house scopes are complete; SBI is partial; Kotak and HSBC originals have not been obtained. Franklin alone has the declared seven-month history. Independent source review, corporate-action sample review, observed comprehension, source-use permissions and real customer/payment/retention evidence remain pending. No investment-return claim is supported.
 
-![Desktop dashboard](screenshots/dashboard.jpg)
-
-![Phone dashboard](screenshots/mobile.jpg)
+Use the [mentor evidence packet](mentor-evidence-packet.md) to record the second review, and the [customer-validation kit](customer-validation-kit.md) for the participant steps. Refreshes and corrections follow the [runbook](refresh-runbook.md).

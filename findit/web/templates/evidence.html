@@ -18,7 +18,7 @@
 {% for source in [f.previous_source, f.current_source] %}
 <details><summary>{{ source.month|month_label }} · {{ source.validation }} · provenance {{ source.provenance_status|replace('_',' ') }}</summary>
 {% if not source.sources %}<p>Original-source provenance is unavailable for this legacy snapshot.</p>{% endif %}
-{% for s in source.sources %}<p>{{ s.workbook }}{% if s.url %} · <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Official disclosure</a>{% else %} · official URL not recorded{% endif %}<br>SHA-256: <code style="overflow-wrap:anywhere">{{ s.sha256 }}</code><br>Published: {{ s.published_at or 'unknown' }} · Retrieved: {{ s.retrieved_at or 'unknown' }} · Parser: {{ s.parser_version }}</p>{% endfor %}
+{% for s in source.sources %}<p>{{ s.workbook }}{% if s.url %} · <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Official disclosure</a>{% else %} · official URL not recorded{% endif %}<br>Workbook SHA-256 (named file after extraction if downloaded in an archive): <code style="overflow-wrap:anywhere">{{ s.sha256 }}</code><br>Published: {{ s.published_at or 'unknown' }} · Retrieved: {{ s.retrieved_at or 'unknown' }} · Parser: {{ s.parser_version }}</p>{% endfor %}
 {% for r in source.rows %}<p>Sheet {{ r.sheet }} · row {{ r.row }}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">Raw: {{ r.raw|tojson }}
 Normalized: {{ r.normalized|tojson }}</pre>{% endfor %}
 </details>{% endfor %}</section>{% endfor %}
