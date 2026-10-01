@@ -47,6 +47,9 @@ def test_title_extraction_layouts(rows, expected):
     ("ICICI Prudential Balanced Advantage Fund", 1),
     ("ICICI Prudential Aggressive Hybrid Fund", 1),
     ("ICICI Prudential Commodities Fund", 1),
+    ("HDFC Retirement Savings Fund - Equity Plan", 1),
+    ("HDFC Retirement Savings Fund - Hybrid-Equity Plan", 1),
+    ("HDFC Hybrid Debt Fund (An open-ended hybrid scheme investing predominantly in debt instruments)", 1),
 ])
 def test_title_classification(title, active):
     assert db.classify_scheme_title(title) == active

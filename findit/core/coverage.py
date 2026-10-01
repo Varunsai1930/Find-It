@@ -29,17 +29,31 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
     statuses = queries.scheme_statuses(conn)
     passed = {sid for sid in loaded if statuses.get((sid, month)) == queries.STATUS_OK}
     expected_rows = []
+    prior_rows = []
     inventories = []
     if queries.has_table(conn, "coverage_inventories"):
         inventories = conn.execute(
             "SELECT report_month, exhaustive FROM coverage_inventories "
             "WHERE amc_name = ? AND report_month IN (?, ?)", (amc, prev, month)).fetchall()
+        prior_rows = conn.execute(
+            "SELECT official_key, official_name, scheme_id, active_eligible, equity_eligible, "
+            "exclusion_reason FROM expected_funds WHERE amc_name = ? AND report_month = ? "
+            "ORDER BY official_key", (amc, prev)).fetchall()
         expected_rows = conn.execute(
             "SELECT official_key, official_name, scheme_id, active_eligible, equity_eligible, "
             "exclusion_reason FROM expected_funds WHERE amc_name = ? AND report_month = ? "
             "ORDER BY official_key", (amc, month)).fetchall()
     known = {str(m) for m, complete in inventories if complete == 1} == {prev, month}
     eligible = [r for r in expected_rows if r[4] and (not active_only or r[3])]
+    # Include portfolios present only in the official previous inventory.
+    # A closed/merged portfolio must be accounted for, never silently dropped
+    # from a completeness denominator or interpreted as a sale.
+    keys = {("sid", r[2]) if r[2] is not None else ("key", r[0]) for r in eligible}
+    for row in prior_rows if inventories else []:
+        key = ("sid", row[2]) if row[2] is not None else ("key", row[0])
+        if row[4] and (not active_only or row[3]) and key not in keys:
+            eligible.append(row)
+            keys.add(key)
     details = []
     for key, name, sid, _, _, reason in eligible:
         if sid is None:
@@ -69,7 +83,7 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
             "validated_count": len(passed), "compared": len(compared_ids),
             "expected_details": details,
             "outside_inventory": len(extras),
-            "out_of_scope": len(expected_rows) - len(eligible),
+            "out_of_scope": sum(not r[4] or (active_only and not r[3]) for r in expected_rows),
             "missing_previous": len(loaded - previous),
             "withheld_count": sum(any(statuses.get((sid, m)) == queries.STATUS_QUARANTINED
                                       for m in (prev, month)) for sid in loaded),

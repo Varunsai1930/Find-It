@@ -400,7 +400,7 @@ def classify_scheme_active(scheme_name: str) -> int:
 # whose unhedged equity is chosen, so it stays active like other hybrids.
 _NON_DISCRETIONARY_TITLE_RE = re.compile(
     r"\b(?:index|etf|passive|nifty|sensex|bse|crisil|ibx|nasdaq"
-    r"|arbitrage|equity savings|(?<!regular )savings fund"
+    r"|arbitrage|equity savings|(?<!regular )(?<!retirement )savings fund"
     r"|fof|fund of funds?"
     r"|gold|silver"
     r"|liquid(?:ity)?|overnight|money market|gilt|g-sec|gsec|sdl|bond|debt|duration"
@@ -417,6 +417,9 @@ _TITLE_DESCRIPTION_RE = re.compile(r"\((?:an?\s|erstwhile|formerly)[^)]*\)", re.
 def classify_scheme_title(scheme_title: str) -> int:
     """1 if a full scheme name is a discretionary equity fund, else 0."""
     name = _TITLE_DESCRIPTION_RE.sub(" ", scheme_title or "")
+    # HDFC's renamed conservative hybrid and retirement portfolios retain
+    # discretionary equity. Their former names contain debt/savings words.
+    name = re.sub(r"\bhybrid debt fund\b", "conservative hybrid fund", name, flags=re.I)
     return 0 if _NON_DISCRETIONARY_TITLE_RE.search(name) else 1
 
 

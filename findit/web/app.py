@@ -25,6 +25,7 @@ import pandas as pd
 from findit.core import consensus_signals, publication
 from findit.core.coverage import house_coverage, month_coverage
 from findit.core.evidence import stock_evidence
+from findit.core.history import stock_history
 from findit.store import queries
 from findit.summary import get_summary
 from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
@@ -592,6 +593,31 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
             conn.close()
 
     # -- stock ------------------------------------------------------------
+    @app.get("/api/history/{isin}")
+    def api_history(isin: str, start: str, end: str, active_only: int = 1,
+                    amc: str | None = None) -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            try:
+                return _sanitize(stock_history(conn, isin.upper(), start, end, active_only == 1, amc))
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            conn.close()
+
+    @app.get("/history/{isin}")
+    def history_page(request: Request, isin: str, start: str, end: str,
+                     active_only: int = 1, amc: str | None = None) -> Any:
+        conn = _ro_connect(resolved_db)
+        try:
+            try:
+                result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return templates.TemplateResponse(request, "history.html", {"h": _sanitize(result)})
+        finally:
+            conn.close()
+
     @app.get("/api/evidence/{isin}")
     def api_evidence(isin: str, month: str, active_only: int = 1,
                      amc: str | None = None) -> Any:
@@ -660,6 +686,7 @@ def create_app(db_path: str | Path | None = None) -> FastAPI:
                 stock = _stock_payload(conn, matches[0]["isin"], month)
             ctx["stock"] = stock
             if stock["month"] is not None:
+                ctx["history_start"] = min(_known_months(conn))
                 ranked = _ranked(conn, stock["month"], bool(view["equity_only"]),
                                  bool(view["active_only"]))
                 hits = _records(ranked[ranked["isin"] == stock["isin"]]) if not ranked.empty else []

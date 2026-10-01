@@ -294,8 +294,10 @@ def discover_franklin(month: str, page) -> list[SourceFile]:
     year, number, month_name = _month(month)
     page.goto(FRANKLIN_PAGE, wait_until="domcontentloaded", timeout=45000)
     page.get_by_role("tab", name="Monthly Portfolio Disclosure", exact=True).click()
-    date = f"{calendar.monthrange(year, number)[1]} {month_name} {year}"
-    link = page.get_by_role("link", name=f"ISIN as on {date}", exact=True)
+    # Franklin reports the last trading day in some months (27 Feb 2026),
+    # rather than the final calendar day. Match the named reporting month.
+    link = page.get_by_role("link", name=re.compile(
+        rf"^ISIN as on \d{{1,2}} {re.escape(month_name)} {year}$"))
     link.wait_for(timeout=30000)
     url = urljoin(FRANKLIN_PAGE, link.get_attribute("href"))
     return [SourceFile("Franklin Templeton AMC", _safe_name(Path(urlparse(url).path).name), url)]

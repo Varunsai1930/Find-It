@@ -30,3 +30,13 @@ Only MIDCAP (scheme 232) and HDFCT2 (233) have July snapshots. Both identities a
 The baseline fund matrix is in the ignored local `real_data/readiness/baseline-audit.json`. `findit coverage` reproduces it and imports explicitly reviewed official inventories. Complete requires inventories for both months, every eligible fund mapped and compared, both validation passes, and no unexpected contributing fund. Partial/unavailable/unknown-completeness are distinct. All-market completeness remains unknown.
 
 Phase B remains open until official expected scope is verified and missing sources are accounted for. No mentor-readiness or customer-validation acceptance result has been claimed.
+
+## Verified repairs and history (1 October 2026)
+
+HDFC July: 109 official portfolio files; August: 110. Dated archive links and every source portfolio were reconciled, with exact sheet identities. All 29 expected active domestic-equity portfolios now compare and pass both gates. Retirement Savings and Hybrid Debt former names are classified consistently with the disclosed renamed retirement/conservative hybrid portfolios. No holding identity merge was needed.
+
+Mirae July/August: 97/98 official files; all 15 expected active equity portfolios compare. Franklin July/August: 40/41 official workbook sheets; all 20 expected active equity portfolios compare. Official inventory manifests and per-fund states are stored locally in the ignored readiness directory. These three scopes satisfy the strict complete label for August; wider-universe completeness remains unknown.
+
+Franklin February–August: seven official original workbooks obtained, parsed, validated and compared through the existing pipeline. History fixes the cohort across the full range and names original-source gaps. It does not manufacture trends from new funds or interpolate missing months. A table remains usable on mobile. Acquisition and parse/validate/compare timings are recorded in local JSON files; cash and founder labor costs remain unmeasured.
+
+Six of the eight featured houses currently have usable August summaries. Kotak and HSBC remain access-limited. The eight-house coverage milestone is unfinished. Independent source review, participant comprehension, and customer validation remain pending.
