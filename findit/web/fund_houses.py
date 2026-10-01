@@ -14,7 +14,7 @@ FUND_GROUPS = (
         ("ICICI Prudential Mutual Fund", ("ICICI Prudential AMC", "ICICI Prudential Mutual Fund")),
         ("HDFC Mutual Fund", ("HDFC AMC", "HDFC Mutual Fund")),
         ("Nippon India Mutual Fund", ("Nippon India AMC", "Nippon India Mutual Fund")),
-        ("Kotak Mahindra Mutual Fund", ("Kotak AMC", "Kotak Mahindra AMC", "Kotak Mahindra Mutual Fund")),
+        ("Kotak Mahindra Mutual Fund", ("Kotak Mahindra AMC", "Kotak AMC", "Kotak Mahindra Mutual Fund")),
     )),
     ("Three more foreign-owned fund houses in India", (
         ("Mirae Asset Mutual Fund", ("Mirae Asset AMC", "Mirae Asset Mutual Fund")),
@@ -28,6 +28,8 @@ def selected_groups(activity: dict) -> list[dict]:
     """Include all eight houses even when a disclosure has not been loaded."""
     houses = activity["houses"]
     return [{"title": title, "funds": [
-        {"name": name, **next((houses[amc] for amc in aliases if amc in houses),
-                              {"loaded": 0, "compared": 0, "biggest": None})}
+        {"name": name, "amc": next((amc for amc in aliases if amc in houses), aliases[0]), **next((houses[amc] for amc in aliases if amc in houses),
+                              {"loaded": 0, "compared": 0, "biggest": None,
+                               "validated_count": 0, "expected": None,
+                               "coverage_state": "unavailable", "inventory_known": False})}
         for name, aliases in funds]} for title, funds in FUND_GROUPS]

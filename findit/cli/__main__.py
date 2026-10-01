@@ -17,7 +17,7 @@ _CLI_DIR = Path(__file__).resolve().parent
 # In the order a month's work runs, then the occasional tools.
 COMMANDS = ("download", "intake", "parse", "pipeline", "report", "shareholding", "prices", "backtest",
             "backtest_quarterly", "revalidate", "rebuild", "digest", "alias", "scheme_titles",
-            "fixtures", "web")
+            "fixtures", "web", "coverage")
 
 
 def _summary(name: str) -> str:

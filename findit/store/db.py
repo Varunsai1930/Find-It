@@ -67,6 +67,28 @@ CREATE TABLE IF NOT EXISTS shareholding_quarterly (
 
 # Additive v2 tables (never modifies SCHEMA above; applied alongside it).
 V2_SCHEMA = """
+CREATE TABLE IF NOT EXISTS coverage_inventories (
+    amc_name TEXT NOT NULL,
+    report_month TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    source_sha256 TEXT NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    exhaustive INTEGER NOT NULL CHECK (exhaustive IN (0, 1)),
+    notes TEXT,
+    PRIMARY KEY (amc_name, report_month)
+);
+CREATE TABLE IF NOT EXISTS expected_funds (
+    amc_name TEXT NOT NULL,
+    report_month TEXT NOT NULL,
+    official_key TEXT NOT NULL,
+    official_name TEXT NOT NULL,
+    scheme_id INTEGER REFERENCES schemes(scheme_id),
+    active_eligible INTEGER NOT NULL CHECK (active_eligible IN (0, 1)),
+    equity_eligible INTEGER NOT NULL CHECK (equity_eligible IN (0, 1)),
+    exclusion_reason TEXT,
+    PRIMARY KEY (amc_name, report_month, official_key)
+);
+
 CREATE TABLE IF NOT EXISTS scheme_aliases (
     alias_id INTEGER PRIMARY KEY AUTOINCREMENT,
     scheme_id INTEGER NOT NULL REFERENCES schemes(scheme_id),

@@ -10,11 +10,14 @@
       {% for fund in group.funds %}
       <article class="fund-card{% if not fund.compared %} fund-card--unavailable{% endif %}" aria-label="{{ fund.name }} monthly summary">
         <h4>{{ fund.name }}</h4>
+        <p class="tag tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_', ' ')|capitalize }}{% if fund.compared %}: {{ fund.compared }} funds compared{% endif %}</p>
+        <p class="fund-card__coverage">Expected: {{ fund.expected if fund.expected is not none else 'unknown' }} · Loaded: {{ fund.loaded }} · Validated: {{ fund.validated_count }} · Compared: {{ fund.compared }}</p>
+        {% if not fund.inventory_known %}<p class="sub">Official eligible inventory not established for both months.</p>{% endif %}
         {% if fund.compared %}
         <p class="fund-card__changes"><span class="pos">Increased {{ fund.increased }}</span><span aria-hidden="true"> · </span><span class="neg">Reduced {{ fund.reduced }}</span><span class="sub">stock holdings, net across compared funds</span></p>
         {% if fund.biggest %}
         <div class="fund-card__move">
-          <span class="field__label">Biggest {{ 'priced ' if fund.unpriced }}{{ 'increase' if fund.biggest.qty_change > 0 else 'reduction' }}</span>
+          <span class="field__label">Biggest {{ 'priced ' if fund.unpriced }}{{ 'increase' if fund.biggest.qty_change > 0 else 'reduction' }} among compared funds</span>
           <button type="button" class="stock-link" data-isin="{{ fund.biggest.isin }}">{{ fund.biggest.stock_name|stock_label }}</button>
           <p class="fund-card__stake {{ 'pos' if fund.biggest.qty_change > 0 else 'neg' }}">{{ fund.biggest.qty_change|signed }} shares{% if fund.biggest.change_pct is not none %} <span class="sub">{{ fund.biggest.change_pct|signed(1) }}% vs previous holding</span>{% else %} <span class="sub">New holding in compared funds</span>{% endif %}</p>
           <span class="sub">Estimated net {{ 'purchase' if fund.biggest.qty_change > 0 else 'sale' }} · ₹{{ fund.biggest.flow_lakhs|abs|crore }} Cr</span>
@@ -25,6 +28,7 @@
         <p class="fund-card__empty">No net change in stock holdings.</p>
         {% endif %}
         <p class="fund-card__coverage">{{ fund.compared }} of {{ fund.loaded }} loaded individual fund{{ 's' if fund.loaded != 1 }} compared{% if fund.unpriced %} · {{ fund.unpriced }} unpriced stock change{{ 's' if fund.unpriced != 1 }} excluded from biggest move{% endif %}.</p>
+        {% if fund.expected_details %}<details><summary>Coverage breakdown</summary><ul>{% for item in fund.expected_details %}<li>{{ item.name }}: {{ item.state|replace('_', ' ') }}{% if item.reason %} · {{ item.reason }}{% endif %}</li>{% endfor %}</ul></details>{% endif %}
         {% elif fund.loaded %}
         <p class="fund-card__empty">No usable comparison with {{ summary_prev_month|month_label }}.</p>
         <p class="fund-card__coverage">{{ fund.loaded }} individual fund{{ 's' if fund.loaded != 1 }} loaded for {{ month|month_label }}. Both months must be available and pass the data gate.</p>

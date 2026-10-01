@@ -8,6 +8,7 @@
 {% include "_fund_summary.html" %}
 <div id="monthly-activity">
 <h2 class="activity-heading">Monthly activity <span class="muted">· {{ month|month_label }}</span></h2>
+<p class="state">Market-wide completeness: unknown. Expected eligible inventory has not been established across all fund houses. The ranking covers {{ coverage.compared }} compared funds; the eight featured houses are a separate selected scope.</p>
 <dl class="facts" aria-label="Coverage for {{ month|month_label }}">
   <div class="fact">
     <dt class="fact__label">Individual funds compared</dt>
@@ -27,7 +28,7 @@
   <div class="fact">
     <dt class="fact__label">Portfolios public</dt>
     <dd class="fact__value">{{ coverage.public_on|month_label(true) }}</dd>
-    <dd class="fact__sub">filings published later are not used</dd>
+    <dd class="fact__sub">deadline assumption · actual publication dates may be unknown</dd>
   </div>
 </dl>
 

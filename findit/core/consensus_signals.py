@@ -179,7 +179,7 @@ def fund_house_activity(conn: sqlite3.Connection, report_month: str,
         "AND s.instrument_type = 'equity') "
         "GROUP BY sch.amc_name", (report_month, report_month, prev_month)).fetchall()
     houses = {str(amc): {"loaded": int(count), "compared": 0, "increased": 0,
-                         "reduced": 0, "biggest": None} for amc, count in loaded}
+                         "reduced": 0, "biggest": None, "compared_ids": []} for amc, count in loaded}
     source, params = _eligible_deltas(conn, report_month, "equity", active_equity_only)
     rows = pd.read_sql_query(
         "WITH eligible AS (SELECT d.*, sch.amc_name, s.name AS stock_name "
@@ -243,6 +243,7 @@ def fund_house_activity(conn: sqlite3.Connection, report_month: str,
                        "change_pct": (100 * float(move.qty_change / move.quantity_prev)
                                       if move.quantity_prev > 0 else None)}
         house.update(compared=int(group["scheme_id"].nunique()),
+                     compared_ids=sorted(int(sid) for sid in group["scheme_id"].unique()),
                      increased=int((changed["qty_change"] > 0).sum()),
                      reduced=int((changed["qty_change"] < 0).sum()), biggest=biggest,
                      unpriced=int(changed["flow_lakhs"].isna().sum()))

@@ -23,7 +23,7 @@ from fastapi.templating import Jinja2Templates
 import pandas as pd
 
 from findit.core import consensus_signals, publication
-from findit.core.coverage import month_coverage
+from findit.core.coverage import house_coverage, month_coverage
 from findit.store import queries
 from findit.summary import get_summary
 from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
@@ -187,6 +187,12 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any
     """
     month = view["month"]
     activity = consensus_signals.fund_house_activity(conn, month, bool(view["active_only"]))
+    fund_groups = selected_groups(activity)
+    for group in fund_groups:
+        for result in group["funds"]:
+            result.update(house_coverage(conn, month, result["amc"],
+                                         set(result.get("compared_ids", [])),
+                                         bool(view["active_only"])))
     ranked = _ranked(conn, month, bool(view["equity_only"]), bool(view["active_only"]))
     ordered = consensus_signals.broadest_selling(ranked) if view["side"] == "sell" else ranked
     rows = _records(ordered if view["limit"] == 0 else ordered.head(view["limit"]))
@@ -210,7 +216,7 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any
         "coverage": month_coverage(conn, month, bool(view["equity_only"]),
                                    bool(view["active_only"])),
         "filings": filings,
-        "fund_groups": selected_groups(activity),
+        "fund_groups": fund_groups,
         "summary_prev_month": activity["prev_month"],
         "aum_period": AUM_PERIOD,
         "aum_source": AUM_SOURCE,
