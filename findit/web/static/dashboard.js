@@ -79,6 +79,8 @@
   }
   var form = document.getElementById("view-controls");
   var view = document.getElementById("month-view");
+  // Standalone evidence and coverage pages only use the appearance control.
+  if (!view) return;
   var viewStatus = document.getElementById("view-status");
   var summaryBox = document.getElementById("summary-box");
   var dialog = document.getElementById("stock-dialog");
