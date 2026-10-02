@@ -55,3 +55,7 @@ Acceptance targets from the approved plan: at least four of five complete core t
 - Compare the same tasks and scope with each participant's current workflow and accessible competitor tools; counterbalance order. Mark inaccessible paid tasks untested rather than buying access.
 - Agree the pilot scope, price and duration with real participants. Count payment only from an actual receipt; no charges have been initiated.
 - Deliver the next real monthly release, measure repeat usage, report reopening, time to correct answers, support minutes, direct operating cost and actual renewals. Record denominators and dates. Retention remains unknown until enough time and releases have elapsed.
+
+## Observed acceptance follow-up
+
+See [2 October observed acceptance](observed-acceptance.md) for completed native Chrome file acceptance, the report-opening fix, official SBI launch resolution, and the assembled real-source reviewer bundle. Independent review and P01–P05 remain pending. Use the [blank session kit](moderated-session-kit.md).

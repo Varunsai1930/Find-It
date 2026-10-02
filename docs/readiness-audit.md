@@ -86,3 +86,7 @@ Use the [mentor guide](mentor-demo.md), [mentor evidence packet](mentor-evidence
 ## 2 October 2026 reliability follow-up
 
 See [pre-pilot reliability results](pre-pilot-reliability.md) for exact-cohort evidence, retained-release reopening, performance measurements and regression results. The [acceptance pack](pre-pilot-acceptance.md) lists remaining source acquisition, independent review and real-participant steps. Earlier coverage and commercial-evidence limitations remain unless explicitly resolved there.
+
+## Observed acceptance follow-up
+
+See [2 October observed acceptance](observed-acceptance.md) for completed native Chrome file acceptance, the report-opening fix, official SBI launch resolution, and the assembled real-source reviewer bundle. Independent review and P01–P05 remain pending. Use the [blank session kit](moderated-session-kit.md).
