@@ -4,6 +4,64 @@
 
 Branch: `codex/mentor-ready`. Preserve the [completed acceptance record](observed-acceptance.md), [source-review bundle](../real_data/readiness/observed-acceptance/reviewer-bundle/README.md), [blank session kit](moderated-session-kit.md) and their answer key. Browser acceptance is already complete; it was not repeated for intake-only changes.
 
+## Frozen expanded August candidate — review completed 2 October
+
+Candidate **`65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4`** is ready for independent source review. Retained August remains the default; promotion and pilot acceptance remain pending. Use app `439a0f9`, parser `portfolio-2026-10-02-scope-1`, rules `readiness-2026-10-01`.
+
+- [Candidate record and artifact hashes](../real_data/readiness/september-2026/august-review/candidate-record.json), [frozen database](../real_data/readiness/releases/65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4.db), [manifest](../real_data/readiness/releases/65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4.json). The manifest records the retained parent and engineering-review hash. `--candidate` creates files without changing `current.json`, including when the candidate already exists.
+- [Engineering review](../real_data/readiness/september-2026/august-review/engineering-review.json), [original-row checks](../real_data/readiness/september-2026/august-review/original-row-verification.json), [before/after results](../real_data/readiness/september-2026/august-review/before-after.json), [application checks](../real_data/readiness/september-2026/august-review/application-checks.json). These are agent checks; both human review and P01–P05 remain pending.
+
+The old `historical-final-stage.db` / `02ac5d45…` is superseded for review. Its files and earlier findings below are preserved as history. The corrected working database is `august-review/reviewed-stage-v2.db`; use the frozen candidate for review and any explicitly selected candidate session round.
+
+### Source counts, scope and numerical comparison
+
+All **92 originals** match their retained hashes and July/August reporting dates: 90 HSBC single-portfolio workbooks and two Kotak consolidated workbooks. They contain **325 portfolio-months**, **163 distinct official portfolio identities** across the two months, and **49 eligible adjacent-month comparisons** (Kotak 31, HSBC 18). File counts do not establish eligible coverage. Official sheet keys, publisher indexes and dated inventories support identity; KIP’s August publisher index explicitly refers to its former Debt Hybrid name.
+
+| House | Retained compared / expected | Candidate compared / expected | Candidate state |
+|---|---:|---:|---|
+| Franklin | 20/20 | 20/20 | Complete |
+| HDFC | 29/29 | 29/29 | Complete |
+| ICICI | 44/44 | 44/44 | Complete |
+| Mirae | 15/15 | 15/15 | Complete |
+| Nippon | 23/23 | 23/23 | Complete |
+| SBI | 39/40 | 39/40 | Partial: legitimate first snapshot |
+| Kotak | 0/unknown | 31/31 | Complete within reviewed inventory |
+| HSBC | 0/unknown | 18/18 | Complete within reviewed inventory |
+
+Selected-scope usable comparisons rise **170 → 219** of 220 expected; broader ranking scope remains separate. All **12,148 previously covered comparison rows** retain quantities, market values, adjustments and flows (maximum flow rounding difference below 0.000000001 lakh). Existing source tables and classifications are unchanged; latest publisher display names/capitalization can change. New houses add 2,941 comparison rows and 45 securities; consensus output grows 873 → 918 securities, including unchanged ones. The browser excludes unchanged stocks from its activity list.
+
+Existing-house featured numerical moves are unchanged. New HSBC headline: TD Power **+10,708,765 shares**, estimated **₹83,207.10 lakh**. New Kotak headline: Eternal **−40,664,235 shares**, estimated **₹−133,061.84 lakh**. Original contributors reconcile in [featured cases](../real_data/readiness/september-2026/august-review/featured-original-cases.json). Buying top five change from LIC, Dhoot, Apollo, Juniper, Mahindra & Mahindra to LIC, Dhoot, Juniper, Manipal, Shiprocket as house breadth widens. Broader Reliance changes **−11,672,309 / 105 contributors → −12,089,031 / 136**: HSBC contributes −210,324 and Kotak −206,398. Franklin’s fixed 20-fund history remains **−1,451,458**, 16 August contributors.
+
+### Anomaly disposition and verified fixes
+
+`17e7974` excludes explicit Kotak Futures/Options/Derivatives sections and appended exposure tables after the original Grand Total. Previously positive futures sharing a cash equity ISIN inflated holdings. **871 exposure rows** are now excluded, **15,919 accepted original rows** checked, **19 comparison rows corrected**, and **two derivative-only comparisons removed**. Original files remain unchanged. [Correction ledger](../real_data/readiness/september-2026/august-review/superseded-stage-corrections.json) records exact source rows and before/after quantities. Synthetic regressions preserve legitimate multiple cash lots.
+
+All **2,941 new-house comparison calculations** reconcile to original quantities/values; 24 largest increase/reduction/addition/exit cases have exact rows, hashes and calculations in [selected cases](../real_data/readiness/september-2026/august-review/selected-original-cases.json). There are no duplicate corrected input holdings, missing selected domestic-equity quantities/values, or unpriced selected new-house moves. **69 quantity-ratio warnings**, **14 NAV-sum warnings** and **four domestic-equity price warnings with new active holders** were traced to originals. No unsupported split or identity adjustment was applied. Snapshot consistency does not establish transaction motive or execution price.
+
+Validation remains explicit: 44 NAV-sum, 207 quantity-ratio, 10 missing-NAV and two passive corporate-action-candidate warnings across all new portfolio-months. The global 1,521 price warnings retain pre-existing/out-of-scope cases. Six annotated matured-FMP values remain unknown outside selected scope; 16 tiny annotated active-equity NAV cells remain unknown. No weights were rescaled to force 100%. Independent reviewer must accept or challenge these dispositions; this is not blanket independent valuation clearance.
+
+`ea26afe` adds the tested candidate-only freeze path. `439a0f9` fixes the observed misleading “new listing” badge to “new in loaded portfolios”; absence from prior loaded holdings does not prove an exchange listing date. Numerical rules/ranking are unchanged. **431 Python tests, 12 JavaScript tests, Ruff and diff checks pass.** Real candidate application checks verify report/evidence identity, exact-cohort history, original provenance, byte-identical retained report reopening, and rejection of missing releases/wrong rules.
+
+Chrome native saved-file checks also pass: exported JSON was inspected and hashed, the actual saved file restored the isolated watchlist, the downloaded Markdown report matches verified output byte-for-byte, and its complete URL reopened candidate evidence showing −12,089,031 / 136. [Browser record and saved-file hashes](../real_data/readiness/september-2026/august-review/browser-checks.json). Native automation focus/clipboard retries were recorded separately from product friction; Markdown still requires copying its complete URL. These are agent browser checks, not P01–P05 observations.
+
+### Minimal independent handoff
+
+Use the unchanged original reviewer bundle plus the corrected supplement above; record findings in the existing blank `FINDINGS.md` and `HISTORICAL-FINDINGS.md`. The independent mentor/researcher needs to check:
+
+1. Inventory eligibility and official identity continuity, especially KIP; SBI’s first snapshot remains holdings-only.
+2. Cash-versus-derivative exclusions and the 19 corrected comparisons/two removed entries.
+3. Selected increases, reductions, additions, exits and both new-house headline sums against original rows; reproduce quantities and estimated-value units.
+4. Warning dispositions/unknown cells and the original bundle’s real Reliance corporate-action example.
+5. Release/scope reconciliation: candidate versus retained reports and fixed-cohort versus monthly Reliance totals.
+
+Source/calculation fixes require independent recheck. Changed coverage explanations and the portfolio badge need comprehension testing with fresh participants where possible. Use one frozen release and exact app commit per round; see the [round-specific session key](moderated-session-kit.md). No rounds have begun.
+
+### September external dependency
+
+One focused official-source check was completed on **2 October 2026**: [responses, hashes and retrieval basis](../real_data/readiness/september-2026/august-review/september-check/availability.json). No verified September monthly original was obtained. Dynamic/inaccessible listings are indeterminate, not proof of non-publication. No repeated checks during this review; September expected inventories remain unknown and no September release exists. Continue only when genuine month-end originals and dated inventories are available.
+
+## Earlier intake record (superseded stage results retained for provenance)
+
 ## Three separate evidence states
 
 | State | Identity and status |

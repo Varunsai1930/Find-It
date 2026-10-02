@@ -60,3 +60,13 @@ Retest task/new participant ID/commit/release/result: ____
 | P05 | | | | | | | | | |
 
 Incorrect calculations, failed tasks, misleading scope explanations and inability to reopen evidence take priority. Preserve observations before fixing. Retest affected tasks with new consenting participants where possible; record prior exposure if reused. Owner supplies anonymized observations under these IDs; agent analyzes them without inventing sessions.
+
+## Frozen release rounds
+
+Keep the retained-release answer key above for round `A-retained-28bb0fa89c48`. No sessions have started. Never combine observations from different releases or app changes silently. Record round ID alongside P01–P05; start a separate round and answer key whenever the release changes.
+
+Optional expanded round `B-candidate-65594777209e` is prepared, **not started or independently accepted**. Use app `439a0f9`, release `65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4`, rules `readiness-2026-10-01`, August 2026. Owner explicitly selects the round before recruitment/testing. Keep one frozen release for all five participants. Reuse the protocol and blank records without filling outcomes.
+
+Candidate answer-key differences: T1 stays HDFC LIC +41,618,000 / 29 funds. T2: Kotak 31/31 and HSBC 18/18 complete within reviewed inventories, SBI 39/40 partial, seven complete selected houses, market completeness unknown. T4: fixed Franklin 20-fund cohort / 16 August contributors / −1,451,458 unchanged; broader candidate monthly total is −12,089,031 / 136 contributors. T5 must match the full candidate ID and rules. “New in loaded portfolios” describes prior-source absence and cannot establish an exchange listing date. These are agent-verified expected answers, not participant results.
+
+Owner supplies independent findings and anonymized P01–P05 observations with round, app/release, task, time, errors, exact assistance, and coverage/release explanation. Contacts remain outside the project.

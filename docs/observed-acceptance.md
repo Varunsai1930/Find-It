@@ -59,3 +59,6 @@ Proceed with local moderated testing to collect evidence. Do not claim private-p
 | Observation-backed defects | Agent investigates supplied failures, fixes and commits; owner arranges fresh-participant retests |
 | Pilot scope and next release | Owner resolves coverage scope after review; agent acquires/stages actual September sources when available, retaining August release; see September preparation |
 | Commercial claims | Owner runs authorized real pilot; payments/retention remain unproven until observed |
+
+
+Expanded August engineering review and candidate artifacts are recorded in [September preparation](september-release-preparation.md#frozen-expanded-august-candidate--review-completed-2-october). The original browser acceptance and retained-release answer key remain historical evidence. Candidate `65594777209e…` has not been independently accepted; P01–P05 remain pending.
