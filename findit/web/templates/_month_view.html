@@ -110,7 +110,7 @@
             <span class="rank">{{ loop.index }}</span>
             <div>
               <button type="button" class="stock-link" data-isin="{{ row.isin }}" aria-haspopup="dialog">{{ row.stock_name|stock_label }}</button>
-              <span class="sub">{{ row.isin }}{% if row.industry %} · {{ row.industry }}{% endif %}{% if row.universe_status == 'new_listing' %} · <span class="tag tag--info">new listing</span>{% endif %}</span>
+              <span class="sub">{{ row.isin }}{% if row.industry %} · {{ row.industry }}{% endif %}{% if row.universe_status == 'new_listing' %} · <span class="tag tag--info" title="Absent from loaded prior-month holdings; exchange listing date is unknown.">new in loaded portfolios</span>{% endif %}</span>
             </div>
           </div>
         </th>

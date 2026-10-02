@@ -22,7 +22,7 @@ def _prev_universe_isins(conn: sqlite3.Connection, prev_months) -> set[str] | No
     """ISINs any tracked scheme already held in the compared previous month(s).
 
     Returns None when no previous month is known, so callers report
-    ``unknown`` instead of asserting every stock is a new listing.
+    ``unknown`` instead of asserting every stock is new to loaded holdings.
     """
     months = sorted({str(m) for m in prev_months if m is not None and str(m) != "nan"})
     if not months:
@@ -378,10 +378,10 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
     if "index" in out.columns and "isin" not in out.columns:
         out = out.rename(columns={"index": "isin"})
 
-    # Tri-state, like the FII/DII directions: a stock absent from every
-    # tracked portfolio last month is a new listing, not a conviction buy.
-    # With no previous month on record we say "unknown" rather than
-    # branding the whole universe new.
+    # Absence from loaded prior-month holdings does not establish an exchange
+    # listing date. Keep the legacy "new_listing" token for compatibility;
+    # the UI describes it as new in loaded portfolios. No prior month means
+    # "unknown" rather than branding the whole universe new.
     if prev_universe is None:
         out["universe_status"] = "unknown"
     else:
@@ -397,7 +397,7 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
         out[column] = out[column].fillna(0).astype(int)
 
     # Consensus breadth still leads. Within one breadth level, established
-    # names outrank fresh listings, and the tiebreak is accumulation flow —
+    # holdings outrank stocks new to loaded portfolios; the tiebreak is accumulation flow —
     # never the entry value of a position that had nowhere to come from.
     return out.sort_values(
         ["net_amc_count", "is_new_to_universe", "accumulation_flow_lakhs"],
