@@ -45,6 +45,67 @@ def test_mirae_market_value_header_is_recognized():
     assert mapping["market_value_lakhs"] == columns[3]
 
 
+def test_hsbc_multiline_title_and_fractional_net_assets(tmp_path):
+    """Synthetic regression shaped like the obtained HSBC monthly original."""
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "HEIOPF"
+    sheet.append(["HSBC Mutual Fund\nHSBC Flexi Cap Fund\n"
+                  "HSBC Flexi Cap Fund(An open ended dynamic equity scheme.)\n"
+                  "Portfolio Statement as of August 31, 2026"])
+    sheet.append(["Name of the Instrument", "ISIN", "Rating/Industries", "Quantity",
+                  "Market Value\n (Rs in Lacs)", "Percentage to Net Assets"])
+    sheet.append(["Reliance Industries Limited", "INE002A01018", "Petroleum", 1195160,
+                  15262.19, 0.0254])
+    sheet.append(["Cash", None, None, None, 100, 0.9746])
+    sheet.append(["Total Net Assets", None, None, None, 15362.19, 1])
+    path = tmp_path / "hsbc.xlsx"
+    book.save(path)
+    row = amfi_mf_parser.parse_workbook(path, "HSBC AMC", "2026-08").iloc[0]
+    assert row["scheme_title"] == "HSBC Flexi Cap Fund"
+    assert row["quantity"] == 1195160
+    assert row["market_value_lakhs"] == 15262.19
+    assert row["pct_nav_raw"] == 0.0254
+    assert row["pct_nav"] == pytest.approx(2.54)
+    assert row["source_row"] == 3
+
+
+def test_kotak_merged_instrument_heading_and_supplementary_notes(tmp_path, capsys):
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "V3I"
+    sheet.append([None, None, "Portfolio of Kotak Nifty200 Value 30 Index Fund "
+                  "as on 31-Aug-2026"])
+    sheet.append(["Name of Instrument", None, None, "ISIN Code", "Industry", "Yield",
+                  "Quantity", "Market Value (Rs.in Lacs)", "% to Net Assets"])
+    sheet.merge_cells("A2:C2")
+    sheet.append([None, None, "STATE BANK OF INDIA.", "INE062A01020", "Banks", None,
+                  6613, 70.1, 5.32])
+    sheet.append([None, "Cash", None, None, None, None, None, 100, 94.68])
+    sheet.append(["Total Net Assets", None, None, None, None, None, None, 170.1, 100])
+    notes = book.create_sheet("Common Notes")
+    notes.append(["Common Notes to Portfolio:"])
+    notes.append(["Scheme", "ISIN", "Name of the Security", "Value Recognised in NAV",
+                  "% to Net Assets"])
+    notes.append(["Kotak FMP", "INE975G08140", "IL & FS", 0, 0])
+    path = tmp_path / "kotak.xlsx"
+    book.save(path)
+    rows = amfi_mf_parser.parse_workbook(path, "Kotak Mahindra AMC", "2026-08")
+    assert len(rows) == 1
+    row = rows.iloc[0]
+    assert row["scheme_title"] == "Kotak Nifty200 Value 30 Index Fund"
+    assert row["instrument_name"] == "STATE BANK OF INDIA."
+    assert row["quantity"] == 6613
+    assert row["source_row"] == 3
+    assert row["pct_nav"] == pytest.approx(5.32)
+    assert row["dropped_non_isin_pct_nav"] == pytest.approx(94.68)
+    assert "supplementary recovery disclosure" in capsys.readouterr().err
+    notes['A1'] = "Unknown table"
+    book.save(path)
+    with pytest.raises(ValueError, match="instrument_name"):
+        amfi_mf_parser.parse_workbook(path, "Kotak Mahindra AMC", "2026-08")
+
+
 def test_uti_stacked_scheme_sections_parse_as_distinct_schemes(tmp_path):
     workbook = openpyxl.Workbook()
     sheet = workbook.active

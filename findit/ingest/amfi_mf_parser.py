@@ -66,13 +66,15 @@ COLUMN_SYNONYMS = {
         "% to nav",
         "% to net assets",
         "percentage to nav",
+        # HSBC July/August 2026 originals; use the existing scale detector.
+        "percentage to net assets",
         "% to net asset",
         "% to aum",
     ],
 }
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
-PARSER_VERSION = "portfolio-2026-10-01"
+PARSER_VERSION = "portfolio-2026-10-02"
 
 # Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
 # check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
@@ -110,12 +112,16 @@ def extract_scheme_title(title_rows: pd.DataFrame):
     HDFC the name (with a SEBI description in brackets) in row 0.
     """
     cells_by_row = [
-        [str(v).strip() for v in row if pd.notna(v) and str(v).strip()
-         and not hasattr(v, "year")]
+        [line.strip() for v in row if pd.notna(v) and not hasattr(v, "year")
+         for line in str(v).splitlines() if line.strip()]
         for row in title_rows.itertuples(index=False, name=None)
     ]
     for cells in cells_by_row:
         for i, cell in enumerate(cells):
+            # Kotak places the name inside a dated portfolio title.
+            portfolio = re.match(r"^portfolio of (.+?)\s+as on\s+.+$", cell, re.IGNORECASE)
+            if portfolio:
+                return portfolio.group(1).strip()
             if re.match(r"^scheme\s*name\s*:?", cell, re.IGNORECASE):
                 rest = re.sub(r"^scheme\s*name\s*:?\s*", "", cell, flags=re.IGNORECASE)
                 if rest:
@@ -319,6 +325,14 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         # Each workbook sheet is read once; UTI's stacked sections are sliced
         # from that read in memory.
 
+        if (amc_name == "Kotak Mahindra AMC" and sheet_name == "Common Notes"
+                and not raw.empty and str(raw.iat[0, 0]).strip() == "Common Notes to Portfolio:"):
+            # Recovery values across matured schemes have no holding quantities.
+            # Retain the original supplementary table, without loading a portfolio.
+            print("  [skip] 'Common Notes': Kotak supplementary recovery disclosure",
+                  file=sys.stderr)
+            continue
+
         # AMFI sheets usually have a few title/metadata rows before the
         # real header row. Find it by locating the first row containing
         # something that matches an ISIN column synonym.
@@ -345,6 +359,14 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         except ValueError as e:
             print(f"  [FAIL] sheet '{sheet_name}': {e}", file=sys.stderr)
             raise
+
+        if (amc_name == "Kotak Mahindra AMC" and len(header_vals) >= 4
+                and normalize_col(header_vals[0]) == "name of instrument"
+                and pd.isna(header_vals[1]) and pd.isna(header_vals[2])
+                and normalize_col(header_vals[3]) == "isin code"):
+            # A:C is merged in the heading; security names are in C and
+            # section/subtotal labels in A/B. Preserve both kinds of labels.
+            df[col_map["instrument_name"]] = df.iloc[:, :3].bfill(axis=1).iloc[:, 0]
 
         # Log the resolved canonical -> raw mapping for auditability.
         print(f"  [columns] '{sheet_name}': {col_map}", file=sys.stderr)
