@@ -15,7 +15,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--label", default="Monthly research release")
     ap.add_argument("--parent")
     ap.add_argument("--notes", default="")
-    ap.add_argument("--rollback", help="Restore current.json to a retained release ID")
+    action = ap.add_mutually_exclusive_group()
+    action.add_argument("--rollback", help="Restore current.json to a retained release ID")
+    action.add_argument("--candidate", action="store_true",
+                        help="Freeze candidate files without creating or changing current.json")
     args = ap.parse_args(argv)
     if args.rollback:
         try:
@@ -31,7 +34,8 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("an existing --db is required")
     if args.parent and not args.notes.strip():
         ap.error("a revision needs --notes explaining the correction")
-    print(json.dumps(snapshot(args.db, args.out, args.label, args.parent, args.notes), indent=2))
+    print(json.dumps(snapshot(args.db, args.out, args.label, args.parent, args.notes,
+                              activate=not args.candidate), indent=2))
     return 0
 
 

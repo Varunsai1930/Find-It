@@ -106,6 +106,44 @@ def test_report_a_reopens_after_switch_to_b_and_rejects_tampering(tmp_path):
     assert cb.get(url).status_code == 409
 
 
+def test_candidate_freeze_and_repeat_preserve_current_pointer_and_parent(tmp_path):
+    path = _copy_db(tmp_path)
+    folder = tmp_path / 'releases'
+    parent = snapshot(path, folder, 'baseline')
+    pointer = (folder / 'current.json').read_bytes()
+    parent_bytes = (folder / f"{parent['release_id']}.db").read_bytes()
+    with sqlite3.connect(path) as conn:
+        conn.execute("UPDATE mf_holdings_monthly SET quantity=quantity+17 "
+                     "WHERE scheme_id=1 AND report_month='2026-08'")
+    argv = ['--db', str(path), '--out', str(folder), '--candidate', '--parent',
+            parent['release_id'], '--label', 'Review candidate', '--notes', 'Independent review pending']
+    assert release_main(argv) == 0
+    candidates = [p for p in folder.glob('*.db') if p.stem != parent['release_id']]
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert (folder / 'current.json').read_bytes() == pointer
+    assert (folder / f"{parent['release_id']}.db").read_bytes() == parent_bytes
+    assert json.loads(candidate.with_suffix('.json').read_text())['parent_release'] == parent['release_id']
+    assert release_main(argv) == 0  # Existing-file path must also preserve the pointer.
+    assert (folder / 'current.json').read_bytes() == pointer
+    client = TestClient(create_app(candidate))
+    assert client.get('/api/watchlist?month=2026-08&stocks=INE002A01018').json()['release_id'] == candidate.stem
+    old_report = client.get('/api/watchlist', params={'month':'2026-08','stocks':'INE002A01018',
+                                                    'release':parent['release_id']}).json()
+    assert old_report['release_id'] == parent['release_id']
+    assert client.get(old_report['stocks'][0]['evidence_url']).status_code == 200
+    with pytest.raises(SystemExit):
+        release_main(['--out',str(folder),'--candidate','--rollback',parent['release_id']])
+    assert (folder / 'current.json').read_bytes() == pointer
+
+
+def test_candidate_freeze_does_not_create_a_pointer(tmp_path):
+    folder = tmp_path / 'candidates'
+    manifest = snapshot(_copy_db(tmp_path), folder, 'Candidate', activate=False)
+    assert (folder / f"{manifest['release_id']}.db").is_file()
+    assert not (folder / 'current.json').exists()
+
+
 def test_report_reuses_coverage_without_building_source_panels(tmp_path, monkeypatch):
     from findit.core import evidence, watchlist
     c = sqlite3.connect(_copy_db(tmp_path))

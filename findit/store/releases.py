@@ -44,8 +44,8 @@ def content_id(conn: sqlite3.Connection) -> str:
 
 
 def snapshot(source: Path, output: Path, label: str, parent: str | None = None,
-             notes: str = "") -> dict:
-    """Copy first, check the copy, then publish immutable files. Original is read-only."""
+             notes: str = "", *, activate: bool = True) -> dict:
+    """Freeze verified files; activate=False leaves the current pointer untouched."""
     import tempfile
     if parent:
         verify_release(output, parent)
@@ -78,9 +78,10 @@ def snapshot(source: Path, output: Path, label: str, parent: str | None = None,
             if not manifest_path.exists():
                 raise ValueError("existing release is missing its manifest")
             stored = verify_release(output, release_id)
-            pointer = Path(folder) / "current.json"
-            pointer.write_text(json.dumps({"release_id": release_id}) + "\n")
-            pointer.replace(output / "current.json")
+            if activate:
+                pointer = Path(folder) / "current.json"
+                pointer.write_text(json.dumps({"release_id": release_id}) + "\n")
+                pointer.replace(output / "current.json")
             return stored
         manifest = {"release_id": release_id, "rule_version": RULE_VERSION, "label": label,
                     "parent_release": parent, "revision_notes": notes,
@@ -91,9 +92,10 @@ def snapshot(source: Path, output: Path, label: str, parent: str | None = None,
         temporary_manifest.write_text(json.dumps(manifest, indent=2) + "\n")
         temporary_manifest.replace(manifest_path)
         # An explicit local pointer can be restored to any retained release.
-        pointer = Path(folder) / "current.json"
-        pointer.write_text(json.dumps({"release_id": release_id}) + "\n")
-        pointer.replace(output / "current.json")
+        if activate:
+            pointer = Path(folder) / "current.json"
+            pointer.write_text(json.dumps({"release_id": release_id}) + "\n")
+            pointer.replace(output / "current.json")
         return manifest
 
 
