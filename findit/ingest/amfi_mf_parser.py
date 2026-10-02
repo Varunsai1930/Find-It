@@ -366,7 +366,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
                 and normalize_col(header_vals[3]) == "isin code"):
             # A:C is merged in the heading; security names are in C and
             # section/subtotal labels in A/B. Preserve both kinds of labels.
-            df[col_map["instrument_name"]] = df.iloc[:, :3].bfill(axis=1).iloc[:, 0]
+            df[col_map["instrument_name"]] = df.iloc[:, :3].ffill(axis=1).iloc[:, -1]
 
         # Log the resolved canonical -> raw mapping for auditability.
         print(f"  [columns] '{sheet_name}': {col_map}", file=sys.stderr)

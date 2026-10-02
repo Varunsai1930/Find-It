@@ -79,7 +79,7 @@ def test_kotak_merged_instrument_heading_and_supplementary_notes(tmp_path, capsy
     sheet.append(["Name of Instrument", None, None, "ISIN Code", "Industry", "Yield",
                   "Quantity", "Market Value (Rs.in Lacs)", "% to Net Assets"])
     sheet.merge_cells("A2:C2")
-    sheet.append([None, None, "STATE BANK OF INDIA.", "INE062A01020", "Banks", None,
+    sheet.append([None, " ", "STATE BANK OF INDIA.", "INE062A01020", "Banks", None,
                   6613, 70.1, 5.32])
     sheet.append([None, "Cash", None, None, None, None, None, 100, 94.68])
     sheet.append(["Total Net Assets", None, None, None, None, None, None, 170.1, 100])
