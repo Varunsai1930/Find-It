@@ -180,3 +180,32 @@ def test_house_net_direction_differs_from_any_fund_direction(tmp_path):
     text = render_report(report)
     assert "Fund houses net adding/reducing shares: 1/1" in text
     assert "a house can appear on both sides there" in text
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:65102", "http://127.0.0.1:65103"])
+def test_download_evidence_uses_the_exporting_preview_origin(tmp_path, origin):
+    import re
+    from urllib.parse import parse_qs, urlsplit
+    path = _copy_db(tmp_path)
+    folder = tmp_path / "releases"
+    frozen = snapshot(path, folder, "Candidate")
+    client = TestClient(create_app(folder / f"{frozen['release_id']}.db"), base_url=origin)
+    params = {"month": "2026-08", "stocks": "INE002A01018", "active_only": 1,
+              "release": frozen["release_id"], "rules": frozen["rule_version"]}
+    download = client.get("/watchlist/report", params=params)
+    assert download.status_code == 200
+    url = re.search(r"Open matching-release evidence\]\(([^)]+)\)", download.text).group(1)
+    split = urlsplit(url)
+    assert f"{split.scheme}://{split.netloc}" == origin
+    assert parse_qs(split.query) == {"month": ["2026-08"], "active_only": ["1"],
+                                    "release": [frozen["release_id"]], "rules": [frozen["rule_version"]]}
+    assert "http://127.0.0.1:65100" not in download.text
+    assert f"exporting server address {origin}" in download.text
+    reopened = client.get(url)
+    assert reopened.status_code == 200 and frozen["release_id"] in reopened.text
+    assert client.get(url.replace(frozen["rule_version"], "unsupported")).status_code == 409
+    assert client.get(url.replace(frozen["release_id"], "f"*64)).status_code == 409
+    # Non-web callers retain the established local default.
+    with sqlite3.connect(path) as c:
+        text = render_report(monthly_report(c, "2026-08", ["INE002A01018"]))
+    assert "http://127.0.0.1:65100/evidence/" in text

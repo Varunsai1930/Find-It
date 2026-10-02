@@ -53,7 +53,8 @@ def monthly_report(conn: sqlite3.Connection, month: str, stocks: list[str],
             "claims": "Research utility only. No established investment-performance claim."}
 
 
-def render_report(report: dict) -> str:
+def render_report(report: dict, evidence_base_url: str = "http://127.0.0.1:65100") -> str:
+    evidence_base_url = evidence_base_url.rstrip("/")
     def available(value):
         return value if value is not None else "unavailable"
     lines = [f"# Changes in my stocks — {report['month']}", "",
@@ -64,7 +65,7 @@ def render_report(report: dict) -> str:
              "Reopen this report: open the downloaded .md file in a browser or text editor.", "",
              "1. Start your local FindIt server with the retained release database and matching .json manifest. Keep the matching application/rules version.",
              "2. Copy the complete Evidence URL below into your browser address bar (or click it in a Markdown viewer).",
-             "3. The link uses the standard local address http://127.0.0.1:65100. If your server uses another address, replace only that address; keep the entire path and query unchanged.",
+             f"3. These links use the exporting server address {evidence_base_url}. If reopening on another local address, replace only that address; keep the entire path and query unchanged.",
              "4. Check the evidence page shows the same release, rules, month and scope as this report. Missing or mismatched releases are rejected, never replaced with current data.", ""]
     for stock in report["stocks"]:
         lines += [f"## {stock['name']} ({stock['isin']})", f"Status: {stock['status']}",
@@ -72,7 +73,7 @@ def render_report(report: dict) -> str:
                   f"Net share change: {stock['net_share_change'] if stock['net_share_change'] is not None else 'unavailable'}",
                   f"Estimated net trading value (₹ lakh): {stock['net_flow_lakhs'] if stock['net_flow_lakhs'] is not None else 'unavailable'}",
                   f"Individual-fund additions/exits: {available(stock['additions'])}/{available(stock['exits'])}",
-                  f"Evidence: [Open matching-release evidence](http://127.0.0.1:65100{stock['evidence_url']})", f"Review: {stock['review_status']}"]
+                  f"Evidence: [Open matching-release evidence]({evidence_base_url}{stock['evidence_url']})", f"Review: {stock['review_status']}"]
         for change in stock["largest_compared_changes"]:
             lines.append(f"- Largest compared change: {change['fund']}; {change['shares']} shares; ₹ lakh {available(change['flow_lakhs'])}")
         for house, c in stock["coverage"].items():

@@ -680,7 +680,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             conn.close()
 
     @app.get("/watchlist/report")
-    def watchlist_download(month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
+    def watchlist_download(request: Request, month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
         conn, identity = release_connection(release, rules)
         try:
             if month not in _known_months(conn):
@@ -689,7 +689,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 report = report_for(conn, month, parse_stocks(stocks), active_only == 1, identity)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            return Response(render_report(report), media_type="text/markdown",
+            return Response(render_report(report, str(request.base_url)), media_type="text/markdown",
                             headers={"Content-Disposition": f'attachment; filename="findit-{month}-{report["release_id"][:12]}.md"'})
         finally:
             conn.close()
