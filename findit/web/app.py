@@ -715,7 +715,15 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity)
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            return templates.TemplateResponse(request, "history.html", {"h": _sanitize(result)})
+            houses = [row[0] for row in conn.execute(
+                "SELECT DISTINCT s.amc_name FROM schemes s JOIN mf_holdings_monthly h USING(scheme_id) "
+                "WHERE h.report_month BETWEEN ? AND ? "
+                "AND (?=0 OR s.is_active_equity=1) ORDER BY s.amc_name",
+                (start, end, active_only))]
+            if amc and amc not in houses:
+                houses.append(amc)
+            return templates.TemplateResponse(request, "history.html",
+                                              {"h": _sanitize(result), "houses": houses})
         finally:
             conn.close()
 

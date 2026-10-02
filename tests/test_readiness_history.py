@@ -52,3 +52,40 @@ def test_history_links_reproduce_cohort_and_baseline(tmp_path):
     assert broad['net_share_change'] != e['net_share_change']
     gap = client.get('/api/history/INE002A01018?start=2026-06&end=2026-09').json()
     assert all(p['evidence_url'] is None for p in gap['points'])
+
+
+def test_history_house_form_keeps_the_retained_release_and_range(tmp_path):
+    from bs4 import BeautifulSoup
+    from fastapi.testclient import TestClient
+    from findit.store.releases import snapshot
+    from findit.web.app import create_app
+    path = _copy_db(tmp_path)
+    folder = tmp_path / "releases"
+    retained = snapshot(path, folder, "A")
+    with sqlite3.connect(path) as c:
+        c.execute("UPDATE mf_holdings_monthly SET quantity=quantity+17 "
+                  "WHERE report_month='2026-08'")
+    current = snapshot(path, folder, "B")
+    client = TestClient(create_app(folder / f"{current['release_id']}.db"))
+    params = {"start": "2026-07", "end": "2026-08", "active_only": 1,
+              "release": retained["release_id"], "rules": retained["rule_version"]}
+    page = client.get("/history/INE002A01018", params=params)
+    form = BeautifulSoup(page.text, "html.parser").find("form", attrs={"aria-label": "History fund-house scope"})
+    assert form is not None and form["method"] == "get"
+    assert {o["value"] for o in form.select("select[name=amc] option")} == {"", "A AMC", "B AMC"}
+    submitted = {i["name"]: i["value"] for i in form.select("input[name]")}
+    assert submitted == {k: str(v) for k, v in params.items()}
+    submitted["amc"] = "A AMC"
+    filtered = client.get("/api/history/INE002A01018", params=submitted).json()
+    assert filtered["release_id"] == retained["release_id"]
+    assert filtered["cohort"] == [1, 2]
+    assert filtered["points"][-1]["net_share_change"] == 70
+    selected = client.get("/history/INE002A01018", params=submitted)
+    assert 'value="A AMC" selected' in selected.text
+    evidence = client.get(filtered["points"][-1]["evidence_url"].replace("/evidence/", "/api/evidence/")).json()
+    assert evidence["net_share_change"] == 70
+    assert {f["amc_name"] for f in evidence["funds"]} == {"A AMC"}
+    # A house selection cannot turn a missing month into a zero comparison.
+    submitted["end"] = "2026-09"
+    gap = client.get("/api/history/INE002A01018", params=submitted).json()
+    assert gap["cohort"] == [] and all(p["shares"] is None for p in gap["points"])
