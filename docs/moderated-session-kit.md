@@ -2,6 +2,8 @@
 
 Prepared 2 October 2026. P01–P05 and independent reviewer are **pending**: the owner has not recruited them. No invitations were sent. Use the existing [acceptance protocol](pre-pilot-acceptance.md) and [customer-validation kit](customer-validation-kit.md). Keep contact details outside the project. Store consented anonymized observations in a private copy, not Git.
 
+The owner has now selected expanded round `B-candidate-65594777209e` and reconfirmed that neither reviewer nor participants is arranged. Use its [participant-only handout](august-candidate-session/participant-instructions.md), separate [moderator key, recruitment drafts and reviewer tasks](august-candidate-session/moderator-key.md), and local blank records. Preview: <http://127.0.0.1:65102/>. Round B's T4 explicitly names Franklin to match the fixed-cohort key. The retained round's protocol below remains available; do not mix its broader monthly totals with the candidate.
+
 ## Moderator preparation (not shown to participants)
 
 Recruit independent Indian equity researchers who already use monthly fund disclosures; record relationship/channel separately. Include desktop and mobile users where practical. Consent to notes, agree access/deletion date, and obtain separate consent before recording. A participant can stop or omit sensitive work. Use app commit 7a33dbe or its documented successor and release `28bb0fa89c482a98b86fa6d3c9f7f9b372bb63d2f8f1aee70a82593eacc756ec`, rules `readiness-2026-10-01`, August 2026, active domestic equity. Record exact browser/device. Provide a fresh device watchlist or preserve/export an existing one first. Keep a local server running; do not expose it publicly.
@@ -65,7 +67,7 @@ Incorrect calculations, failed tasks, misleading scope explanations and inabilit
 
 Keep the retained-release answer key above for round `A-retained-28bb0fa89c48`. No sessions have started. Never combine observations from different releases or app changes silently. Record round ID alongside P01–P05; start a separate round and answer key whenever the release changes.
 
-Optional expanded round `B-candidate-65594777209e` is prepared, **not started or independently accepted**. Use app `439a0f9`, release `65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4`, rules `readiness-2026-10-01`, August 2026. Owner explicitly selects the round before recruitment/testing. Keep one frozen release for all five participants. Reuse the protocol and blank records without filling outcomes.
+Owner-selected expanded round `B-candidate-65594777209e` is prepared, **not started or independently accepted**. Use app `439a0f9`, release `65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4`, rules `readiness-2026-10-01`, August 2026. Neither R01 nor P01–P05 is arranged. Keep one frozen release for all five participants. Reuse the protocol and blank records without filling outcomes.
 
 Candidate answer-key differences: T1 stays HDFC LIC +41,618,000 / 29 funds. T2: Kotak 31/31 and HSBC 18/18 complete within reviewed inventories, SBI 39/40 partial, seven complete selected houses, market completeness unknown. T4: fixed Franklin 20-fund cohort / 16 August contributors / −1,451,458 unchanged; broader candidate monthly total is −12,089,031 / 136 contributors. T5 must match the full candidate ID and rules. “New in loaded portfolios” describes prior-source absence and cannot establish an exchange listing date. These are agent-verified expected answers, not participant results.
 

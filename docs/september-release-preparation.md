@@ -4,6 +4,8 @@
 
 Branch: `codex/mentor-ready`. Preserve the [completed acceptance record](observed-acceptance.md), [source-review bundle](../real_data/readiness/observed-acceptance/reviewer-bundle/README.md), [blank session kit](moderated-session-kit.md) and their answer key. Browser acceptance is already complete; it was not repeated for intake-only changes.
 
+The owner has selected the expanded August candidate for new round `B-candidate-65594777209e`. Its separate local preview is <http://127.0.0.1:65102/>; use the [candidate moderator/reviewer handoff](august-candidate-session/moderator-key.md) and separate [participant handout](august-candidate-session/participant-instructions.md). R01 and P01–P05 are not recruited. Retained August remains the default; no human acceptance or promotion has occurred.
+
 ## Frozen expanded August candidate — review completed 2 October
 
 Candidate **`65594777209eccae96a60f18294f0bb98a21abcd95559713142ecce5e66e34d4`** is ready for independent source review. Retained August remains the default; promotion and pilot acceptance remain pending. Use app `439a0f9`, parser `portfolio-2026-10-02-scope-1`, rules `readiness-2026-10-01`.

@@ -2,6 +2,8 @@
 
 Prepared 2 October 2026. All participant results and independent sign-offs are **pending**. Companion: [engineering results](pre-pilot-reliability.md), [interview and competitor protocol](customer-validation-kit.md), [mentor packet](mentor-evidence-packet.md).
 
+Current owner-selected testing round: expanded candidate `B-candidate-65594777209e`. Use its [participant handout](august-candidate-session/participant-instructions.md) and separate [moderator/reviewer handoff](august-candidate-session/moderator-key.md), with the candidate's answer key and release. The retained-release examples below remain historical references. Neither R01 nor P01–P05 is recruited; no human acceptance results exist.
+
 ## Owner actions before the pilot
 
 1. Review the acquired official Kotak July/August consolidated originals and dated sheet inventories in the [historical supplement](../real_data/readiness/september-2026/README.md). Acquisition succeeded; another manual download or CAPTCHA action is not currently needed. Independent scope/anomaly review remains pending.
