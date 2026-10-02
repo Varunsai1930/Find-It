@@ -74,7 +74,7 @@ COLUMN_SYNONYMS = {
 }
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
-PARSER_VERSION = "portfolio-2026-10-02"
+PARSER_VERSION = "portfolio-2026-10-02-scope-1"
 
 # Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
 # check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
@@ -366,7 +366,30 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
                 and normalize_col(header_vals[3]) == "isin code"):
             # A:C is merged in the heading; security names are in C and
             # section/subtotal labels in A/B. Preserve both kinds of labels.
+            section_columns = df.iloc[:, :2].copy()
             df[col_map["instrument_name"]] = df.iloc[:, :3].ffill(axis=1).iloc[:, -1]
+            # This layout prints totals in the Industry column, and appends
+            # separate exposure tables below Grand Total. Stock ISINs in a
+            # Futures section identify the underlying, not shares held.
+            labels = df.iloc[:, 4].fillna("").astype(str).str.strip()
+            totals = labels.str.fullmatch(r"(?:grand )?total", case=False)
+            df.loc[totals, col_map["instrument_name"]] = labels.loc[totals]
+            derivative, finished, excluded = False, False, []
+            for idx, row in df.iterrows():
+                sections = section_columns.loc[idx]
+                heading = next((str(v).strip() for v in sections
+                                if pd.notna(v) and str(v).strip()), "")
+                if heading:
+                    derivative = heading.lower() in {"futures", "options", "derivatives"}
+                if finished or derivative:
+                    excluded.append(idx)
+                if str(row[col_map["instrument_name"]]).strip().lower() == "grand total":
+                    finished = True
+            if excluded:
+                print(f"  [scope] '{sheet_name}': excluded derivative/exposure rows "
+                      f"at source rows {df.loc[excluded, 'source_row'].tolist()}; "
+                      "original workbook retained", file=sys.stderr)
+                df = df.drop(index=excluded)
 
         # Log the resolved canonical -> raw mapping for auditability.
         print(f"  [columns] '{sheet_name}': {col_map}", file=sys.stderr)

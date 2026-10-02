@@ -106,6 +106,43 @@ def test_kotak_merged_instrument_heading_and_supplementary_notes(tmp_path, capsy
         amfi_mf_parser.parse_workbook(path, "Kotak Mahindra AMC", "2026-08")
 
 
+@pytest.mark.parametrize("sector_header", ["Industry", "Rating"])
+def test_kotak_underlying_isins_in_futures_and_exposure_tables_are_not_shares(
+    tmp_path, sector_header,
+):
+    """Real-layout regression: positive futures previously inflated cash lots."""
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "MAF"
+    sheet.append([None, None, "Portfolio of Kotak Multi Asset Allocation Fund as on 31-Aug-2026"])
+    sheet.append(["Name of Instrument", None, None, "ISIN Code", sector_header, "Yield",
+                  "Quantity", "Market Value (Rs.in Lacs)", "% to Net Assets"])
+    sheet.append([None, " ", "Swiggy Ltd", "INE00H001014", "Retail", None, 100, 10, 10])
+    sheet.append([None, " ", "Swiggy Ltd", "INE00H001014", "Retail", None, 50, 5, 5])
+    sheet.append([None, "Futures"])
+    sheet.append([None, None, "Swiggy Ltd-SEP2026", "INE00H001014", None, None, 200, 20, 20])
+    sheet.append([None, None, "Swiggy Ltd-SEP2026", "INE00H001014", None, None, -30, -3, -3])
+    sheet.append(["Mutual Fund Units"])
+    sheet.append([None, " ", "Liquid Fund", "INF174K01NE8", "Fund", None, 10, 50, 50])
+    sheet.append([None, None, "Cash", None, None, None, None, 18, 18])
+    sheet.append([None, None, None, None, "Grand Total", None, None, 100, 100])
+    sheet.append([None, None, "Exposure", "INE00H001014", None, None, 900, 90, 90])
+    path = tmp_path / "kotak.xlsx"
+    book.save(path)
+    rows = amfi_mf_parser.parse_workbook(path, "Kotak Mahindra AMC", "2026-08")
+    assert list(rows["source_row"]) == [3, 4, 9]
+    assert rows["pct_nav_scale"].eq("percent").all()
+    csv = tmp_path / "parsed.csv"
+    rows.to_csv(csv, index=False)
+    from findit.store import db
+    conn = db.get_connection(tmp_path / "stage.db")
+    db.load_parsed_csv(conn, csv)
+    assert conn.execute("SELECT quantity, market_value_lakhs FROM mf_holdings_monthly "
+                        "WHERE isin='INE00H001014'").fetchone() == (150, 15)
+    assert conn.execute("SELECT count(*) FROM holding_evidence WHERE isin='INE00H001014'").fetchone()[0] == 2
+    conn.close()
+
+
 def test_uti_stacked_scheme_sections_parse_as_distinct_schemes(tmp_path):
     workbook = openpyxl.Workbook()
     sheet = workbook.active
