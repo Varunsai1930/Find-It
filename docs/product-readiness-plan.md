@@ -1,8 +1,10 @@
 # FindIt: mentor readiness and customer validation plan
 
-Status: planning only. Prepared 1 October 2026. No application, database,
-deployment, outreach, billing, or tracking changes are authorized by this
-document itself. Implementation starts only after the user asks to proceed.
+Original plan prepared 1 October 2026. Implementation has since progressed
+under the owner's instructions. Current evidence and pending gates are in
+[observed acceptance](observed-acceptance.md) and
+[September release preparation](september-release-preparation.md).
+This planning document itself does not authorize deployment, outreach or payments.
 
 ## 1. Intended outcome
 
@@ -27,12 +29,15 @@ Two milestones are distinct:
   payments, acquisition, and operating costs. Software alone cannot establish
   these facts or guarantee a VC's investment decision.
 
-## 2. Current baseline and implementation approach
+## 2. Original planning baseline and implementation approach
 
-The reviewed August 2026 overview has four usable summaries among eight
-selected houses. HDFC compares 2 of 29 loaded funds; Mirae lacks a usable
-July comparison; Kotak, Franklin Templeton, and HSBC have no loaded portfolios.
-These loaded counts are not proof of the complete eligible fund universe.
+At plan preparation, the reviewed August 2026 overview had four usable
+summaries among eight selected houses. HDFC compared 2 of 29 loaded funds;
+Mirae lacked a usable July comparison; Kotak, Franklin Templeton, and HSBC
+had no loaded portfolios.
+These original loaded counts were not proof of the complete eligible fund universe.
+Later repairs and acquisitions are documented in the acceptance records above;
+do not use this historical planning baseline as today's coverage status.
 
 Keep the requested five largest houses plus three additional foreign-owned
 houses operating in India. Show the dated AMFI AUM selection period. Record
