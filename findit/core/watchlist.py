@@ -60,6 +60,7 @@ def render_report(report: dict) -> str:
              f"Data release: {report['release_id']}", f"Rules: {report['rule_version']}",
              f"Scope: {report['scope']}. All-market completeness: unknown.", "",
              report["claims"], "",
+             "House directions net the compared individual funds’ share changes within each house. Stock detail counts houses with any buying or selling fund; a house can appear on both sides there.", "",
              "Reopen this report: open the downloaded .md file in a browser or text editor.", "",
              "1. Start your local FindIt server with the retained release database and matching .json manifest. Keep the matching application/rules version.",
              "2. Copy the complete Evidence URL below into your browser address bar (or click it in a Markdown viewer).",
@@ -67,7 +68,7 @@ def render_report(report: dict) -> str:
              "4. Check the evidence page shows the same release, rules, month and scope as this report. Missing or mismatched releases are rejected, never replaced with current data.", ""]
     for stock in report["stocks"]:
         lines += [f"## {stock['name']} ({stock['isin']})", f"Status: {stock['status']}",
-                  f"Fund houses buying/selling: {available(stock['houses_buying'])}/{available(stock['houses_selling'])}",
+                  f"Fund houses net adding/reducing shares: {available(stock['houses_buying'])}/{available(stock['houses_selling'])}",
                   f"Net share change: {stock['net_share_change'] if stock['net_share_change'] is not None else 'unavailable'}",
                   f"Estimated net trading value (₹ lakh): {stock['net_flow_lakhs'] if stock['net_flow_lakhs'] is not None else 'unavailable'}",
                   f"Individual-fund additions/exits: {available(stock['additions'])}/{available(stock['exits'])}",

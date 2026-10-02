@@ -161,3 +161,22 @@ def test_report_reuses_coverage_without_building_source_panels(tmp_path, monkeyp
     assert report['stocks'][0]['net_share_change'] == 90
     monkeypatch.setattr(watchlist, 'comparison_rows', forbidden)
     assert monthly_report(c, '2026-08', [], release_id=report['release_id'])['stocks'] == []
+
+
+def test_house_net_direction_differs_from_any_fund_direction(tmp_path):
+    from findit.core.consensus_signals import compute_consensus
+    from findit.core.delta_calculator import compute_deltas, persist_deltas
+    c = sqlite3.connect(_copy_db(tmp_path))
+    # A's +30 and -40 trades net to -10; B adds 20.
+    c.execute("UPDATE mf_holdings_monthly SET quantity=CASE scheme_id WHEN 1 THEN 130 ELSE 0 END "
+              "WHERE report_month='2026-08' AND isin='INE002A01018' AND scheme_id IN (1,2)")
+    persist_deltas(c, compute_deltas(c, "2026-07", "2026-08"))
+    report = monthly_report(c, "2026-08", ["INE002A01018"])
+    stock = report["stocks"][0]
+    activity = compute_consensus(c, "2026-08").set_index("isin").loc["INE002A01018"]
+    assert stock["net_share_change"] == 10
+    assert (stock["houses_buying"], stock["houses_selling"]) == (1, 1)
+    assert (activity["amcs_buying"], activity["amcs_selling"]) == (2, 1)
+    text = render_report(report)
+    assert "Fund houses net adding/reducing shares: 1/1" in text
+    assert "a house can appear on both sides there" in text

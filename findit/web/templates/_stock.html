@@ -22,6 +22,7 @@
   <div><dt>DII Δ pp <span class="muted">(MF+banks+insurance)</span></dt><dd>{{ holder_change(activity, 'dii') }}</dd></div>
   <div><dt>Filing</dt><dd>{{ filing_status(activity, stock.portfolios_public_on) }}</dd></div>
 </dl>
+<p class="sub">Buying/selling counts houses with at least one compared individual fund adding/reducing this stock; a house can count in both. Watchlist and history instead net share changes within each house.</p>
 {% else %}
 <p class="state state--empty">Not in the {{ stock.month|month_label }} ranking: {% if view.equity_only and stock.instrument_type != 'equity' %}it is not equity, and the equity-only filter is on{% else %}no counted fund bought or sold it{% endif %}. The holdings below list every fund, counted or not.</p>
 {% endif %}

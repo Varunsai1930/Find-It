@@ -133,12 +133,12 @@
       var report = JSON.parse(result.body);
       watchResults.replaceChildren();
       var note = document.createElement("p");
-      note.textContent = report.scope + "; market completeness unknown. Release " + report.release_id.slice(0, 12) + ".";
+      note.textContent = report.scope + "; market completeness unknown. Release " + report.release_id.slice(0, 12) + ". House directions net the compared individual funds’ share changes within each house; the stock detail counts houses with any buying or selling fund, so a house can appear on both sides there.";
       watchResults.append(note);
       report.stocks.forEach(function (stock) {
         var row = document.createElement("p"), link = document.createElement("a"), remove = document.createElement("button");
         link.href = stock.evidence_url; link.textContent = stock.name + " · View evidence";
-        row.append(link, " — " + stock.status.replaceAll("_", " ") + "; " + (stock.houses_buying === null ? "unavailable" : stock.houses_buying) + " houses buying / " + (stock.houses_selling === null ? "unavailable" : stock.houses_selling) + " selling. ");
+        row.append(link, " — " + stock.status.replaceAll("_", " ") + "; " + (stock.houses_buying === null ? "unavailable" : stock.houses_buying) + " houses net adding shares / " + (stock.houses_selling === null ? "unavailable" : stock.houses_selling) + " net reducing shares. ");
         var number = function (v) { return v === null ? "unavailable" : new Intl.NumberFormat("en-IN").format(v); };
         row.append("Net change: " + number(stock.net_share_change) + " shares. Individual-fund additions / exits: " + number(stock.additions) + " / " + number(stock.exits) + ". ");
         if (stock.largest_compared_changes.length) {
