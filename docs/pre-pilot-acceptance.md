@@ -48,7 +48,7 @@ Moderator key: HDFC LIC +41,618,000 shares among 29 compared active domestic-equ
 | P04 | Pending | Pending | Pending | Pending |
 | P05 | Pending | Pending | Pending | Pending |
 
-Acceptance targets from the approved plan: at least four of five complete core tasks without help; no participant interprets partial coverage as the complete universe; a source-backed result can be reached and explained within one minute. Report each task's numerator/denominator, time and assistance separately. Retain failures and contradictory feedback. Correct problems and retest with new participants; never fill this table from automated checks.
+For current Round B, **core tasks are T1–T5; at least four of five participants must each complete all five correctly without assistance**. Also report every task's correct-unassisted numerator/denominator over all five people. No participant may interpret partial coverage as the complete universe. **All five participants must meet the source-backed T3 target within 60 seconds without assistance**, with individual results. Start after T3 is read at the participant's T2 finishing state; stop at a correct explanation with supporting original-source evidence identified. Include and separately record navigation and disclosure-opening time; follow the [finalized timing/scoring protocol](august-candidate-session/moderator-key.md#t3-source-backed-timing-measure). Finding a supported answer is separate from completing the independent numerical audit. Preserve every failed attempt, exact hint, assisted outcome and contradictory explanation; missing observations remain pending. Never fill this table from automated checks.
 
 ## Actual pilot checklist
 
