@@ -417,9 +417,11 @@ _TITLE_DESCRIPTION_RE = re.compile(r"\((?:an?\s|erstwhile|formerly)[^)]*\)", re.
 def classify_scheme_title(scheme_title: str) -> int:
     """1 if a full scheme name is a discretionary equity fund, else 0."""
     name = _TITLE_DESCRIPTION_RE.sub(" ", scheme_title or "")
-    # HDFC's renamed conservative hybrid and retirement portfolios retain
-    # discretionary equity. Their former names contain debt/savings words.
-    name = re.sub(r"\bhybrid debt fund\b", "conservative hybrid fund", name, flags=re.I)
+    # HDFC and Kotak conservative hybrids retain discretionary equity under
+    # their former names, which use either order of "debt" and "hybrid".
+    name = re.sub(
+        r"\b(?:hybrid debt|debt hybrid) fund\b", "conservative hybrid fund", name, flags=re.I
+    )
     return 0 if _NON_DISCRETIONARY_TITLE_RE.search(name) else 1
 
 

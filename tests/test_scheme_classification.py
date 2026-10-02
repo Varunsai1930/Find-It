@@ -25,6 +25,8 @@ from findit.cli import scheme_titles
     ("ICICI Prudential Regular Savings Fund", 1),   # conservative hybrid
     ("SBI Children's Fund - Savings Plan", 1),      # hybrid children's plan
     ("DSP Liquidity Fund", 0),                      # debt: "liquidity" as well as "liquid"
+    ("Kotak Debt Hybrid Fund", 1),                  # July name of the same KIP portfolio
+    ("Kotak Conservative Hybrid Fund", 1),          # August name; retains chosen equity
 ])
 def test_debt_and_hybrid_titles(title, active):
     assert db.classify_scheme_title(title) == active
