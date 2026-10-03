@@ -43,7 +43,9 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
     months, frames, cohort = history_scope(conn, start, end, active_only, amc)
     release_id = release_id or content_id(conn)
     token = scope_id(release_id, start, end, active_only, amc, cohort)
-    known_stock = bool(conn.execute("SELECT 1 FROM stocks WHERE isin=?", (isin,)).fetchone())
+    stock = conn.execute("SELECT instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
+    known_stock = stock is not None
+    in_scope = known_stock and stock[0] == "equity"
     source_backed = set()
     if queries.has_table(conn, "snapshot_sources"):
         source_backed = {sid for sid in cohort if all(conn.execute(
@@ -52,7 +54,7 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
     # Show a validated fixed cohort even on legacy data, naming provenance gaps.
     points = []
     for month in months:
-        if not cohort or not known_stock:
+        if not cohort or not in_scope:
             points.append({"month": month, "shares": None, "net_share_change": None,
                            "net_flow_lakhs": None, "status": "unavailable", "funds": 0,
                            "houses_buying": None, "houses_selling": None,
@@ -100,6 +102,8 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
             "source_backed_count": len(source_backed), "points": points,
             "scope": "Same validated individual funds at every snapshot and adjacent comparison in this range. Completeness of the wider fund universe remains unknown.",
             "limitation": ("Unknown stock in this data release; all points remain unavailable." if not known_stock else
+                           "History is limited to domestic equity; this security is outside that scope."
+                           if not in_scope else
                            "No fixed cohort is available across the full range; all points remain gaps."
                            if not cohort else "History describes this cohort only. It does not establish investment performance.")}
 
@@ -110,8 +114,11 @@ def history_evidence(conn, isin, month, start, end, active_only, amc, release_id
     months, frames, cohort = history_scope(conn, start, end, active_only, amc)
     if month not in months or token != scope_id(release_id, start, end, active_only, amc, cohort):
         raise ValueError("historical evidence scope does not match its period, filters, cohort or release")
-    if not cohort or not conn.execute("SELECT 1 FROM stocks WHERE isin=?", (isin,)).fetchone():
+    stock = conn.execute("SELECT instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
+    if not cohort or stock is None:
         raise ValueError("historical evidence is unavailable for this cohort")
+    if stock[0] != "equity":
+        raise ValueError("historical evidence is limited to domestic equity")
     baseline = month == start
     frame = frames[months[1]] if baseline else frames[month]
     frame = frame[frame["scheme_id"].isin(cohort)]

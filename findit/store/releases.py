@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -61,6 +62,9 @@ def snapshot(source: Path, output: Path, label: str, parent: str | None = None,
         finally:
             src.close()
         try:
+            # backup() preserves WAL mode. Freeze a self-contained database so
+            # read-only clients cannot create journals beside the retained file.
+            dst.execute("PRAGMA journal_mode=DELETE")
             if dst.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
                 raise ValueError("database integrity check failed")
             if queries.has_table(dst, "ingest_runs"):
@@ -131,7 +135,7 @@ class ReleaseStore:
         stored = verify_release(self.directory, release_id)
         if stored.get("rule_version") != RULE_VERSION:
             raise ValueError("release calculation rules are unsupported by this application version")
-        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as conn:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
             if content_id(conn) != release_id:
                 raise ValueError("retained release content identity does not match")
         self._verified[release_id] = (signatures, stored)

@@ -1,5 +1,7 @@
 import sqlite3
 
+import pytest
+
 from findit.core.history import stock_history
 from tests.test_web import _copy_db
 
@@ -19,6 +21,53 @@ def test_history_uses_one_cohort_and_never_fills_missing_month_with_zero(tmp_pat
     assert [p["shares"] for p in changed["points"]] == [140, 210]
     unknown = stock_history(c, "INE123A01012", "2026-07", "2026-08")
     assert all(p["shares"] is None for p in unknown["points"])
+
+
+@pytest.mark.parametrize("active_only", [0, 1])
+def test_history_rejects_non_equity_security_scope(tmp_path, active_only):
+    from fastapi.testclient import TestClient
+    from findit.web.app import create_app
+
+    client = TestClient(create_app(_copy_db(tmp_path)))
+    params = {"start": "2026-07", "end": "2026-08", "active_only": active_only}
+    response = client.get("/api/history/INE001A07PB6", params=params)
+    assert response.status_code == 200
+    history = response.json()
+    assert "domestic equity" in history["limitation"]
+    assert all(p["status"] == "unavailable" and p["shares"] is None
+               and p["net_share_change"] is None and p["evidence_url"] is None
+               for p in history["points"])
+    assert client.get("/history/INE001A07PB6", params=params).status_code == 200
+    equity = client.get("/api/history/INE002A01018", params=params).json()
+    for point in equity["points"]:
+        # The cohort token describes the funds, so a changed security still
+        # needs its own instrument-scope check, including at the baseline.
+        url = point["evidence_url"].replace("INE002A01018", "INE001A07PB6")
+        for target in (url, url.replace("/evidence/", "/api/evidence/")):
+            rejected = client.get(target)
+            assert rejected.status_code == 400, rejected.text
+            assert "domestic equity" in rejected.json()["detail"]
+
+
+def test_history_preserves_zero_for_known_equity_absent_from_cohort(tmp_path):
+    from fastapi.testclient import TestClient
+    from findit.web.app import create_app
+
+    path = _copy_db(tmp_path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO stocks(isin,name,instrument_type) "
+                     "VALUES('INE123A01012','Unheld equity','equity')")
+    client = TestClient(create_app(path))
+    history = client.get("/api/history/INE123A01012?start=2026-07&end=2026-08").json()
+    assert history["cohort"] == [1, 2, 3]
+    for point in history["points"]:
+        assert point["shares"] == 0
+        response = client.get(point["evidence_url"].replace("/evidence/", "/api/evidence/"))
+        assert response.status_code == 200, response.text
+        evidence = response.json()
+        assert evidence["current_shares"] == 0
+        assert evidence["net_share_change"] == point["net_share_change"]
+        assert evidence["no_data"] is False
 
 
 def test_history_links_reproduce_cohort_and_baseline(tmp_path):

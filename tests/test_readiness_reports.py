@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -104,6 +105,42 @@ def test_report_a_reopens_after_switch_to_b_and_rejects_tampering(tmp_path):
     # Previously cached verification must not hide changes to a retained file.
     (folder / f"{a['release_id']}.db").write_bytes(b'corrupt')
     assert cb.get(url).status_code == 409
+
+
+def test_wal_source_release_survives_repeated_reads(tmp_path):
+    import hashlib
+
+    source = _copy_db(tmp_path)
+    folder = tmp_path / "releases"
+    writer = sqlite3.connect(source)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("UPDATE mf_holdings_monthly SET quantity=quantity+17 "
+                       "WHERE scheme_id=1 AND report_month='2026-08' AND isin='INE002A01018'")
+        writer.commit()
+        frozen = snapshot(source, folder, "WAL snapshot")
+        path = folder / f"{frozen['release_id']}.db"
+        before = path.read_bytes()
+        assert hashlib.sha256(before).hexdigest() == frozen["database_sha256"]
+        assert writer.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        client = TestClient(create_app(path))
+        for _ in range(2):
+            assert client.get("/?month=2026-08").status_code == 200
+            response = client.get("/api/watchlist?month=2026-08&stocks=INE002A01018")
+            assert response.status_code == 200, response.text
+            report = response.json()
+            assert report["release_id"] == frozen["release_id"]
+            assert report["stocks"][0]["net_share_change"] == 107
+            url = report["stocks"][0]["evidence_url"]
+            evidence = client.get(url.replace("/evidence/", "/api/evidence/"))
+            assert evidence.status_code == 200, evidence.text
+            assert evidence.json()["net_share_change"] == 107
+            assert client.get(url).status_code == 200
+        assert path.read_bytes() == before
+        assert not any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-journal"))
+    finally:
+        writer.close()
 
 
 def test_candidate_freeze_and_repeat_preserve_current_pointer_and_parent(tmp_path):
