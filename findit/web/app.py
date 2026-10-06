@@ -65,7 +65,7 @@ def _stock_label(name: str | None) -> str:
     return re.sub(r"^EQ\s*-\s*", "", name or "", flags=re.IGNORECASE).strip()
 
 
-def _ro_connect(db_path: str) -> sqlite3.Connection:
+def _ro_connect(db_path: str, release_store: ReleaseStore | None = None) -> sqlite3.Connection:
     # Encode URI-sensitive filename characters, and never create a missing DB.
     if not Path(db_path).is_file():
         raise HTTPException(status_code=503, detail=(
@@ -73,8 +73,14 @@ def _ro_connect(db_path: str) -> sqlite3.Connection:
             "(see the README), or set FINDIT_DB to your existing database."))
     conn = None
     try:
-        conn = sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True,
-                               check_same_thread=False)
+        if release_store is not None and re.fullmatch(r"[a-f0-9]{64}", Path(db_path).stem):
+            try:
+                conn, _ = release_store.connect()
+            except (ValueError, OSError, sqlite3.Error) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        else:
+            conn = sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True,
+                                   check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON;")
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -466,7 +472,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     # -- coverage ---------------------------------------------------------
     @app.get("/api/coverage")
     def api_coverage() -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             try:
                 counts = conn.execute(
@@ -540,7 +546,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     # -- schemes ----------------------------------------------------------
     @app.get("/api/schemes")
     def api_schemes(month: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             if month is not None:
                 if month not in _known_months(conn):
@@ -573,7 +579,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     # -- consensus --------------------------------------------------------
     @app.get("/api/consensus/{month}")
     def api_consensus(month: str, equity_only: int = 1, active_only: int = 1) -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
@@ -614,7 +620,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     # -- summary ----------------------------------------------------------
     @app.get("/api/summary/{scheme_id}/{month}")
     def api_summary(scheme_id: int, month: str) -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             row = conn.execute(
                 "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?",
@@ -660,7 +666,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         if not selected and not release and not rules and not re.fullmatch(r"[a-f0-9]{64}", Path(resolved_db).stem):
             # No results exist to pin. Avoid hashing a mutable database simply
             # to tell a new user that their list is empty. Downloads still pin.
-            conn = _ro_connect(resolved_db)
+            conn = _ro_connect(resolved_db, releases)
             try:
                 if month not in _known_months(conn):
                     raise HTTPException(status_code=404, detail="Unknown month")
@@ -758,7 +764,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
 
     @app.get("/api/stock/{isin}")
     def api_stock(isin: str, month: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             return _stock_payload(conn, isin, month)
         finally:
@@ -767,7 +773,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     @app.get("/api/stocks/search")
     def api_stock_search(q: str = "", month: str | None = None, limit: int = 8) -> Any:
         """Name or ISIN-prefix suggestions for the stock lookup, as JSON."""
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             if month is not None and month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
@@ -785,7 +791,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         The detail carries the stock's row from the month's ranking under the
         same filters as the table, so it adds the columns the table hides.
         """
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             view = _view(month, equity_only, active_only, "buy", _DEFAULT_LIMIT, "core")
             ctx: dict[str, Any] = {"query": q.strip(), "view": view}
@@ -815,7 +821,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     def coverage_page(request: Request, month: str, amc: str | None = None,
                       equity_only: int = 1, active_only: int = 1, side: str = "buy",
                       limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
@@ -835,7 +841,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     def month_fragment(request: Request, month: str, equity_only: int = 1,
                        active_only: int = 1, side: str = "buy",
                        limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
-        conn = _ro_connect(resolved_db)
+        conn = _ro_connect(resolved_db, releases)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
@@ -851,7 +857,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                   active_only: int = 1, side: str = "buy",
                   limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
         try:
-            conn = _ro_connect(resolved_db)
+            conn = _ro_connect(resolved_db, releases)
         except HTTPException as exc:
             return templates.TemplateResponse(
                 request, "dashboard.html", {"months": [], "missing_db": exc.detail},

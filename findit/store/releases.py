@@ -135,7 +135,9 @@ class ReleaseStore:
         stored = verify_release(self.directory, release_id)
         if stored.get("rule_version") != RULE_VERSION:
             raise ValueError("release calculation rules are unsupported by this application version")
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+        # Byte-verified, journal-free snapshots are immutable even when older
+        # releases retain a WAL header. Reading must not create new sidecars.
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)) as conn:
             if content_id(conn) != release_id:
                 raise ValueError("retained release content identity does not match")
         self._verified[release_id] = (signatures, stored)
@@ -159,7 +161,8 @@ class ReleaseStore:
                 path, metadata = self.current, None
         else:
             path, metadata = self.current, None
-        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+        uri = path.as_uri() + "?mode=ro" + ("&immutable=1" if metadata else "")
+        conn = sqlite3.connect(uri, uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("BEGIN")
         try:

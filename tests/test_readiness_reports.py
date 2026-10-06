@@ -143,6 +143,62 @@ def test_wal_source_release_survives_repeated_reads(tmp_path):
         writer.close()
 
 
+@pytest.mark.parametrize("launch_retained", [False, True])
+def test_legacy_wal_release_reads_without_changing_retained_files(tmp_path, launch_retained):
+    import hashlib
+    from contextlib import closing
+    from findit.store.releases import RULE_VERSION, content_id
+
+    source = _copy_db(tmp_path)
+    folder = tmp_path / "releases"
+    folder.mkdir()
+    staged = folder / "legacy.db"
+    # Reproduce the original backup workflow, before snapshot() normalized
+    # journal mode. The WAL header is part of the already-frozen byte hash.
+    with closing(sqlite3.connect(source)) as src, closing(sqlite3.connect(staged)) as dst:
+        src.execute("PRAGMA journal_mode=WAL")
+        src.backup(dst)
+        identity = content_id(dst)
+    path = folder / f"{identity}.db"
+    staged.rename(path)
+    manifest = path.with_suffix(".json")
+    manifest.write_text(json.dumps({"release_id": identity, "rule_version": RULE_VERSION,
+                                   "database_sha256": hashlib.sha256(path.read_bytes()).hexdigest()}))
+    original = path.read_bytes(), manifest.read_bytes()
+    client = TestClient(create_app(path if launch_retained else source))
+    params = {"month": "2026-08", "stocks": "INE002A01018", "release": identity}
+    for _ in range(2):
+        if launch_retained:
+            for url in ("/?month=2026-08", "/api/coverage", "/api/schemes",
+                        "/api/consensus/2026-08", "/api/summary/1/2026-08",
+                        "/api/stock/INE002A01018?month=2026-08",
+                        "/api/stocks/search?q=Reliance&month=2026-08",
+                        "/fragments/stock?q=INE002A01018&month=2026-08",
+                        "/coverage?month=2026-08", "/fragments/month/2026-08"):
+                response = client.get(url)
+                assert response.status_code == 200, (url, response.text)
+        response = client.get("/api/watchlist", params=params)
+        assert response.status_code == 200, response.text
+        report = response.json()
+        assert report["release_id"] == identity
+        assert report["stocks"][0]["net_share_change"] == 90
+        evidence_url = report["stocks"][0]["evidence_url"]
+        assert client.get(evidence_url).status_code == 200
+        assert client.get("/watchlist/report", params=params).status_code == 200
+        history = client.get("/api/history/INE002A01018", params={
+            "start": "2026-07", "end": "2026-08", "release": identity})
+        assert history.status_code == 200, history.text
+        assert client.get(history.json()["points"][0]["evidence_url"]).status_code == 200
+    assert (path.read_bytes(), manifest.read_bytes()) == original
+    assert not any(Path(str(path) + suffix).exists() for suffix in ("-wal", "-shm", "-journal"))
+    # Even a cached release must reject an actual mutable journal rather than
+    # silently ignoring it through SQLite's immutable connection option.
+    Path(str(path) + "-wal").write_bytes(b"unverified journal")
+    assert client.get("/api/watchlist", params=params).status_code == 409
+    if launch_retained:
+        assert client.get("/api/coverage").status_code == 409
+
+
 def test_candidate_freeze_and_repeat_preserve_current_pointer_and_parent(tmp_path):
     path = _copy_db(tmp_path)
     folder = tmp_path / 'releases'
