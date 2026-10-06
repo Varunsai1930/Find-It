@@ -5,6 +5,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "findit"
 version = "0.2.0"
+description = "Research monthly Indian mutual fund holdings with traceable evidence"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "pandas==3.0.5",
@@ -20,6 +24,11 @@ dependencies = [
     "jinja2==3.1.6",
     "httpx==0.28.1",
 ]
+
+[project.urls]
+Repository = "https://github.com/Varunsai1930/Find-It"
+Documentation = "https://github.com/Varunsai1930/Find-It/tree/main/docs"
+Issues = "https://github.com/Varunsai1930/Find-It/issues"
 
 [project.scripts]
 findit = "findit.cli.__main__:main"

@@ -1,6 +1,6 @@
 # Monthly refresh and revision runbook
 
-Use the local `.venv` from the repository root. Original databases and disclosures are reference material. Write every new acquisition, parsed result, stage and release under ignored `real_data/`. The web application performs no acquisition.
+Use the locked local environment from the repository root: `uv sync --locked --extra dev --python 3.12`. Original databases and disclosures are reference material. Write every new acquisition, parsed result, stage and release under ignored `real_data/`. The web application performs no acquisition. These examples are local research operations; protected hosting follows the separate [staging runbook](vercel-staging.md).
 
 ## Acquire and inspect
 
@@ -26,34 +26,50 @@ Prepare the two adjacent month folders with the existing intake command. Resolve
 
 Choose a **new** stage path every time. This copies the source read-only, runs the existing pipeline in isolation, and records input hashes, validation outcomes, coverage, actual elapsed seconds and database bytes in adjacent `.refresh.json` / `.pipeline.log` files. Add repeated `--inventory` arguments for reviewed JSONs. No publication occurs by default. Review expected-fund states, withheld schemes, unusual changes, inferred actions, prices and original rows. Quarantined data stays excluded. A smaller comparison count is not a reason to relax validation.
 
-## Retain a release
+## Archive a candidate
 
-After recording the source/anomaly review:
+Freeze a candidate for review without changing `current.json`:
 
 ```bash
 .venv/bin/python -m findit.cli release \
   --db real_data/readiness/stages/2026-08-check.db \
   --out real_data/readiness/releases \
+  --candidate --month 2026-08 \
   --label 'August 2026 research' \
-  --notes 'Describe the reviewed sources, sample and remaining coverage gaps.'
+  --notes 'Candidate for review; describe sources and remaining coverage gaps.'
 ```
 
-Releases have a content-derived identifier and rules version, immutable database and manifest files, a database checksum, counts, creation time and a local `current.json` pointer. Reports and evidence retain the content identifier. The same database contents and rules produce the same identifier; operational run timestamps are excluded. This records research utility, not investment returns.
+Candidates have a content-derived identifier and rules version, immutable database and manifest files, a database checksum, counts and creation time. Reports and evidence retain the content identifier. The same database contents and rules produce the same identifier; operational run timestamps are excluded. The Python `snapshot()` function archives by default; the release CLI uses `--candidate` to request this behavior explicitly. This records research utility, not investment returns.
 
-For a correction, obtain and retain the revised original separately, record why its identity/value/source changed, stage against the last good database, recompute affected adjacent comparisons, and release with `--parent OLD_RELEASE_ID --notes 'Specific correction and affected months/results'`. Parent releases must exist and pass checksum verification. Old reports and databases remain reproducible. Source-row history is append-only; the current snapshot links to the new source. The historical table marks retained source revisions. Never quietly overwrite the original disclosure or an old release.
+## Review and activate locally
 
-An optional `refresh --publish-to DIRECTORY --review-notes '...' --parent ID` performs the same local promotion after an explicit recorded review. It does not deploy a public website. Failed processing/imports mark the stage failed and retain the last good pointer. A killed pipeline stays running and cannot release.
+After source/anomaly review, create or verify the retained files and activate the reviewed month:
+
+```bash
+.venv/bin/python -m findit.cli release \
+  --db real_data/readiness/stages/2026-08-check.db \
+  --out real_data/readiness/releases \
+  --month 2026-08 --label 'August 2026 research' \
+  --notes 'Describe the completed source/anomaly review and remaining coverage gaps.'
+```
+
+Activation requires an explicit reporting month and nonempty review notes, a completed latest run for that month and its adjacent predecessor, and at least one validated source-backed comparison. It records coverage and a review receipt before atomically updating `current.json`. An empty or wrong-month refresh cannot activate; a failed guard preserves the last good pointer. The guard verifies technical eligibility; it does not complete independent source review or participant acceptance.
+
+For a correction, obtain and retain the revised original separately, record why its identity/value/source changed, stage against the last good database, recompute affected adjacent comparisons, and archive with `--candidate --month YYYY-MM --parent OLD_RELEASE_ID --notes 'Specific correction and affected months/results'`. Remove `--candidate` only after review to request activation. Parent releases must exist and pass checksum verification. Old reports use their retained calculation version; unsafe legacy inputs produce a controlled conflict instead of silently using new rules. Source-row history is append-only; the current snapshot links to the new source. The historical table marks retained source revisions. Never quietly overwrite the original disclosure or an old release.
+
+An optional `refresh --publish-to DIRECTORY --review-notes '...' --parent ID` requests the same guarded local activation for `--curr` after an explicit recorded review. It does not deploy a public website. Failed processing/imports mark the stage failed and retain the last good pointer. A killed pipeline stays running and cannot release.
 
 ## Roll back and demonstrate
 
 ```bash
 .venv/bin/python -m findit.cli release \
-  --out real_data/readiness/releases --rollback OLD_RELEASE_ID
+  --out real_data/readiness/releases --rollback OLD_RELEASE_ID \
+  --month 2026-08 --notes 'Describe the reason and reviewed restore target.'
 .venv/bin/python -m findit.cli web \
   --db real_data/readiness/releases/OLD_RELEASE_ID.db --port 8000
 ```
 
-Rollback verifies the retained database checksum and restores the pointer. Restart the local server with that explicit database. The running server does not hot-switch databases. Keep a previous retained database and exported monthly report as the demonstration backup.
+Rollback verifies the retained database byte hash, logical identity and calculation version, then applies the same month, source, validation and review guard before restoring the pointer. Use the restored release's actual month; legacy releases without a manifest month require `--month`. Restart the local server with that explicit database. The running server does not hot-switch databases. Keep a previous retained database and exported monthly report as the demonstration backup.
 
 ## Measure operation
 
