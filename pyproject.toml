@@ -27,10 +27,21 @@ findit = "findit.cli.__main__:main"
 [project.optional-dependencies]
 download = ["playwright==1.63.0"]
 dev = [
-    "pytest==8.4.2",
+    "pytest==9.0.3",
     "ruff==0.16.5",
     "httpx2==2.13.0",
 ]
+
+[tool.vercel]
+entrypoint = "app:app"
+
+[tool.vercel.scripts]
+build = "python tools/prepare_vercel_release.py"
+
+# Startup fingerprints read these files even when the platform serves them
+# from its CDN. Keep their source directory in the function bundle.
+[tool.vercel.fastapi.static]
+exclude = false
 
 # Only the package: a checkout also holds git-ignored data folders
 # (real_data/) that flat-layout discovery would otherwise pick up.

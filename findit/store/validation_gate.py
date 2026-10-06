@@ -16,6 +16,8 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Mapping, Optional
 
+from findit.core.instruments import classify_isin
+
 NAV_MIN = 95.0
 NAV_MAX = 105.0
 NAV_QUARANTINE_MAX = 110.0
@@ -488,6 +490,36 @@ def validate_holdings_month(
                 )
             ],
         }
+
+    # Quantities determine whether a domestic-equity position was bought or
+    # sold. Missing NAV/value can leave that comparison usable, but an unknown
+    # quantity cannot be interpreted as zero. Foreign units are outside this
+    # product's comparison scope and are reported without withholding it.
+    if isinstance(df_current, pd.DataFrame) and "isin" in df_current:
+        for _, row in df_current.iterrows():
+            isin = row["isin"]
+            if pd.isna(isin) or not str(isin).strip():
+                continue
+            instrument = row.get("instrument_type")
+            if pd.isna(instrument):
+                instrument = classify_isin(str(isin))
+            for column in ("quantity", "market_value_lakhs", "pct_nav"):
+                if column not in df_current:
+                    continue
+                value = row[column]
+                try:
+                    known = value is not None and math.isfinite(float(value))
+                    if column == "quantity":
+                        known = known and float(value) >= 0
+                except (TypeError, ValueError, OverflowError):
+                    known = False
+                if not known:
+                    critical = column == "quantity" and instrument == "equity"
+                    issues.append(_issue(
+                        f"{column}_unavailable", "error" if critical else "warn",
+                        f"{isin}: {column} is unavailable; it is not zero",
+                        isin=str(isin), column=column))
+                    passed = passed and not critical
 
     # NAV
     def _nav():

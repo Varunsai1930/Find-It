@@ -7,7 +7,8 @@ import json
 from urllib.parse import urlencode
 from datetime import date
 
-from findit.core.consensus_signals import comparison_rows
+from findit.core.replay import comparison_for_rules, guard_legacy_inputs, guard_legacy_frame
+from findit.core.rules import LEGACY_RULE_VERSION
 from findit.store import queries
 from findit.store.releases import RULE_VERSION, content_id
 
@@ -20,9 +21,9 @@ def month_range(start: str, end: str) -> list[str]:
     return [f"{n // 12:04d}-{n % 12 + 1:02d}" for n in range(a, b + 1)]
 
 
-def history_scope(conn, start, end, active_only=True, amc=None):
+def history_scope(conn, start, end, active_only=True, amc=None, rules_version=RULE_VERSION):
     months = month_range(start, end)
-    frames = {m: comparison_rows(conn, m, active_only) for m in months[1:]}
+    frames = {m: comparison_for_rules(conn, m, active_only, rules_version) for m in months[1:]}
     cohorts = []
     for frame in frames.values():
         if amc and not frame.empty:
@@ -39,9 +40,14 @@ def scope_id(release_id, start, end, active_only, amc, cohort):
 
 def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
                   active_only: bool = True, amc: str | None = None,
-                  release_id: str | None = None) -> dict:
-    months, frames, cohort = history_scope(conn, start, end, active_only, amc)
-    release_id = release_id or content_id(conn)
+                  release_id: str | None = None, rules_version: str = RULE_VERSION) -> dict:
+    months, frames, cohort = history_scope(conn, start, end, active_only, amc, rules_version)
+    if rules_version == LEGACY_RULE_VERSION:
+        guard_legacy_inputs(conn, cohort, months, [isin])
+        for frame in frames.values():
+            if not frame.empty:
+                guard_legacy_frame(frame[frame["scheme_id"].isin(cohort) & (frame["isin"] == isin)])
+    release_id = release_id or content_id(conn, rules_version)
     token = scope_id(release_id, start, end, active_only, amc, cohort)
     stock = conn.execute("SELECT instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
     known_stock = stock is not None
@@ -91,13 +97,13 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
         point["evidence_url"] = ("/evidence/" + isin + "?" + urlencode({
             "month": point["month"], "start": start, "end": end,
             "active_only": int(active_only), "amc": amc or "", "cohort": token,
-            "release": release_id, "rules": RULE_VERSION})
+            "release": release_id, "rules": rules_version})
             if point["status"] != "unavailable" else None)
     maximum = max((p["shares"] or 0 for p in points), default=0)
     for point in points:
         point["bar_percent"] = (100 * point["shares"] / maximum if maximum and point["shares"] is not None else 0)
     return {"isin": isin, "start": start, "end": end, "amc": amc,
-            "release_id": release_id, "rule_version": RULE_VERSION,
+            "release_id": release_id, "rule_version": rules_version,
             "active_only": active_only, "cohort": sorted(cohort), "cohort_count": len(cohort),
             "source_backed_count": len(source_backed), "points": points,
             "scope": "Same validated individual funds at every snapshot and adjacent comparison in this range. Completeness of the wider fund universe remains unknown.",
@@ -108,10 +114,10 @@ def stock_history(conn: sqlite3.Connection, isin: str, start: str, end: str,
                            if not cohort else "History describes this cohort only. It does not establish investment performance.")}
 
 
-def history_evidence(conn, isin, month, start, end, active_only, amc, release_id, token):
+def history_evidence(conn, isin, month, start, end, active_only, amc, release_id, token, rules_version=RULE_VERSION):
     """Recompute and validate a named historical cohort, never accept arbitrary IDs."""
     from findit.core.evidence import stock_evidence, snapshot_evidence
-    months, frames, cohort = history_scope(conn, start, end, active_only, amc)
+    months, frames, cohort = history_scope(conn, start, end, active_only, amc, rules_version)
     if month not in months or token != scope_id(release_id, start, end, active_only, amc, cohort):
         raise ValueError("historical evidence scope does not match its period, filters, cohort or release")
     stock = conn.execute("SELECT instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
@@ -119,11 +125,13 @@ def history_evidence(conn, isin, month, start, end, active_only, amc, release_id
         raise ValueError("historical evidence is unavailable for this cohort")
     if stock[0] != "equity":
         raise ValueError("historical evidence is limited to domestic equity")
+    if rules_version == LEGACY_RULE_VERSION:
+        guard_legacy_inputs(conn, cohort, months, [isin], include_nav=True)
     baseline = month == start
     frame = frames[months[1]] if baseline else frames[month]
     frame = frame[frame["scheme_id"].isin(cohort)]
     e = stock_evidence(conn, isin, month, active_only, amc, comparison=frame.iloc[0:0] if baseline else frame,
-                       release_id=release_id)
+                       release_id=release_id, rules_version=rules_version)
     if baseline:
         placeholders = ",".join("?" for _ in cohort)
         rows = conn.execute(
@@ -145,5 +153,5 @@ def history_evidence(conn, isin, month, start, end, active_only, amc, release_id
     e.update(no_data=False, baseline=baseline, cohort=sorted(cohort), cohort_count=len(cohort),
              history_start=start, history_end=end, coverage={},
              history_url="/history/" + isin + "?" + urlencode({"start": start, "end": end,
-                 "active_only": int(active_only), "amc": amc or "", "release": release_id, "rules": RULE_VERSION}))
+                 "active_only": int(active_only), "amc": amc or "", "release": release_id, "rules": rules_version}))
     return e

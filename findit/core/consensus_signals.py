@@ -13,8 +13,10 @@ import sqlite3
 from datetime import date, timedelta
 
 import pandas as pd
+import numpy as np
 
 from findit.core import active_weight, delta_calculator, publication
+from findit.core.data_quality import bad_domestic_quantity_sql
 from findit.store import queries
 
 
@@ -137,6 +139,9 @@ def _eligible_deltas(conn: sqlite3.Connection, report_month: str,
     if queries.has_status_table(conn):
         for month in ("d.report_month", "d.prev_month"):
             sql += f" AND NOT {queries.quarantined_sql('d.scheme_id', month)}"
+    if queries.has_table(conn, "mf_holdings_monthly"):
+        for month in ("d.report_month", "d.prev_month"):
+            sql += f" AND NOT {bad_domestic_quantity_sql('d.scheme_id', month)}"
     return sql, params
 
 
@@ -173,12 +178,13 @@ def comparison_rows(conn: sqlite3.Connection, report_month: str,
     rows = pd.read_sql_query(
         "WITH eligible AS (SELECT d.*, sch.amc_name, s.name AS stock_name "
         + source + " AND d.prev_month = ?) "
-        "SELECT d.scheme_id, d.isin, d.amc_name, d.stock_name, d.flow_lakhs, "
-        "COALESCE(p.quantity, 0) AS quantity_prev, "
-        "COALESCE(c.quantity, 0) AS quantity_curr, "
-        "COALESCE(p.market_value_lakhs, 0) AS market_value_lakhs_prev, "
-        "COALESCE(c.market_value_lakhs, 0) AS market_value_lakhs_curr, "
-        "COALESCE(p.pct_nav, 0) AS pct_nav_prev, COALESCE(c.pct_nav, 0) AS pct_nav_curr "
+        "SELECT d.scheme_id, d.isin, d.amc_name, d.stock_name, "
+        "CASE WHEN p.scheme_id IS NULL THEN 0 ELSE p.quantity END AS quantity_prev, "
+        "CASE WHEN c.scheme_id IS NULL THEN 0 ELSE c.quantity END AS quantity_curr, "
+        "CASE WHEN p.scheme_id IS NULL THEN 0 ELSE p.market_value_lakhs END AS market_value_lakhs_prev, "
+        "CASE WHEN c.scheme_id IS NULL THEN 0 ELSE c.market_value_lakhs END AS market_value_lakhs_curr, "
+        "CASE WHEN p.scheme_id IS NULL THEN 0 ELSE p.pct_nav END AS pct_nav_prev, "
+        "CASE WHEN c.scheme_id IS NULL THEN 0 ELSE c.pct_nav END AS pct_nav_curr "
         "FROM eligible d LEFT JOIN mf_holdings_monthly p ON p.scheme_id = d.scheme_id "
         "AND p.isin = d.isin AND p.report_month = d.prev_month "
         "LEFT JOIN mf_holdings_monthly c ON c.scheme_id = d.scheme_id "
@@ -209,15 +215,14 @@ def comparison_rows(conn: sqlite3.Connection, report_month: str,
         lambda isin: "confirmed" if isin in confirmed else "inferred" if isin in ratios else "none")
     rows["quantity_prev"] *= rows["isin"].map(ratios).fillna(1.0)
     rows["qty_change"] = rows["quantity_curr"] - rows["quantity_prev"]
-    if ratios:
-        prev["quantity"] *= prev["isin"].map(ratios).fillna(1.0)
-        # Reuse the pipeline's flow convention for adjusted comparisons.
-        adjusted = delta_calculator.diff_holdings(prev, curr, prev_month, report_month)
-        flows = adjusted.set_index(["scheme_id", "isin"])["flow_lakhs"]
-        split_rows = rows["isin"].isin(ratios)
-        rows.loc[split_rows, "flow_lakhs"] = [
-            flows.at[(sid, isin)] for sid, isin in
-            rows.loc[split_rows, ["scheme_id", "isin"]].itertuples(index=False, name=None)]
+    prev["quantity"] *= prev["isin"].map(ratios).fillna(1.0)
+    # Stored deltas can predate availability rules. Recompute every numeric
+    # leg from the actual holdings, not just the split-adjusted subset.
+    adjusted = delta_calculator.diff_holdings(prev, curr, prev_month, report_month)
+    recalculated = adjusted.set_index(["scheme_id", "isin"])
+    for column in ("flow_lakhs", "value_change_lakhs", "price_effect_lakhs", "pct_nav_change"):
+        rows[column] = [recalculated.at[(sid, isin), column] for sid, isin in
+                        rows[["scheme_id", "isin"]].itertuples(index=False, name=None)]
 
     return rows
 
@@ -325,6 +330,12 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
             "is_new_to_universe", *ACTIVE_COLUMNS,
         ])
 
+    deltas = deltas.copy()
+    for column in ("flow_lakhs", "price_effect_lakhs"):
+        if column in deltas:
+            values = pd.to_numeric(deltas[column], errors="coerce")
+            deltas[column] = values.where(np.isfinite(values))
+
     buying = deltas[deltas["action"].isin(["new", "added"])]
     selling = deltas[deltas["action"].isin(["trimmed", "exited"])]
     opening = deltas[deltas["action"] == "new"]
@@ -339,36 +350,46 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
 
     series_to_concat = [stock_info, buy_counts, sell_counts, open_counts,
                         scheme_buys, scheme_sells]
-    if "flow_lakhs" in deltas.columns and deltas["flow_lakhs"].notna().any():
-        flow_totals = deltas.groupby("isin")["flow_lakhs"].sum().rename("total_flow_lakhs")
+    if "flow_lakhs" in deltas.columns:
+        flow_totals = deltas.groupby("isin")["flow_lakhs"].agg(
+            lambda values: values.sum(min_count=len(values))).rename("total_flow_lakhs")
         series_to_concat.append(flow_totals)
         # A new position books its entire market value as flow, so an IPO or
         # fresh listing every fund "bought" because it began existing outranks
         # real accumulation. Split the two rather than ranking on the sum.
         new_flow = (
-            opening.groupby("isin")["flow_lakhs"].sum().rename("new_position_flow_lakhs")
+            opening.groupby("isin")["flow_lakhs"].agg(
+                lambda values: values.sum(min_count=len(values))).rename("new_position_flow_lakhs")
         )
         series_to_concat.append(new_flow)
     if "price_effect_lakhs" in deltas.columns:
         price_totals = (
-            deltas.groupby("isin")["price_effect_lakhs"].sum().rename("total_price_effect_lakhs")
+            deltas.groupby("isin")["price_effect_lakhs"].agg(
+                lambda values: values.sum(min_count=len(values))).rename("total_price_effect_lakhs")
         )
         series_to_concat.append(price_totals)
 
     out = pd.concat(series_to_concat, axis=1)
-    # Totals always exist so ranking is stable when a legacy month recorded
-    # no flow or price effect; counts are 0 where nobody bought or sold.
+    # An empty opening cohort is zero; an unreadable existing contributor is
+    # unavailable. Never turn partial sums into complete currency totals.
     for col in ("total_flow_lakhs", "total_price_effect_lakhs", "new_position_flow_lakhs"):
-        out[col] = out[col].fillna(0.0) if col in out.columns else 0.0
+        if col not in out.columns:
+            out[col] = float("nan")
+    out.loc[~out.index.isin(opening["isin"]), "new_position_flow_lakhs"] = 0.0
     for col in ("amcs_buying", "amcs_selling", "amcs_opening", "schemes_buying",
                 "schemes_selling"):
         out[col] = out[col].fillna(0).astype(int)
     out["stock_name"] = out["stock_name"].fillna("")
     out["net_scheme_count"] = out["schemes_buying"] - out["schemes_selling"]
     # Capital moved into or out of positions that already existed last month.
-    out["accumulation_flow_lakhs"] = (
-        out["total_flow_lakhs"] - out["new_position_flow_lakhs"]
-    )
+    if "flow_lakhs" in deltas:
+        existing = deltas[deltas["action"] != "new"]
+        accumulation = existing.groupby("isin")["flow_lakhs"].agg(
+            lambda values: values.sum(min_count=len(values)))
+        out["accumulation_flow_lakhs"] = accumulation.reindex(out.index)
+        out.loc[~out.index.isin(existing["isin"]), "accumulation_flow_lakhs"] = 0.0
+    else:
+        out["accumulation_flow_lakhs"] = float("nan")
     out["net_amc_count"] = out["amcs_buying"] - out["amcs_selling"]
     denom = (out["amcs_buying"] + out["amcs_selling"]).clip(lower=1)
     out["buying_ratio"] = out["amcs_buying"] / denom
@@ -392,9 +413,13 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
 
     # Discretionary breadth alongside the raw counts. It does not change the
     # ranking below: whether it should is a question for the backtest.
+    active = active.copy()
+    active["_active_recorded"] = True
     out = out.merge(active, on="isin", how="left")
     for column in ("active_amcs_buying", "active_amcs_selling", "net_active_amc_count"):
-        out[column] = out[column].fillna(0).astype(int)
+        out.loc[out["_active_recorded"].isna(), column] = 0
+        out[column] = out[column].astype("Int64")
+    out = out.drop(columns="_active_recorded")
 
     # Consensus breadth still leads. Within one breadth level, established
     # holdings outrank stocks new to loaded portfolios; the tiebreak is accumulation flow —

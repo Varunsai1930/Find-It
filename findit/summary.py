@@ -19,12 +19,13 @@ from typing import Any
 
 import pandas as pd
 
+from findit.core.data_quality import bad_domestic_quantity_pairs
 from findit.store import queries
 
 RULES_VERSION = "rules-v1"
 VALID_ACTIONS = frozenset({"new", "added", "trimmed", "exited", "unchanged"})
-_REQUIRED_NUMERIC = ("qty_change", "value_change_lakhs", "pct_nav_change")
-_OPTIONAL_NUMERIC = ("flow_lakhs", "price_effect_lakhs")
+_REQUIRED_NUMERIC = ("qty_change",)
+_OPTIONAL_NUMERIC = ("value_change_lakhs", "pct_nav_change", "flow_lakhs", "price_effect_lakhs")
 
 
 def _fmt_cr(lakhs) -> str:
@@ -88,14 +89,14 @@ def _flow_price_value_detail(row) -> str:
     return _flow_value_detail(row)
 
 
-def _headline_lakhs(row) -> float:
+def _headline_lakhs(row) -> float | None:
     """Flow is the headline rupee figure; value change only as fallback."""
     if "flow_lakhs" in row and pd.notna(row["flow_lakhs"]):
         try:
             return float(row["flow_lakhs"])
         except (TypeError, ValueError):
             pass
-    return float(row["value_change_lakhs"])
+    return float(row["value_change_lakhs"]) if pd.notna(row["value_change_lakhs"]) else None
 
 
 def _sort_col(df: pd.DataFrame) -> str:
@@ -135,24 +136,34 @@ def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
         detail = _flow_value_detail(top)
         # Keep the value-position + NAV% phrasing (BSE 0.66% case); the
         # headline rupee figure is flow (== value for new positions).
+        value = _headline_lakhs(top)
+        nav = top["pct_nav_change"]
+        value_text = (f"a ₹{value / 100:.1f} Cr position" if value is not None
+                      else f"{top['qty_change']:,.0f} shares; value unavailable")
+        nav_text = f"{nav:.2f}% of NAV" if pd.notna(nav) else "NAV weight unavailable"
+        entry = ("The largest new entry was" if new[_sort_col(new)].notna().all()
+                 else "One new entry was")
         lines.append(
-            f"- Opened {len(new)} new position(s). The largest new entry was "
-            f"{top['stock_name']}, a ₹{_headline_lakhs(top)/100:.1f} Cr position "
-            f"({top['pct_nav_change']:.2f}% of NAV) {detail}."
+            f"- Opened {len(new)} new position(s). {entry} "
+            f"{top['stock_name']}, {value_text} ({nav_text}) {detail}."
         )
     if not added.empty:
         top = added.sort_values(_sort_col(added), ascending=False).iloc[0]
         flow_detail = _flow_price_value_detail(top)
+        addition = ("The biggest addition was" if added[_sort_col(added)].notna().all()
+                    else "One addition was")
         lines.append(
-            f"- Added to {len(added)} existing position(s). The biggest addition was "
+            f"- Added to {len(added)} existing position(s). {addition} "
             f"{top['stock_name']}, up {top['qty_change']:,.0f} shares "
             f"{flow_detail}."
         )
     if not trimmed.empty:
         top = trimmed.sort_values(_sort_col(trimmed), ascending=True).iloc[0]
         flow_detail = _flow_price_value_detail(top)
+        cut = ("The largest cut was" if trimmed[_sort_col(trimmed)].notna().all()
+               else "One cut was")
         lines.append(
-            f"- Trimmed {len(trimmed)} position(s). The largest cut was "
+            f"- Trimmed {len(trimmed)} position(s). {cut} "
             f"{top['stock_name']}, down {abs(top['qty_change']):,.0f} shares "
             f"{flow_detail}."
         )
@@ -310,6 +321,8 @@ def assess(conn: sqlite3.Connection, scheme_id: int, report_month: str) -> dict:
                                   (scheme_id, month)))
 
     quarantined = any(row.get("status") == queries.STATUS_QUARANTINED for row in statuses)
+    unsafe = bad_domestic_quantity_pairs(conn, scheme_id)
+    quarantined = quarantined or any((scheme_id, month) in unsafe for month in months)
     current_status = next((row.get("status") for row in statuses
                            if row["report_month"] == report_month), None)
     equity = [row for row in deltas

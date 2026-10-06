@@ -61,7 +61,7 @@ Local ignored artifacts are under `real_data/readiness/pre-pilot/`: before/after
 Keep the retained `.db` and matching `.json` manifest together in the release directory. From the project root:
 
 ```sh
-FINDIT_DB=real_data/readiness/releases/28bb0fa89c482a98b86fa6d3c9f7f9b372bb63d2f8f1aee70a82593eacc756ec.db .venv/bin/uvicorn findit.web.app:create_app --factory --host 127.0.0.1 --port 65100
+FINDIT_DB=real_data/readiness/releases/28bb0fa89c482a98b86fa6d3c9f7f9b372bb63d2f8f1aee70a82593eacc756ec.db .venv/bin/uvicorn findit.web.app:create_app --factory --host 127.0.0.1 --port 65100 --no-access-log
 ```
 
 If that port already serves FindIt, use the running instance or choose another port. Prefix report-relative evidence URLs with the actual local origin (for example `http://127.0.0.1:65100`), preserving all query parameters. A server on release B can reopen A when verified A remains alongside B. Missing A or unsupported rules are rejected; restore its retained artifacts and compatible application version. Do not edit a manifest to bypass verification.

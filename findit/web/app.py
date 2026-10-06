@@ -7,6 +7,7 @@ stored monthly comparisons; no route writes or ingests new disclosures.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -16,9 +17,11 @@ import sqlite3
 import threading
 from urllib.parse import urlencode
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Path as PathParam, Request
+from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -28,6 +31,8 @@ from findit.core import consensus_signals, publication
 from findit.core.coverage import house_coverage, month_coverage
 from findit.core.evidence import stock_evidence
 from findit.core.history import stock_history, history_evidence
+from findit.core.replay import comparison_for_rules, LegacyReplayError, previous_month
+from findit.core.data_quality import bad_domestic_quantity_pairs
 from findit.store.releases import ReleaseStore, RULE_VERSION
 from findit.core.watchlist import monthly_report, parse_stocks, render_report
 from findit.store import queries
@@ -162,7 +167,7 @@ def _ranked(conn: sqlite3.Connection, month: str, equity_only: bool,
     published after it. Callers must not modify the returned frame.
     """
     db_path = str(conn.execute("PRAGMA database_list").fetchone()[2])
-    key = (db_path, _file_signature(db_path), month, equity_only, active_only)
+    key = (db_path, _file_signature(db_path), RULE_VERSION, month, equity_only, active_only)
     with _ranked_lock:
         ranked = _ranked_cache.get(key)
     if ranked is None:
@@ -191,20 +196,21 @@ def _no_signal_message(conn: sqlite3.Connection, month: str) -> str:
             "ingested for this month, or this is the first month tracked).")
 
 
-def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any]:
-    """One month: fund-house overview, coverage facts and consensus table.
-
-    The page renders it on first load and /fragments/month re-renders it when
-    a filter changes, so the table markup has one implementation.
-    """
-    month = view["month"]
-    activity = consensus_signals.fund_house_activity(conn, month, bool(view["active_only"]))
+def _month_overview(conn, month, active_only):
+    activity = consensus_signals.fund_house_activity(conn, month, active_only)
     fund_groups = selected_groups(activity)
     for group in fund_groups:
         for result in group["funds"]:
             result.update(house_coverage(conn, month, result["amc"],
-                                         set(result.get("compared_ids", [])),
-                                         bool(view["active_only"])))
+                                         set(result.get("compared_ids", [])), active_only))
+    return {"fund_groups": fund_groups, "summary_prev_month": activity["prev_month"]}
+
+
+def _month_view(conn: sqlite3.Connection, view: dict[str, Any], *,
+                overview=None, coverage=None) -> dict[str, Any]:
+    """One month's overview and consensus; shared by pages and fragments."""
+    month = view["month"]
+    overview = overview if overview is not None else _month_overview(conn, month, bool(view["active_only"]))
     ranked = _ranked(conn, month, bool(view["equity_only"]), bool(view["active_only"]))
     ordered = consensus_signals.broadest_selling(ranked) if view["side"] == "sell" else ranked
     rows = _records(ordered if view["limit"] == 0 else ordered.head(view["limit"]))
@@ -225,11 +231,10 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any]) -> dict[str, Any
         "total": len(ranked),
         "rows": rows,
         "message": "" if rows else _no_signal_message(conn, month),
-        "coverage": month_coverage(conn, month, bool(view["equity_only"]),
-                                   bool(view["active_only"])),
+        "coverage": coverage if coverage is not None else month_coverage(
+            conn, month, bool(view["equity_only"]), bool(view["active_only"])),
         "filings": filings,
-        "fund_groups": fund_groups,
-        "summary_prev_month": activity["prev_month"],
+        **overview,
         "aum_period": AUM_PERIOD,
         "aum_source": AUM_SOURCE,
     }
@@ -331,24 +336,64 @@ def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> di
             " LEFT JOIN scheme_month_status m"
             " ON m.scheme_id = h.scheme_id AND m.report_month = h.report_month"
             if validated else "")
+        if validated:
+            status_join += (" LEFT JOIN scheme_month_status prior"
+                            " ON prior.scheme_id=h.scheme_id AND prior.report_month=d.prev_month")
+        prior_status = "COALESCE(prior.status, 'not_validated')" if validated else "'not_run'"
         try:
             cur = conn.execute(
                 f"""SELECT h.scheme_id, sch.amc_name, sch.scheme_name, {_scheme_title_sql(conn)},
                           h.quantity, h.market_value_lakhs, h.pct_nav,
                           d.action, d.qty_change, d.flow_lakhs,
                           d.value_change_lakhs,
-                          {status_sql} AS validation_status
+                          {status_sql} AS validation_status,
+                          {prior_status} AS previous_validation_status, d.prev_month, p.scheme_id AS previous_holding_scheme_id,
+                          p.market_value_lakhs AS previous_market_value_lakhs
                    FROM mf_holdings_monthly h
                    JOIN schemes sch ON sch.scheme_id = h.scheme_id
                    LEFT JOIN mf_holding_deltas d
                      ON d.scheme_id = h.scheme_id
                     AND d.isin = h.isin
                     AND d.report_month = h.report_month{status_join}
+                   LEFT JOIN mf_holdings_monthly p ON p.scheme_id=h.scheme_id
+                    AND p.isin=h.isin AND p.report_month=d.prev_month
                    WHERE h.isin = ? AND h.report_month = ?
                    ORDER BY h.market_value_lakhs DESC""",
                 (stock["isin"], holdings_month),
             )
             holdings = [_sanitize(dict(r)) for r in cur.fetchall()]
+            bad_pairs = bad_domestic_quantity_pairs(conn)
+            expected_previous = previous_month(holdings_month)
+            for holding in holdings:
+                sid, previous = holding["scheme_id"], holding["prev_month"]
+                statuses = (holding["validation_status"], holding["previous_validation_status"])
+                reason = None
+                state = "available"
+                if "quarantined" in statuses:
+                    state, reason = "withheld", "Either snapshot failed validation."
+                elif (sid, holdings_month) in bad_pairs or (sid, previous) in bad_pairs:
+                    state, reason = "withheld", "Domestic share quantities are unavailable or invalid."
+                elif previous != expected_previous:
+                    state, reason = "unavailable", "No adjacent previous-month comparison is available."
+                elif not conn.execute("SELECT 1 FROM mf_holdings_monthly WHERE scheme_id=? AND report_month=? LIMIT 1", (sid, previous)).fetchone():
+                    state, reason = "unavailable", "The previous snapshot is unavailable."
+                elif validated and any(v != "ok" for v in statuses):
+                    state, reason = "not_validated", "Both snapshots must pass validation."
+                elif holding["action"] is None:
+                    state, reason = "unavailable", "No previous-month comparison is available."
+                elif not validated:
+                    state = "not_run"
+                values = [holding["market_value_lakhs"]]
+                if holding["previous_holding_scheme_id"] is not None:
+                    values.append(holding["previous_market_value_lakhs"])
+                if any(v is None or not isinstance(v, (int, float)) or not math.isfinite(v) or v < 0 for v in values):
+                    holding["flow_lakhs"] = holding["value_change_lakhs"] = None
+                del holding["previous_holding_scheme_id"]
+                del holding["previous_market_value_lakhs"]
+                holding.update(comparison_status=state, comparison_reason=reason)
+                if state in {"withheld", "not_validated", "unavailable"}:
+                    for field in ("action", "qty_change", "flow_lakhs", "value_change_lakhs"):
+                        holding[field] = None
         except sqlite3.Error:
             holdings = []
     quarters = _shareholding_rows(conn, str(stock["isin"]))
@@ -366,8 +411,8 @@ def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> di
         "holdings_count": len(holdings),
         # Rows the ranking leaves out: quarantined scheme-months are shown for
         # inspection only, and their actions are never validated activity.
-        "withheld_count": sum(h["validation_status"] == "quarantined" for h in holdings),
-        "not_validated_count": sum(h["validation_status"] == "not_validated" for h in holdings),
+        "withheld_count": sum(h["comparison_status"] == "withheld" for h in holdings),
+        "not_validated_count": sum(h["comparison_status"] == "not_validated" for h in holdings),
         "validation": "checked" if validated else "not_run",
         "shareholding": quarters,
         "shareholding_status": status,
@@ -409,7 +454,17 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
     return [dict(r) for r in rows]
 
 
-def create_app(db_path: str | Path | None = None, release_dir: Path | None = None) -> FastAPI:
+class WatchlistRequest(BaseModel):
+    month: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    stocks: list[Annotated[str, Field(min_length=12, max_length=12)]] = Field(default_factory=list, max_length=100)
+    active_only: bool = True
+    release: str | None = None
+    rules: str | None = None
+
+
+def create_app(db_path: str | Path | None = None, release_dir: Path | None = None, *,
+               allowed_hosts: tuple[str, ...] | None = None, hosted: bool = False,
+               expected_month: str | None = None) -> FastAPI:
     resolved_db = _resolve_db_path(db_path)
     releases = ReleaseStore(Path(resolved_db), release_dir)
     # Verify a retained launch release before accepting requests. Later access
@@ -418,20 +473,46 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         releases.retained(Path(resolved_db).stem)
     report_comparisons = {}
     report_lock = threading.Lock()
+    overview_cache = {}
+    coverage_cache = {}
+    overview_lock = threading.Lock()
 
-    def report_for(conn, month, stocks, active_only, identity):
+    def month_context(conn, view):
+        path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+        verified = releases._verified.get(path.stem)
+        if path != releases.directory / f"{path.stem}.db" or verified is None:
+            return _month_view(conn, view)
+        # _ro_connect verifies the file signatures before every request. Include
+        # those signatures and the calculation version to isolate all scopes.
+        key = (path.stem, verified[0], RULE_VERSION, view["month"], bool(view["active_only"]))
+        coverage_key = (*key, bool(view["equity_only"]))
+        with overview_lock:
+            if key not in overview_cache:
+                if len(overview_cache) >= 16:
+                    overview_cache.pop(next(iter(overview_cache)))
+                overview_cache[key] = _month_overview(conn, view["month"], bool(view["active_only"]))
+            if coverage_key not in coverage_cache:
+                if len(coverage_cache) >= 32:
+                    coverage_cache.pop(next(iter(coverage_cache)))
+                coverage_cache[coverage_key] = month_coverage(
+                    conn, view["month"], bool(view["equity_only"]), bool(view["active_only"]))
+            overview = copy.deepcopy(overview_cache[key])
+            coverage = copy.deepcopy(coverage_cache[coverage_key])
+        return _month_view(conn, view, overview=overview, coverage=coverage)
+
+    def report_for(conn, month, stocks, active_only, identity, effective_rules):
         path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
         immutable = path == releases.directory / f"{identity}.db" and identity in releases._verified
         comparison = None
         if stocks and immutable:
-            key = (identity, month, active_only)
+            key = (identity, effective_rules, month, active_only)
             with report_lock:
                 if key not in report_comparisons:
                     if len(report_comparisons) >= 4:
                         report_comparisons.pop(next(iter(report_comparisons)))
-                    report_comparisons[key] = consensus_signals.comparison_rows(conn, month, active_only)
+                    report_comparisons[key] = comparison_for_rules(conn, month, active_only, effective_rules)
                 comparison = report_comparisons[key]
-        return monthly_report(conn, month, stocks, active_only, release_id=identity, comparison=comparison)
+        return monthly_report(conn, month, stocks, active_only, release_id=identity, comparison=comparison, rules_version=effective_rules)
 
     def release_connection(release=None, rules=None):
         try:
@@ -439,18 +520,20 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         except (ValueError, OSError, sqlite3.Error) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    def scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort):
+    def scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort, effective_rules):
         if any((start, end, cohort)):
             if not all((start, end, cohort)):
                 raise HTTPException(status_code=400, detail="historical evidence requires start, end and cohort")
             try:
                 return history_evidence(conn, isin.upper(), month, start, end, active_only == 1,
-                                        amc, identity, cohort)
+                                        amc, identity, cohort, effective_rules)
+            except LegacyReplayError:
+                raise
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         if month not in _known_months(conn):
             raise HTTPException(status_code=404, detail="Unknown month")
-        return stock_evidence(conn, isin.upper(), month, active_only == 1, amc, release_id=identity)
+        return stock_evidence(conn, isin.upper(), month, active_only == 1, amc, release_id=identity, rules_version=effective_rules)
 
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
     # Fingerprints prevent cached assets from outliving a deployed UI change.
@@ -462,6 +545,71 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                                  scheme_label=_scheme_label, stock_label=_stock_label)
 
     app = FastAPI(title="FindIt holdings dashboard (read-only)")
+
+    if hosted and (not allowed_hosts or not expected_month):
+        raise ValueError("Hosted serving requires exact allowed hosts and an expected month")
+    if allowed_hosts:
+        if any(not re.fullmatch(r"[a-zA-Z0-9.-]+", host) or "*" in host for host in allowed_hosts):
+            raise ValueError("Allowed hosts must be exact hostnames")
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts), www_redirect=False)
+
+    def replay_conflict(exc, identity, path, params):
+        successor = None
+        # The current corrected release is preferred; archived siblings are
+        # eligible only when their manifest explicitly names this parent.
+        current_manifest = Path(resolved_db).with_suffix(".json")
+        candidates = [current_manifest, *sorted(releases.directory.glob("*.json"))]
+        for manifest in candidates:
+            if not re.fullmatch(r"[a-f0-9]{64}", manifest.stem):
+                continue
+            try:
+                _, metadata = releases.retained(manifest.stem)
+            except (OSError, ValueError, sqlite3.Error):
+                continue
+            if metadata.get("rule_version") == RULE_VERSION and (
+                    metadata.get("parent_release") == identity or manifest == current_manifest):
+                successor = metadata["release_id"]
+                break
+        params = {k: v for k, v in params.items() if v is not None}
+        params["rules"] = RULE_VERSION
+        if successor:
+            params["release"] = successor
+        return HTTPException(status_code=409, detail={
+            "message": str(exc), "successor_url": path + "?" + urlencode(params),
+            "successor_available": bool(successor)})
+
+    @app.middleware("http")
+    async def response_policy(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path in {"/api/watchlist", "/watchlist/report"}:
+            response.headers["Cache-Control"] = "private, no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+        return response
+
+    @app.get("/health/live")
+    def health_live():
+        return {"status": "alive"}
+
+    @app.get("/health/ready")
+    def health_ready():
+        conn = None
+        try:
+            if not re.fullmatch(r"[a-f0-9]{64}", Path(resolved_db).stem):
+                raise ValueError("A verified retained release is required")
+            context = releases.connect()
+            conn, identity = context
+            month = expected_month or _latest_holdings_month(conn)
+            if not month or month != _latest_holdings_month(conn):
+                raise ValueError("Expected release month is unavailable")
+            if comparison_for_rules(conn, month, True, context.rules_version).empty:
+                raise ValueError("No validated domestic comparison is available")
+            return {"status": "ready", "release_id": identity,
+                    "rule_version": context.rules_version, "month": month}
+        except (ValueError, OSError, sqlite3.Error):
+            raise HTTPException(status_code=503, detail="Retained release is not ready") from None
+        finally:
+            if conn is not None:
+                conn.close()
 
     app.mount(
         "/static",
@@ -619,7 +767,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
 
     # -- summary ----------------------------------------------------------
     @app.get("/api/summary/{scheme_id}/{month}")
-    def api_summary(scheme_id: int, month: str) -> Any:
+    def api_summary(scheme_id: Annotated[int, PathParam(ge=1, le=9223372036854775807)], month: str) -> Any:
         conn = _ro_connect(resolved_db, releases)
         try:
             row = conn.execute(
@@ -657,15 +805,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             conn.close()
 
     # -- stock ------------------------------------------------------------
-    @app.get("/api/watchlist")
-    def api_watchlist(month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
-        try:
-            selected = parse_stocks(stocks)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    def watchlist_result(month, selected, active_only, release=None, rules=None):
         if not selected and not release and not rules and not re.fullmatch(r"[a-f0-9]{64}", Path(resolved_db).stem):
-            # No results exist to pin. Avoid hashing a mutable database simply
-            # to tell a new user that their list is empty. Downloads still pin.
             conn = _ro_connect(resolved_db, releases)
             try:
                 if month not in _known_months(conn):
@@ -674,39 +815,66 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                         "rule_version": RULE_VERSION, "status": "empty_watchlist"}
             finally:
                 conn.close()
-        conn, identity = release_connection(release, rules)
+        context = release_connection(release, rules)
+        conn, identity = context
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail="Unknown month")
-            try:
-                return _sanitize(report_for(conn, month, parse_stocks(stocks), active_only == 1, identity))
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            return _sanitize(report_for(conn, month, selected, active_only, identity, context.rules_version))
+        except LegacyReplayError as exc:
+            raise replay_conflict(exc, identity, "/", {"month": month}) from exc
+        finally:
+            conn.close()
+
+    def selected_stocks(stocks):
+        try:
+            return parse_stocks(stocks)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/watchlist")
+    def api_watchlist(month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
+        return watchlist_result(month, selected_stocks(stocks), active_only == 1, release, rules)
+
+    @app.post("/api/watchlist")
+    def api_watchlist_post(body: WatchlistRequest) -> Any:
+        return watchlist_result(body.month, selected_stocks(",".join(body.stocks)), body.active_only, body.release, body.rules)
+
+    def download_report(request, month, selected, active_only, release=None, rules=None):
+        context = release_connection(release, rules)
+        conn, identity = context
+        try:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail="Unknown month")
+            report = report_for(conn, month, selected, active_only, identity, context.rules_version)
+            origin = ("https://" + request.url.hostname + "/") if hosted else str(request.base_url)
+            return Response(render_report(report, origin, hosted=hosted), media_type="text/markdown",
+                            headers={"Content-Disposition": f'attachment; filename="findit-{month}-{identity[:12]}.md"'})
+        except LegacyReplayError as exc:
+            raise replay_conflict(exc, identity, "/", {"month": month}) from exc
         finally:
             conn.close()
 
     @app.get("/watchlist/report")
     def watchlist_download(request: Request, month: str, stocks: str = "", active_only: int = 1, release: str | None = None, rules: str | None = None) -> Any:
-        conn, identity = release_connection(release, rules)
-        try:
-            if month not in _known_months(conn):
-                raise HTTPException(status_code=404, detail="Unknown month")
-            try:
-                report = report_for(conn, month, parse_stocks(stocks), active_only == 1, identity)
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            return Response(render_report(report, str(request.base_url)), media_type="text/markdown",
-                            headers={"Content-Disposition": f'attachment; filename="findit-{month}-{report["release_id"][:12]}.md"'})
-        finally:
-            conn.close()
+        return download_report(request, month, selected_stocks(stocks), active_only == 1, release, rules)
+
+    @app.post("/watchlist/report")
+    def watchlist_download_post(request: Request, body: WatchlistRequest) -> Any:
+        return download_report(request, body.month, selected_stocks(",".join(body.stocks)), body.active_only, body.release, body.rules)
 
     @app.get("/api/history/{isin}")
     def api_history(isin: str, start: str, end: str, active_only: int = 1,
                     amc: str | None = None, release: str | None = None, rules: str | None = None) -> Any:
-        conn, identity = release_connection(release, rules)
+        context = release_connection(release, rules)
+        conn, identity = context
+        effective_rules = context.rules_version
         try:
             try:
-                return _sanitize(stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity))
+                return _sanitize(stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity, rules_version=effective_rules))
+            except LegacyReplayError as exc:
+                raise replay_conflict(exc, identity, "/history/" + isin.upper(),
+                                      {"start": start, "end": end, "active_only": active_only, "amc": amc}) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         finally:
@@ -715,10 +883,15 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     @app.get("/history/{isin}")
     def history_page(request: Request, isin: str, start: str, end: str,
                      active_only: int = 1, amc: str | None = None, release: str | None = None, rules: str | None = None) -> Any:
-        conn, identity = release_connection(release, rules)
+        context = release_connection(release, rules)
+        conn, identity = context
+        effective_rules = context.rules_version
         try:
             try:
-                result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity)
+                result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity, rules_version=effective_rules)
+            except LegacyReplayError as exc:
+                raise replay_conflict(exc, identity, "/history/" + isin.upper(),
+                                      {"start": start, "end": end, "active_only": active_only, "amc": amc}) from exc
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             houses = [row[0] for row in conn.execute(
@@ -739,9 +912,14 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                      start: str | None = None, end: str | None = None, cohort: str | None = None) -> Any:
         if cohort and not release:
             raise HTTPException(status_code=400, detail="historical evidence requires a release")
-        conn, identity = release_connection(release, rules)
+        context = release_connection(release, rules)
+        conn, identity = context
+        effective_rules = context.rules_version
         try:
-            return _sanitize(scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort))
+            return _sanitize(scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort, effective_rules))
+        except LegacyReplayError as exc:
+            raise replay_conflict(exc, identity, "/evidence/" + isin.upper(),
+                                  {"month": month, "active_only": active_only, "amc": amc}) from exc
         finally:
             conn.close()
 
@@ -751,14 +929,19 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                       start: str | None = None, end: str | None = None, cohort: str | None = None) -> Any:
         if cohort and not release:
             raise HTTPException(status_code=400, detail="historical evidence requires a release")
-        conn, identity = release_connection(release, rules)
+        context = release_connection(release, rules)
+        conn, identity = context
+        effective_rules = context.rules_version
         try:
-            evidence = scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort)
+            evidence = scoped_evidence(conn, isin, month, active_only, amc, identity, start, end, cohort, effective_rules)
             evidence["history_url"] = evidence.get("history_url") or ("/history/" + isin.upper() + "?" +
                 urlencode({
                     "start": min(_known_months(conn)), "end": month, "active_only": active_only,
-                    "amc": amc or "", "release": identity, "rules": RULE_VERSION}))
+                    "amc": amc or "", "release": identity, "rules": effective_rules}))
             return templates.TemplateResponse(request, "evidence.html", {"e": _sanitize(evidence)})
+        except LegacyReplayError as exc:
+            raise replay_conflict(exc, identity, "/evidence/" + isin.upper(),
+                                  {"month": month, "active_only": active_only, "amc": amc}) from exc
         finally:
             conn.close()
 
@@ -826,7 +1009,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
             view = _view(month, equity_only, active_only, side, limit, cols)
-            ctx = _month_view(conn, view)
+            ctx = month_context(conn, view)
             funds = [f for group in ctx["fund_groups"] for f in group["funds"]]
             if amc is not None:
                 funds = [f for f in funds if f["amc"] == amc]
@@ -846,7 +1029,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
             view = _view(month, equity_only, active_only, side, limit, cols)
-            ctx = _sanitize(_month_view(conn, view))
+            ctx = _sanitize(month_context(conn, view))
             return templates.TemplateResponse(request, "_month_view.html", ctx)
         finally:
             conn.close()
@@ -894,7 +1077,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             ctx: dict[str, Any] = {**view, "view": view, "months": months,
                                    "scheme_options": scheme_options}
             if month is not None:
-                ctx.update(_month_view(conn, view))
+                ctx.update(month_context(conn, view))
             return templates.TemplateResponse(request, "dashboard.html", _sanitize(ctx))
         finally:
             conn.close()

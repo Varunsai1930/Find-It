@@ -24,6 +24,8 @@ class Element {
   setAttribute(key, value) { this.attributes[key] = value; }
   getAttribute(key) { return this.attributes[key] ?? null; }
   removeAttribute(key) { delete this.attributes[key]; }
+  click() { this.emit('click'); this.clicked = true; }
+  remove() { this.removed = true; }
   append(...nodes) { this.children.push(...nodes); }
   replaceChildren(...nodes) { this.children = nodes; }
   querySelector() { return null; }
@@ -67,31 +69,34 @@ function boot({ schemes = false, controls = false, hash = '', sections = false, 
   if (schemes) elements['scheme-data'].textContent = JSON.stringify([
     { id: 1, label: 'Test Fund', amc: 'Test AMC', votes: true }
   ]);
-  const timers = new Map(), requests = [], frames = [];
+  const timers = new Map(), requests = [], frames = [], created = [];
+  const body = new Element();
   let timerId = 0;
   runInNewContext(script, {
     document: {
       getElementById: id => elements[id] || null,
       querySelector: selector => selector === '.topbar' ? topbar : null,
       documentElement: documentRoot,
-      createElement: () => new Element(),
+      body,
+      createElement: () => { const element = new Element(); created.push(element); return element; },
       addEventListener() {},
     },
     location, window, history: { replaceState(_state, _title, url) { location.href = String(url); } },
-    URL, URLSearchParams, AbortController, DOMException,
+    URL, URLSearchParams, AbortController, DOMException, Blob,
     localStorage: { getItem() { return watch ? JSON.stringify({ version: 1, stocks: watch }) : null; }, setItem() {} },
     getComputedStyle(element) { return { scrollMarginTop: (element.scrollMargin || 0) + 'px' }; },
     FormData: class { get() { return null; } },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
     clearTimeout(id) { timers.delete(id); },
     requestAnimationFrame(fn) { frames.push(fn); },
-    fetch(url, { signal }) {
-      return new Promise(resolve => requests.push({ url, signal,
+    fetch(url, options) {
+      const { signal } = options;
+      return new Promise(resolve => requests.push({ url, signal, options,
         respond(body) { resolve({ ok: true, status: 200, text: async () => body }); }
       }));
     },
   });
-  return { elements, requests, navLinks, location, window, frames, topbar,
+  return { created, body, elements, requests, navLinks, location, window, frames, topbar,
     frame() { for (const fn of frames.splice(0)) fn(); },
     scrollTo(y) {
       window.scrollY = y;
@@ -228,8 +233,23 @@ test('watchlist downloads pin the displayed release and clearing aborts stale wo
       houses_buying: 1, houses_selling: 0, net_share_change: 10, additions: 0, exits: 0,
       largest_compared_changes: [] } ] };
   ui.requests[0].respond(JSON.stringify(report)); await settle();
-  assert.match(ui.elements['watchlist-report'].href, /release=aaaa/);
-  assert.match(ui.elements['watchlist-report'].href, /rules=rules-a/);
+  assert.equal(ui.requests[0].url, '/api/watchlist');
+  assert.equal(ui.requests[0].options.method, 'POST');
+  assert.deepEqual(JSON.parse(ui.requests[0].options.body).stocks, ['INE002A01018']);
+  assert.equal(ui.elements['watchlist-report'].href, '/watchlist/report');
+  const pinned = JSON.parse(ui.elements['watchlist-report'].dataset.reportRequest);
+  assert.equal(pinned.release, report.release_id);
+  assert.equal(pinned.rules, report.rule_version);
+  ui.elements['watchlist-report'].emit('click');
+  const download = ui.requests.at(-1);
+  assert.equal(download.url, '/watchlist/report');
+  assert.equal(download.options.method, 'POST');
+  assert.deepEqual(JSON.parse(download.options.body), pinned);
+  download.respond('# matching release report'); await settle();
+  const generated = ui.created.at(-1);
+  assert.equal(generated.download, 'findit-2026-08-' + report.release_id.slice(0, 12) + '.md');
+  assert.equal(generated.clicked, true);
+  assert.equal(generated.removed, true);
   ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] }); await settle();
   assert.equal(ui.elements['watchlist-report'].hidden, true);
   const pending = ui.requests.filter(r => r.url.startsWith('/api/watchlist')).at(-1);

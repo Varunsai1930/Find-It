@@ -428,14 +428,14 @@ def test_consensus_price_totals_and_no_value_total():
     conn.close()
 
 
-def test_consensus_legacy_db_without_price_column():
+def test_consensus_without_price_column_reports_unavailable_price_effect():
     conn = _mem_conn(with_price_effect=False)
     _add_scheme_stock_delta(conn, 1, "HDFC AMC", "Top100", "INEAAA01001", "AAA", "equity",
                             10, 100, 100, 0.5, "new")
     out = consensus_signals.compute_consensus(conn, "2026-08")
     assert "total_price_effect_lakhs" in out.columns
     assert "total_value_change_lakhs" not in out.columns
-    assert abs(out.iloc[0]["total_price_effect_lakhs"] - 0.0) < 1e-9
+    assert pd.isna(out.iloc[0]["total_price_effect_lakhs"])
     assert abs(out.iloc[0]["total_flow_lakhs"] - 100.0) < 1e-9
     conn.close()
 

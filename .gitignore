@@ -9,6 +9,10 @@ dist/
 *.egg-info/
 .DS_Store
 .env
+.env.*
+.vercel/
+deploy-data/
+.vercel-build-audit.json
 *.db-wal
 *.db-shm
 *.db-journal

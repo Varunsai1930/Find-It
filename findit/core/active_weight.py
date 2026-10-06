@@ -27,6 +27,7 @@ adjustment a 1:2 split reads as every fund doubling its position, so
 from __future__ import annotations
 
 import pandas as pd
+import numpy as np
 
 from findit.core.corporate_actions import SPLIT_RATIOS
 
@@ -47,6 +48,8 @@ def _check(frame: pd.DataFrame, name: str) -> pd.DataFrame:
     out = frame.loc[:, list(_HOLDING_COLUMNS)].copy()
     out["quantity"] = pd.to_numeric(out["quantity"], errors="coerce")
     out["market_value_lakhs"] = pd.to_numeric(out["market_value_lakhs"], errors="coerce")
+    out["quantity"] = out["quantity"].where(np.isfinite(out["quantity"]))
+    out["market_value_lakhs"] = out["market_value_lakhs"].where(np.isfinite(out["market_value_lakhs"]))
     return out[(out["quantity"] > 0) & (out["market_value_lakhs"] > 0)]
 
 
@@ -61,10 +64,21 @@ def infer_split_ratios(prev: pd.DataFrame, curr: pd.DataFrame,
     multiply share counts. ``confirmed`` (e.g. from corporate_actions)
     always wins.
     """
+    unavailable = set()
+    # A peer with an unreadable matched holding is still a peer. Dropping it
+    # cannot establish the unanimity required to infer a corporate action.
+    shared_rows = prev[["scheme_id", "isin"]].merge(curr[["scheme_id", "isin"]])
+    for frame in (prev, curr):
+        checked = frame.merge(shared_rows, on=["scheme_id", "isin"])
+        for column in ("quantity", "market_value_lakhs"):
+            values = pd.to_numeric(checked[column], errors="coerce")
+            unavailable.update(checked.loc[~np.isfinite(values) | (values < 0), "isin"])
     prev, curr = _check(prev, "previous"), _check(curr, "current")
     both = prev.merge(curr, on=["scheme_id", "isin"], suffixes=("_prev", "_curr"))
     ratios: dict = {}
     for isin, grp in both.groupby("isin"):
+        if isin in unavailable:
+            continue
         qty_ratio = grp["quantity_curr"] / grp["quantity_prev"]
         px_prev = grp["market_value_lakhs_prev"].sum() / grp["quantity_prev"].sum()
         px_curr = grp["market_value_lakhs_curr"].sum() / grp["quantity_curr"].sum()
@@ -95,12 +109,28 @@ def active_weight_changes(prev: pd.DataFrame, curr: pd.DataFrame,
     With none of those the stock is priced flat (zero return) and the row
     is marked ``price_basis='assumed_flat'`` so it can be audited.
     """
-    prev, curr = _check(prev, "previous"), _check(curr, "current")
     columns = ["scheme_id", "isin", "w_drift_pp", "w_curr_pp",
                "active_weight_change_pp", "discretionary_flow_lakhs", "price_basis"]
+    raw_prev, raw_curr = prev.copy(), curr.copy()
+    common = set(raw_prev["scheme_id"]) & set(raw_curr["scheme_id"])
+    unsafe = set()
+    for frame in (raw_prev, raw_curr):
+        for column in ("quantity", "market_value_lakhs"):
+            values = pd.to_numeric(frame[column], errors="coerce")
+            unsafe.update(frame.loc[~np.isfinite(values) | (values < 0), "scheme_id"])
+    unsafe &= common
+    rows = [{"scheme_id": sid, "isin": isin, "w_drift_pp": np.nan,
+             "w_curr_pp": np.nan, "active_weight_change_pp": np.nan,
+             "discretionary_flow_lakhs": np.nan, "price_basis": "unavailable"}
+            for sid in sorted(unsafe) for isin in sorted(
+                set(raw_prev.loc[raw_prev["scheme_id"] == sid, "isin"]) |
+                set(raw_curr.loc[raw_curr["scheme_id"] == sid, "isin"]))]
+    prev, curr = _check(prev, "previous"), _check(curr, "current")
+    prev = prev[~prev["scheme_id"].isin(unsafe)]
+    curr = curr[~curr["scheme_id"].isin(unsafe)]
     shared = sorted(set(prev["scheme_id"]) & set(curr["scheme_id"]))
     if not shared:
-        return pd.DataFrame(columns=columns)
+        return pd.DataFrame(rows, columns=columns)
     prev = prev[prev["scheme_id"].isin(shared)]
     curr = curr[curr["scheme_id"].isin(shared)]
     splits = split_ratios or {}
@@ -109,7 +139,6 @@ def active_weight_changes(prev: pd.DataFrame, curr: pd.DataFrame,
     market_px = (curr.groupby("isin")["market_value_lakhs"].sum()
                  / curr.groupby("isin")["quantity"].sum()).to_dict()
 
-    rows = []
     for scheme_id in shared:
         p = prev[prev["scheme_id"] == scheme_id].set_index("isin")
         c = curr[curr["scheme_id"] == scheme_id].set_index("isin")
@@ -167,6 +196,9 @@ def aggregate_by_stock(changes: pd.DataFrame, scheme_amc: dict,
     if changes is None or changes.empty:
         return pd.DataFrame(columns=columns)
     work = changes.copy()
+    for column in ("active_weight_change_pp", "discretionary_flow_lakhs"):
+        values = pd.to_numeric(work[column], errors="coerce")
+        work[column] = values.where(np.isfinite(values))
     work["amc_name"] = work["scheme_id"].map(scheme_amc)
     if work["amc_name"].isna().any():
         missing = sorted(work.loc[work["amc_name"].isna(), "scheme_id"].unique())
@@ -175,7 +207,8 @@ def aggregate_by_stock(changes: pd.DataFrame, scheme_amc: dict,
     work.loc[work["active_weight_change_pp"] >= noise_floor_pp, "vote"] = 1
     work.loc[work["active_weight_change_pp"] <= -noise_floor_pp, "vote"] = -1
     decided = work[work["vote"] != 0]
-    amc_flow = decided.groupby(["isin", "amc_name"])["discretionary_flow_lakhs"].sum()
+    amc_flow = decided.groupby(["isin", "amc_name"])["discretionary_flow_lakhs"].agg(
+        lambda values: values.sum(min_count=len(values)))
     amc_dir = amc_flow.apply(lambda v: 1 if v > 0 else (-1 if v < 0 else 0)).rename("dir")
     amc_dir = amc_dir.reset_index()
     buying = amc_dir[amc_dir["dir"] > 0].groupby("isin").size()
@@ -183,11 +216,20 @@ def aggregate_by_stock(changes: pd.DataFrame, scheme_amc: dict,
     out = pd.DataFrame({
         "active_amcs_buying": buying,
         "active_amcs_selling": selling,
-        "discretionary_flow_lakhs": work.groupby("isin")["discretionary_flow_lakhs"].sum(),
-        "active_weight_change_pp_sum": work.groupby("isin")["active_weight_change_pp"].sum(),
+        "discretionary_flow_lakhs": work.groupby("isin")["discretionary_flow_lakhs"].agg(
+            lambda values: values.sum(min_count=len(values))),
+        "active_weight_change_pp_sum": work.groupby("isin")["active_weight_change_pp"].agg(
+            lambda values: values.sum(min_count=len(values))),
     })
     out[["active_amcs_buying", "active_amcs_selling"]] = (
         out[["active_amcs_buying", "active_amcs_selling"]].fillna(0).astype(int))
     out["net_active_amc_count"] = out["active_amcs_buying"] - out["active_amcs_selling"]
+    unavailable = work.groupby("isin")[["active_weight_change_pp", "discretionary_flow_lakhs"]].agg(
+        lambda values: values.isna().any()).any(axis=1)
+    if unavailable.any():
+        out.loc[unavailable[unavailable].index, ["active_amcs_buying", "active_amcs_selling",
+                                              "net_active_amc_count"]] = np.nan
+        for column in ("active_amcs_buying", "active_amcs_selling", "net_active_amc_count"):
+            out[column] = out[column].astype("Int64")
     out.index.name = "isin"
     return out.reset_index().loc[:, columns]

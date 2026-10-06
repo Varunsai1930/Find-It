@@ -101,7 +101,7 @@
 
   {% if scheme_options %}
   <section class="panel" id="watchlist" aria-labelledby="watchlist-title">
-    <div class="panel__head"><h2 id="watchlist-title">Changes in my stocks</h2><p>Follow a stock from its detail panel. Saved on this device only; export and import to move it between devices.</p></div>
+    <div class="panel__head"><h2 id="watchlist-title">Changes in my stocks</h2><p>Follow a stock from its detail panel. Your list is saved on this device; export and import to move it between devices. Selected stocks are sent to the server to calculate changes and download reports. The server does not save your list.</p></div>
     <div style="padding:20px"><button class="btn btn--quiet" type="button" id="watchlist-export">Export watchlist</button> <a class="btn btn--quiet" id="watchlist-report" hidden>Download monthly report</a><label class="field" style="margin-top:16px">Import watchlist <input type="file" id="watchlist-import" accept="application/json" style="max-width:100%"></label>
     <p id="watchlist-status" role="status" aria-live="polite"></p><div id="watchlist-results">Your watchlist is empty.</div></div>
   </section>

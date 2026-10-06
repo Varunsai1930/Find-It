@@ -47,10 +47,12 @@ def test_net_unchanged_can_still_contain_opposing_fund_changes(tmp_path):
 
 
 def test_release_preserves_original_and_failed_refresh_retains_pointer(tmp_path):
-    path = _copy_db(tmp_path)
+    from tests.test_release_activation import _monthly_source
+    path = _monthly_source(tmp_path)
     before = path.read_bytes()
     folder = tmp_path / "releases"
-    first = snapshot(path, folder, "first")
+    before = path.read_bytes()
+    first = snapshot(path, folder, "first", activate=True, report_month="2026-08", notes="Reviewed source fixture")
     assert path.read_bytes() == before
     assert snapshot(path, folder, "same")["release_id"] == first["release_id"]
     pointer = (folder / "current.json").read_bytes()
@@ -59,12 +61,12 @@ def test_release_preserves_original_and_failed_refresh_retains_pointer(tmp_path)
     with pytest.raises(ValueError, match="did not complete"):
         snapshot(path, folder, "bad")
     assert (folder / "current.json").read_bytes() == pointer
-    assert release_main(["--out", str(folder), "--rollback", first["release_id"]]) == 0
+    assert release_main(["--out", str(folder), "--rollback", first["release_id"], "--month", "2026-08", "--notes", "Reviewed rollback"]) == 0
     assert json.loads((folder / "current.json").read_text())["release_id"] == first["release_id"]
     (folder / f"{first['release_id']}.db").write_bytes(b"corrupt")
     with pytest.raises(SystemExit):
-        release_main(["--out", str(folder), "--rollback", first["release_id"]])
-    assert (folder / "current.json").read_bytes() == pointer
+        release_main(["--out", str(folder), "--rollback", first["release_id"], "--month", "2026-08", "--notes", "Reviewed rollback"])
+    assert json.loads((folder / "current.json").read_text())["release_id"] == first["release_id"]
 
 
 def test_report_a_reopens_after_switch_to_b_and_rejects_tampering(tmp_path):
@@ -200,9 +202,10 @@ def test_legacy_wal_release_reads_without_changing_retained_files(tmp_path, laun
 
 
 def test_candidate_freeze_and_repeat_preserve_current_pointer_and_parent(tmp_path):
-    path = _copy_db(tmp_path)
+    from tests.test_release_activation import _monthly_source
+    path = _monthly_source(tmp_path)
     folder = tmp_path / 'releases'
-    parent = snapshot(path, folder, 'baseline')
+    parent = snapshot(path, folder, 'baseline', activate=True, report_month='2026-08', notes='Reviewed fixture')
     pointer = (folder / 'current.json').read_bytes()
     parent_bytes = (folder / f"{parent['release_id']}.db").read_bytes()
     with sqlite3.connect(path) as conn:
@@ -252,7 +255,7 @@ def test_report_reuses_coverage_without_building_source_panels(tmp_path, monkeyp
     report = monthly_report(c, '2026-08', ['INE002A01018', 'INE009A01021'])
     assert len(calls) == len(set(calls)) == 2
     assert report['stocks'][0]['net_share_change'] == 90
-    monkeypatch.setattr(watchlist, 'comparison_rows', forbidden)
+    monkeypatch.setattr(watchlist, 'comparison_for_rules', forbidden)
     assert monthly_report(c, '2026-08', [], release_id=report['release_id'])['stocks'] == []
 
 

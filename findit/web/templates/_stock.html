@@ -34,9 +34,9 @@
 <p class="state state--warn">Validation has not been run on this database, so none of these rows has been checked.</p>
 {% elif stock.withheld_count or stock.not_validated_count %}
 <p class="state state--warn">
-  {%- if stock.withheld_count %}{{ stock.withheld_count }} fund{{ 's' if stock.withheld_count != 1 }} failed validation for {{ stock.month|month_label }}: {{ 'their rows are' if stock.withheld_count != 1 else 'its row is' }} shown for inspection only, withheld from the ranking and not validated activity.{% endif %}
+  {%- if stock.withheld_count %}{{ stock.withheld_count }} fund comparison{{ 's' if stock.withheld_count != 1 }} withheld for {{ stock.month|month_label }}: {{ 'their rows are' if stock.withheld_count != 1 else 'its row is' }} shown for inspection only, withheld from the ranking and not validated activity.{% endif %}
   {%- if stock.withheld_count and stock.not_validated_count %} {% endif %}
-  {%- if stock.not_validated_count %}{{ stock.not_validated_count }} {{ 'have' if stock.not_validated_count != 1 else 'has' }} no validation result for this month.{% endif -%}
+  {%- if stock.not_validated_count %}{{ stock.not_validated_count }} {{ 'have' if stock.not_validated_count != 1 else 'has' }} a comparison without both snapshots validated.{% endif -%}
 </p>
 {% endif %}
 <div class="table-wrap" tabindex="0" role="region" aria-label="Fund holdings">
@@ -52,12 +52,14 @@
   </thead>
   <tbody>
     {% for h in stock.holdings %}
-    {%- set withheld = h.validation_status == 'quarantined' %}
+    {%- set withheld = h.comparison_status == 'withheld' %}
     <tr{% if withheld %} class="is-withheld"{% endif %}>
       <td>{{ h|scheme_label }}<span class="sub">{{ h.amc_name }} · {{ h.scheme_name }}</span></td>
       <td>
         {%- if withheld -%}
-        <span class="tag tag--stale" title="Failed validation for this month: excluded from the ranking">withheld</span><span class="sub">raw: {{ h.action or 'no comparison' }} · not validated</span>
+        <span class="tag tag--stale" title="{{ h.comparison_reason }}">withheld</span><span class="sub">{{ h.comparison_reason }}</span>
+        {%- elif h.comparison_status == 'not_validated' -%}
+        <span class="tag tag--missing">not validated</span><span class="sub">{{ h.comparison_reason }}</span>
         {%- elif h.action -%}
         <span class="tag tag--{{ h.action }}">{{ h.action }}</span>
         {%- if h.validation_status == 'not_validated' %}<span class="sub">not validated</span>{% endif -%}

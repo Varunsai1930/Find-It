@@ -6,7 +6,8 @@ import sqlite3
 from datetime import date, timedelta
 from urllib.parse import urlparse
 
-from findit.core.consensus_signals import comparison_rows
+from findit.core.replay import comparison_for_rules, guard_legacy_inputs, guard_legacy_frame
+from findit.core.rules import LEGACY_RULE_VERSION
 from findit.core.coverage import house_coverage
 from findit.store import queries
 from findit.store.releases import RULE_VERSION, content_id
@@ -54,14 +55,21 @@ def snapshot_evidence(conn: sqlite3.Connection, sid: int, month: str, isin: str)
 def stock_evidence(conn: sqlite3.Connection, isin: str, month: str,
                    active_only: bool = True, amc: str | None = None,
                    comparison=None, release_id: str | None = None,
-                   include_sources: bool = True, coverage_cache: dict | None = None) -> dict:
+                   include_sources: bool = True, coverage_cache: dict | None = None,
+                   rules_version: str = RULE_VERSION) -> dict:
     prev = (date.fromisoformat(month + "-01") - timedelta(days=1)).strftime("%Y-%m")
-    rows = comparison if comparison is not None else comparison_rows(conn, month, active_only)
+    rows = comparison if comparison is not None else comparison_for_rules(conn, month, active_only, rules_version)
     cohort = rows
     if not rows.empty:
         rows = rows[rows["isin"] == isin]
         if amc:
             rows = rows[rows["amc_name"] == amc]
+    if rules_version == LEGACY_RULE_VERSION:
+        ids = set(int(v) for v in cohort["scheme_id"]) if not cohort.empty else set()
+        if amc and not cohort.empty:
+            ids = set(int(v) for v in cohort.loc[cohort["amc_name"] == amc, "scheme_id"])
+        guard_legacy_inputs(conn, ids, [prev, month], [isin], include_nav=include_sources)
+        guard_legacy_frame(rows)
     funds = []
     for row in rows.to_dict("records"):
         sid = int(row["scheme_id"])
@@ -85,7 +93,7 @@ def stock_evidence(conn: sqlite3.Connection, isin: str, month: str,
     all_priced = bool(funds) and all(row["flow_lakhs"] is not None and
                                     row["flow_lakhs"] == row["flow_lakhs"] for row in funds)
     return {"isin": isin, "month": month, "prev_month": prev, "amc": amc,
-            "release_id": release_id or content_id(conn), "rule_version": RULE_VERSION,
+            "release_id": release_id or content_id(conn, rules_version), "rule_version": rules_version,
             "active_only": active_only, "funds": funds, "coverage": coverage,
             "raw_previous_shares": sum(row["raw_quantity_prev"] for row in funds) if funds else None,
             "adjusted_previous_shares": sum(row["quantity_prev"] for row in funds) if funds else None,

@@ -73,16 +73,17 @@ def diff_holdings(prev: pd.DataFrame, curr: pd.DataFrame,
         suffixes=("_prev", "_curr"), indicator=True,
     )
 
-    m["quantity_prev"] = pd.to_numeric(m["quantity_prev"], errors="coerce").fillna(0.0)
-    m["quantity_curr"] = pd.to_numeric(m["quantity_curr"], errors="coerce").fillna(0.0)
-    m["market_value_lakhs_prev"] = pd.to_numeric(
-        m["market_value_lakhs_prev"], errors="coerce"
-    ).fillna(0.0)
-    m["market_value_lakhs_curr"] = pd.to_numeric(
-        m["market_value_lakhs_curr"], errors="coerce"
-    ).fillna(0.0)
-    m["pct_nav_prev"] = pd.to_numeric(m["pct_nav_prev"], errors="coerce").fillna(0.0)
-    m["pct_nav_curr"] = pd.to_numeric(m["pct_nav_curr"], errors="coerce").fillna(0.0)
+    # A missing row is an absent position. A missing cell in a present row is
+    # unknown, and must never manufacture a sale, purchase or NAV change.
+    for suffix, absent in (("_prev", m["_merge"] == "right_only"),
+                           ("_curr", m["_merge"] == "left_only")):
+        for column in ("quantity", "market_value_lakhs", "pct_nav"):
+            key = column + suffix
+            values = pd.to_numeric(m[key], errors="coerce").astype(float)
+            values = values.where(np.isfinite(values))
+            if column == "quantity":
+                values = values.where(values >= 0)
+            m[key] = values.mask(absent, 0.0)
 
     m["qty_change"] = m["quantity_curr"] - m["quantity_prev"]
     m["value_change_lakhs"] = m["market_value_lakhs_curr"] - m["market_value_lakhs_prev"]
@@ -91,13 +92,15 @@ def diff_holdings(prev: pd.DataFrame, curr: pd.DataFrame,
     m["prev_month"] = prev_month
 
     # Action classification
+    unknown_quantity = m["quantity_prev"].isna() | m["quantity_curr"].isna()
     conditions = [
+        unknown_quantity,
         m["_merge"] == "right_only",
         m["_merge"] == "left_only",
         m["qty_change"] > 0,
         m["qty_change"] < 0,
     ]
-    choices = ["new", "exited", "added", "trimmed"]
+    choices = ["unavailable", "new", "exited", "added", "trimmed"]
     m["action"] = np.select(conditions, choices, default="unchanged")
 
     # flow_lakhs: qty_change * implied_px_curr (or full entry / exit values)
@@ -105,7 +108,7 @@ def diff_holdings(prev: pd.DataFrame, curr: pd.DataFrame,
     _mv_curr = m["market_value_lakhs_curr"].to_numpy(dtype=float)
     implied_px_curr = np.divide(
         _mv_curr, _qty_curr,
-        out=np.zeros_like(_mv_curr, dtype=float), where=_qty_curr > 0,
+        out=np.full_like(_mv_curr, np.nan, dtype=float), where=_qty_curr > 0,
     )
     flow_both = m["qty_change"] * implied_px_curr
     both_zero = (m["quantity_prev"] <= 0) & (m["quantity_curr"] <= 0)
@@ -121,10 +124,15 @@ def diff_holdings(prev: pd.DataFrame, curr: pd.DataFrame,
         -m["market_value_lakhs_prev"],
     ]
     m["flow_lakhs"] = np.select(flow_conditions, flow_choices, default=flow_both)
+    m.loc[unknown_quantity, "flow_lakhs"] = np.nan
+    missing_zero_value = both_zero & (m["market_value_lakhs_prev"].isna() |
+                                      m["market_value_lakhs_curr"].isna())
+    m.loc[missing_zero_value, "flow_lakhs"] = np.nan
 
     # price_effect_lakhs as residual: preserves flow + price == value to the paisa.
     price_residual = m["value_change_lakhs"] - m["flow_lakhs"]
-    clean_exit = (m["quantity_curr"] <= 0) & (m["market_value_lakhs_curr"] == 0)
+    clean_exit = ((m["quantity_curr"] <= 0) & (m["market_value_lakhs_curr"] == 0)
+                  & m["value_change_lakhs"].notna() & m["flow_lakhs"].notna())
     m["price_effect_lakhs"] = np.where(clean_exit, 0.0, price_residual)
 
     cols = [
@@ -163,14 +171,17 @@ def persist_deltas(conn: sqlite3.Connection, deltas: pd.DataFrame,
                     [(m,) for m in sorted(months)])
     has_flow = "flow_lakhs" in deltas.columns
     has_price = "price_effect_lakhs" in deltas.columns
+    def nullable(value):
+        return float(value) if pd.notna(value) and np.isfinite(float(value)) else None
+
     rows = [
         (
             int(r.scheme_id), str(r.isin), str(r.report_month),
             str(r.prev_month) if pd.notna(r.prev_month) else None,
-            float(r.qty_change), float(r.value_change_lakhs),
-            float(r.flow_lakhs) if has_flow and pd.notna(r.flow_lakhs) else None,
-            float(r.price_effect_lakhs) if has_price and pd.notna(r.price_effect_lakhs) else None,
-            float(r.pct_nav_change), str(r.action),
+            nullable(r.qty_change), nullable(r.value_change_lakhs),
+            nullable(r.flow_lakhs) if has_flow else None,
+            nullable(r.price_effect_lakhs) if has_price else None,
+            nullable(r.pct_nav_change), str(r.action),
         )
         for r in deltas.itertuples(index=False)
     ]

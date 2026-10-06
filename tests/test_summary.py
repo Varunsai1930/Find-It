@@ -73,9 +73,9 @@ def test_unvalidated_month_is_flagged_but_still_described(tmp_path):
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
-def test_non_finite_numbers_are_withheld(tmp_path, bad):
+def test_non_finite_quantities_are_withheld(tmp_path, bad):
     conn = _db(tmp_path)
-    conn.execute("UPDATE mf_holding_deltas SET value_change_lakhs = ?", (bad,))
+    conn.execute("UPDATE mf_holding_deltas SET qty_change = ?", (bad,))
     conn.commit()
     result = get_summary(conn, 1, "2026-08")
     assert result["reason"] == "nonfinite_or_invalid_data"

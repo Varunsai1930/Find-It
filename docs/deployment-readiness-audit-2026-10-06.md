@@ -2,6 +2,8 @@
 
 **Decision: not ready for a public launch in its current configuration.** The application and installed package run successfully, and the local frozen-release demonstration is usable. Confirmed calculation/validation gaps and an unverified public hosting setup remain. Passing tests demonstrate the covered behavior; they do not complete the outstanding release and operational checks below.
 
+**Implementation update:** A01–A08 have since been addressed and local staging gates pass. This document preserves the original audit evidence; see the [implementation verification](staging-implementation-verification-2026-10-06.md) for the current results and remaining hosted/human gates. Public launch remains pending.
+
 Scope: public, read-only FindIt website, as selected by the owner. Baseline commit `4b33e666e43bda024838d498d51d3c070995f632`, plus the uncommitted legacy-WAL compatibility fix produced during this audit. No public deployment, data promotion, production-data repair, contact with participants, or source acquisition occurred.
 
 ## Follow-up completed

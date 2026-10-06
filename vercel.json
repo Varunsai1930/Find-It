@@ -1,0 +1,22 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "fastapi",
+  "public": false,
+  "functions": {
+    "app.py": {
+      "maxDuration": 30,
+      "includeFiles": "{deployment/releases.json,deploy-data/*.db,deploy-data/*.json,tools/prepare_vercel_release.py,findit/web/templates/**,findit/web/static/**}",
+      "excludeFiles": "{real_data/**,outputs/**,docs/**,tests/**,.venv/**,.claude/**,.agents/**,.codex/**,.aws/**,.env,.env.*,build/**,dist/**,**/*.xlsx,**/*.xls,**/*.parsed.csv,.vercel-build-audit.json,tools/smoke_installed_wheel.py}"
+    }
+  },
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "X-Robots-Tag", "value": "noindex, nofollow" }
+      ]
+    }
+  ]
+}

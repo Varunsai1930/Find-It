@@ -29,8 +29,9 @@ def file_sha256(path: Path) -> str:
 
 def _holdings_df(conn, scheme_id: int, month: str) -> pd.DataFrame:
     return pd.read_sql_query(
-        "SELECT isin, quantity, market_value_lakhs, pct_nav "
-        "FROM mf_holdings_monthly WHERE scheme_id = ? AND report_month = ?",
+        "SELECT h.isin, h.quantity, h.market_value_lakhs, h.pct_nav, s.instrument_type "
+        "FROM mf_holdings_monthly h LEFT JOIN stocks s ON s.isin=h.isin "
+        "WHERE h.scheme_id = ? AND h.report_month = ?",
         conn, params=(scheme_id, month),
     )
 

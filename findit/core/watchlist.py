@@ -6,7 +6,7 @@ import sqlite3
 from urllib.parse import urlencode
 
 from findit.core.evidence import stock_evidence
-from findit.core.consensus_signals import comparison_rows
+from findit.core.replay import comparison_for_rules
 from findit.store.releases import RULE_VERSION, content_id
 
 
@@ -18,16 +18,17 @@ def parse_stocks(value: str) -> list[str]:
 
 
 def monthly_report(conn: sqlite3.Connection, month: str, stocks: list[str],
-                   active_only: bool = True, release_id: str | None = None, comparison=None) -> dict:
+                   active_only: bool = True, release_id: str | None = None, comparison=None,
+                   rules_version: str = RULE_VERSION) -> dict:
     items = []
     if stocks and comparison is None:
-        comparison = comparison_rows(conn, month, active_only)
+        comparison = comparison_for_rules(conn, month, active_only, rules_version)
     coverage_cache = {}
-    release_id = release_id or content_id(conn)
+    release_id = release_id or content_id(conn, rules_version)
     for isin in sorted(set(stocks)):
         stock = conn.execute("SELECT name,instrument_type FROM stocks WHERE isin=?", (isin,)).fetchone()
         e = stock_evidence(conn, isin, month, active_only, comparison=comparison, release_id=release_id,
-                           include_sources=False, coverage_cache=coverage_cache)
+                           include_sources=False, coverage_cache=coverage_cache, rules_version=rules_version)
         by_house = {}
         for fund in e["funds"]:
             by_house[fund["amc_name"]] = by_house.get(fund["amc_name"], 0) + fund["qty_change"]
@@ -45,15 +46,15 @@ def monthly_report(conn: sqlite3.Connection, month: str, stocks: list[str],
                       "largest_compared_changes": [{"fund": f["scheme_name"], "shares": f["qty_change"],
                                                      "flow_lakhs": f["flow_lakhs"]} for f in sorted(
                           e["funds"], key=lambda f: abs(f["qty_change"]), reverse=True)[:3]],
-                      "evidence_url": f"/evidence/{isin}?" + urlencode({"month": month, "active_only": int(active_only), "release": release_id, "rules": RULE_VERSION}),
+                      "evidence_url": f"/evidence/{isin}?" + urlencode({"month": month, "active_only": int(active_only), "release": release_id, "rules": rules_version}),
                       "review_status": e["review_status"]})
-    return {"month": month, "release_id": release_id, "rule_version": RULE_VERSION,
+    return {"month": month, "release_id": release_id, "rule_version": rules_version,
             "scope": "Domestic equity; " + ("active stock-pickers" if active_only else "all fund types"),
             "market_completeness": "unknown", "stocks": items,
             "claims": "Research utility only. No established investment-performance claim."}
 
 
-def render_report(report: dict, evidence_base_url: str = "http://127.0.0.1:65100") -> str:
+def render_report(report: dict, evidence_base_url: str = "http://127.0.0.1:65100", *, hosted: bool = False) -> str:
     evidence_base_url = evidence_base_url.rstrip("/")
     def available(value):
         return value if value is not None else "unavailable"
@@ -67,6 +68,12 @@ def render_report(report: dict, evidence_base_url: str = "http://127.0.0.1:65100
              "2. Copy the complete Evidence URL below into your browser address bar (or click it in a Markdown viewer).",
              f"3. These links use the exporting server address {evidence_base_url}. If reopening on another local address, replace only that address; keep the entire path and query unchanged.",
              "4. Check the evidence page shows the same release, rules, month and scope as this report. Missing or mismatched releases are rejected, never replaced with current data.", ""]
+    if hosted:
+        begin = lines.index("1. Start your local FindIt server with the retained release database and matching .json manifest. Keep the matching application/rules version.")
+        lines[begin:begin + 4] = [
+            "1. Open the complete Evidence URL below in your browser.",
+            f"2. These links reopen the exporting deployment at {evidence_base_url}. Sign in if deployment protection requires it.",
+            "3. Check the evidence page shows the same release, rules, month and scope as this report. Missing or mismatched releases are rejected, never replaced with current data."]
     for stock in report["stocks"]:
         lines += [f"## {stock['name']} ({stock['isin']})", f"Status: {stock['status']}",
                   f"Fund houses net adding/reducing shares: {available(stock['houses_buying'])}/{available(stock['houses_selling'])}",

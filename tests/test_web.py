@@ -152,8 +152,8 @@ def test_fund_house_summary_does_not_treat_a_split_as_a_purchase(tmp_path):
 def test_fund_house_summary_cannot_rank_partially_unpriced_changes(tmp_path):
     db = _copy_db(tmp_path)
     with sqlite3.connect(db) as conn:
-        conn.execute("UPDATE mf_holding_deltas SET flow_lakhs = NULL "
-                     "WHERE scheme_id = 1 AND isin = 'INE002A01018'")
+        conn.execute("UPDATE mf_holdings_monthly SET market_value_lakhs = NULL "
+                     "WHERE scheme_id = 1 AND isin = 'INE002A01018' AND report_month='2026-08'")
         house = consensus_signals.fund_house_activity(conn, "2026-08")["houses"]["A AMC"]
     assert house["increased"] == 1
     assert house["unpriced"] == 1
@@ -895,17 +895,18 @@ def test_stock_detail_marks_withheld_and_unvalidated_rows(tmp_path):
     assert (body["withheld_count"], body["not_validated_count"], body["validation"]) == (1, 1, "checked")
     # The raw withheld row stays available for inspection.
     withheld = next(h for h in body["holdings"] if h["scheme_id"] == 3)
-    assert (withheld["quantity"], withheld["action"]) == (90, "added")
+    assert (withheld["quantity"], withheld["action"]) == (90, None)
 
     html = client.get("/fragments/stock", params={"q": "INE002A01018", "month": "2026-08"}).text
     row = _holding_row(html, "B Value")
     assert 'class="is-withheld"' in row and ">withheld<" in row
-    assert "raw: added · not validated" in row
+    assert "Either snapshot failed validation." in row
+    assert "raw: added" not in row
     assert "tag--added" not in row  # never styled as validated activity
-    assert "1 fund failed validation for Aug 2026: its row is shown for inspection only" in html
-    assert "1 has no validation result for this month." in html
+    assert "1 fund comparison withheld for Aug 2026: its row is shown for inspection only" in html
+    assert "1 has a comparison without both snapshots validated." in html
     unvalidated = _holding_row(html, "A Mid Cap")
-    assert "tag--added" in unvalidated and "not validated" in unvalidated
+    assert "tag--added" not in unvalidated and "not validated" in unvalidated
     assert "not validated" not in _holding_row(html, "A Flexi Cap")
     # The activity block is the ranking's, which leaves scheme 3 out: one AMC buys.
     activity = html[html.index("Fund activity"):html.index("Fund holdings")]

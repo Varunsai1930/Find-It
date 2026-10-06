@@ -14,7 +14,7 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -25,18 +25,32 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: pyproject.toml
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Dashboard interaction tests
         run: node --test tests/web.test.cjs
-      - name: Install
-        run: python -m pip install -e ".[dev]"
+      - name: Install locked development environment
+        run: |
+          python -m pip install uv==0.12.19
+          uv sync --locked --extra dev --python "$(command -v python)"
       - name: Ruff
-        run: ruff check .
+        run: .venv/bin/ruff check .
       # Tests build their own temporary databases: no tracker.db, real_data/
       # or network needed.
       - name: Tests
-        run: python -m pytest -q
+        run: .venv/bin/python -m pytest -q
+      - name: Build and smoke the installed wheel outside the checkout
+        run: |
+          uv build --wheel --out-dir "$RUNNER_TEMP/findit-wheel"
+          uv export --locked --no-dev --no-emit-project --quiet --output-file "$RUNNER_TEMP/findit-runtime.txt"
+          uv venv --python "$(command -v python)" "$RUNNER_TEMP/findit-wheel-env"
+          uv pip install --python "$RUNNER_TEMP/findit-wheel-env/bin/python" -r "$RUNNER_TEMP/findit-runtime.txt"
+          uv pip install --python "$RUNNER_TEMP/findit-wheel-env/bin/python" --no-deps "$RUNNER_TEMP"/findit-wheel/*.whl
+          uv pip check --python "$RUNNER_TEMP/findit-wheel-env/bin/python"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/findit-wheel-env/bin/python" "$GITHUB_WORKSPACE/tools/smoke_installed_wheel.py" --checkout "$GITHUB_WORKSPACE"
+      - name: Check known runtime and development dependency advisories
+        run: |
+          uv export --locked --extra dev --no-dev --no-emit-project --quiet --output-file "$RUNNER_TEMP/findit-dev.txt"
+          uv tool run --from pip-audit==2.10.1 pip-audit --disable-pip --require-hashes --strict --progress-spinner off -r "$RUNNER_TEMP/findit-dev.txt"

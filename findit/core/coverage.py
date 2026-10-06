@@ -12,6 +12,9 @@ from datetime import date, timedelta
 from typing import Any
 
 from findit.core import consensus_signals, publication
+from findit.core.consensus_signals import fund_house_activity
+from findit.ingest.intake import load_registry
+from findit.core.data_quality import bad_domestic_quantity_pairs
 from findit.store import queries
 
 
@@ -27,7 +30,9 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
         conn, "mf_holdings_monthly", month, active_only).items() if house == amc}
     previous = set(_month_schemes(conn, "mf_holdings_monthly", prev, False))
     statuses = queries.scheme_statuses(conn)
-    passed = {sid for sid in loaded if statuses.get((sid, month)) == queries.STATUS_OK}
+    unsafe = bad_domestic_quantity_pairs(conn)
+    passed = {sid for sid in loaded if statuses.get((sid, month)) == queries.STATUS_OK
+              and (sid, month) not in unsafe}
     expected_rows = []
     prior_rows = []
     inventories = []
@@ -64,7 +69,7 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
         elif sid not in previous:
             state = ("not_in_previous_official_inventory" if known and
                      sid not in {r[2] for r in prior_rows} else "missing_previous")
-        elif any(statuses.get((sid, m)) == queries.STATUS_QUARANTINED for m in (prev, month)):
+        elif any(statuses.get((sid, m)) == queries.STATUS_QUARANTINED or (sid, m) in unsafe for m in (prev, month)):
             state = "withheld"
         elif any(statuses.get((sid, m)) != queries.STATUS_OK for m in (prev, month)):
             state = "not_validated"
@@ -88,7 +93,7 @@ def house_coverage(conn: sqlite3.Connection, month: str, amc: str,
             "outside_inventory": len(extras),
             "out_of_scope": sum(not r[4] or (active_only and not r[3]) for r in expected_rows),
             "missing_previous": len(loaded - previous),
-            "withheld_count": sum(any(statuses.get((sid, m)) == queries.STATUS_QUARANTINED
+            "withheld_count": sum(any(statuses.get((sid, m)) == queries.STATUS_QUARANTINED or (sid, m) in unsafe
                                       for m in (prev, month)) for sid in loaded),
             "not_validated_count": len(loaded - passed),
             "inventory_source": _scalar(conn, "SELECT source_url FROM coverage_inventories "
@@ -147,7 +152,9 @@ def month_coverage(conn: sqlite3.Connection, month: str, equity_only: bool = Tru
     in_scope = _month_schemes(conn, "mf_holdings_monthly", month, active_only)
     validated = queries.has_status_table(conn)
     statuses = {sid: status for (sid, _), status in queries.scheme_statuses(conn, month).items()}
-    withheld = {sid for sid in in_scope if statuses.get(sid) == queries.STATUS_QUARANTINED}
+    unsafe = bad_domestic_quantity_pairs(conn)
+    withheld = {sid for sid in in_scope if statuses.get(sid) == queries.STATUS_QUARANTINED
+                or (sid, month) in unsafe}
     compared = consensus_signals.voting_schemes(
         conn, month, "equity" if equity_only else None, active_only)
     with_deltas = _month_schemes(conn, "mf_holding_deltas", month, active_only).keys()
@@ -155,7 +162,10 @@ def month_coverage(conn: sqlite3.Connection, month: str, equity_only: bool = Tru
     # Has a previous month, not withheld for this month, but that previous
     # month itself failed validation -- excluded from "compared" for that
     # reason, not because the equity filter dropped its holdings.
-    prev_withheld = (_prev_withheld_schemes(conn, month, active_only)
+    unsafe_previous = {int(sid) for sid, prev in conn.execute(
+        "SELECT DISTINCT scheme_id,prev_month FROM mf_holding_deltas WHERE report_month=?", (month,))
+        if (int(sid), str(prev)) in unsafe}
+    prev_withheld = ((_prev_withheld_schemes(conn, month, active_only) | unsafe_previous)
                      & in_scope.keys()) - withheld
     prev_month = _scalar(conn, "SELECT MAX(prev_month) FROM mf_holding_deltas"
                                " WHERE report_month = ?", (month,))
@@ -177,9 +187,35 @@ def month_coverage(conn: sqlite3.Connection, month: str, equity_only: bool = Tru
         "in_scope": len(in_scope),
         "loaded": len(_month_schemes(conn, "mf_holdings_monthly", month, False)),
         "validated": validated,
-        "passed": sum(statuses.get(sid) == queries.STATUS_OK for sid in in_scope),
+        "passed": sum(statuses.get(sid) == queries.STATUS_OK and (sid, month) not in unsafe for sid in in_scope),
         "not_validated": sum(sid not in statuses for sid in in_scope),
         "prev_month": prev_month,
         "public_on": publication.mf_disclosure_deadline(month).isoformat(),
         "last_ingest": _scalar(conn, "SELECT MAX(started_at) FROM ingest_runs"),
     }
+
+
+def audit(conn: sqlite3.Connection, months: list[str]) -> dict:
+    """Registered houses, loaded portfolios and reviewed inventories; no guessed gaps."""
+    houses = {a.amc for a in load_registry()}
+    houses.update(str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM schemes"))
+    if queries.has_table(conn, "coverage_inventories"):
+        houses.update(str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM coverage_inventories"))
+    statuses = queries.scheme_statuses(conn)
+    results = []
+    for month in months:
+        activity = fund_house_activity(conn, month)
+        for amc in sorted(houses):
+            compared = set(activity["houses"].get(amc, {}).get("compared_ids", []))
+            result = house_coverage(conn, month, amc, compared)
+            snapshots = conn.execute(
+                "SELECT DISTINCT s.scheme_id, s.scheme_name, s.scheme_title, s.is_active_equity "
+                "FROM schemes s JOIN mf_holdings_monthly h USING(scheme_id) "
+                "WHERE s.amc_name = ? AND h.report_month = ? ORDER BY s.scheme_id", (amc, month))
+            result["loaded_funds"] = [
+                {"scheme_id": int(sid), "sheet": name, "name": title, "active": bool(active),
+                 "validation": statuses.get((sid, month), "not_validated"),
+                 "compared": sid in compared} for sid, name, title, active in snapshots]
+            results.append({"amc": amc, "month": month, **result})
+    return {"scope": "active stock-pickers, domestic equity; registered-house audit, unknown denominators explicit",
+            "market_completeness": "unknown", "houses": results}

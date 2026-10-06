@@ -111,6 +111,15 @@
       if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
     }
   }
+  function downloadText(contents, type, filename) {
+    var url = URL.createObjectURL(new Blob([contents], { type: type }));
+    var link = document.createElement("a");
+    link.href = url; link.download = filename; link.hidden = true;
+    document.body.append(link);
+    link.click(); link.remove();
+    // Give the browser time to start reading the Blob before releasing it.
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
   var watchlistSequence = 0;
   async function refreshWatchlist() {
     if (!watchResults || !currentMonth()) return;
@@ -118,16 +127,18 @@
     if (inflight.watchlist) inflight.watchlist.abort();
     var download = document.getElementById("watchlist-report");
     download.hidden = true;
+    delete download.dataset.reportRequest;
     if (!watchlist.length) {
       watchResults.textContent = "Your watchlist is empty. Open a stock and choose Follow stock.";
       download.hidden = true;
       return;
     }
-    var q = new URLSearchParams({ month: currentMonth(), stocks: watchlist.join(","),
-                                 active_only: document.getElementById("active-only").checked ? "1" : "0" });
+    var body = { month: currentMonth(), stocks: watchlist.slice(),
+                 active_only: document.getElementById("active-only").checked };
     watchResults.textContent = "Loading monthly changes…";
     try {
-      var result = await load("watchlist", "/api/watchlist?" + q);
+      var result = await load("watchlist", "/api/watchlist", { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (sequence !== watchlistSequence) return;
       if (!result.ok) throw new Error("HTTP " + result.status);
       var report = JSON.parse(result.body);
@@ -150,13 +161,29 @@
         remove.addEventListener("click", function () { watchlist = watchlist.filter(function (s) { return s !== stock.isin; }); saveWatchlist(); refreshWatchlist(); });
         row.append(remove); watchResults.append(row);
       });
-      q.set("release", report.release_id); q.set("rules", report.rule_version);
-      download.href = "/watchlist/report?" + q; download.hidden = false;
+      body.release = report.release_id; body.rules = report.rule_version;
+      download.dataset.reportRequest = JSON.stringify(body);
+      download.href = "/watchlist/report"; download.hidden = false;
     } catch (e) {
       if (sequence === watchlistSequence && e.name !== "AbortError") watchResults.replaceChildren(stateNode("error", "Could not load your watchlist. " + e.message, refreshWatchlist));
     }
   }
   if (watchResults) {
+    document.getElementById("watchlist-report").addEventListener("click", async function (event) {
+      event.preventDefault();
+      var payload = event.target.dataset.reportRequest;
+      if (!payload) return;
+      try {
+        var result = await load("watchlist-download", "/watchlist/report", {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+        if (!result.ok) throw new Error("HTTP " + result.status);
+        var report = JSON.parse(payload);
+        downloadText(result.body, "text/markdown",
+          "findit-" + report.month + "-" + report.release.slice(0, 12) + ".md");
+      } catch (e) {
+        if (e.name !== "AbortError") watchStatus.textContent = "Report download failed: " + e.message;
+      }
+    });
     document.getElementById("watchlist-export").addEventListener("click", function () {
       var url = URL.createObjectURL(new Blob([JSON.stringify({ version: 1, stocks: watchlist }, null, 2)], { type: "application/json" }));
       var link = document.createElement("a"); link.href = url; link.download = "findit-watchlist.json"; link.click(); URL.revokeObjectURL(url);
@@ -194,12 +221,12 @@
 
   // Fetch text, cancelling any earlier request for the same slot so a slow
   // response can never overwrite a newer one.
-  async function load(slot, url) {
+  async function load(slot, url, options) {
     if (inflight[slot]) inflight[slot].abort();
     var ctrl = new AbortController();
     inflight[slot] = ctrl;
     try {
-      var res = await fetch(url, { signal: ctrl.signal });
+      var res = await fetch(url, Object.assign({}, options, { signal: ctrl.signal }));
       var body = await res.text();
       if (ctrl.signal.aborted) throw new DOMException("Request cancelled", "AbortError");
       return { ok: res.ok, status: res.status, body: body };

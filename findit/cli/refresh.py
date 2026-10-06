@@ -64,7 +64,8 @@ def refresh(source: Path, staged: Path, previous: str, current: str,
             conn.close()
         report["status"] = "staged_review_required"
         if releases:
-            report["release"] = snapshot(staged, releases, f"Monthly research {current}", parent, review_notes)
+            report["release"] = snapshot(staged, releases, f"Monthly research {current}", parent, review_notes,
+                                         activate=True, report_month=current)
             report["status"] = "released"
     except BaseException as exc:
         report.update(status="failed", error=f"{type(exc).__name__}: {exc}")

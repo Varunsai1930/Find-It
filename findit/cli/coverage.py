@@ -8,10 +8,8 @@ import sqlite3
 from pathlib import Path
 from urllib.parse import urlparse
 
-from findit.core.coverage import house_coverage
-from findit.core.consensus_signals import fund_house_activity
-from findit.store import db, queries
-from findit.ingest.intake import load_registry
+from findit.core.coverage import audit as audit
+from findit.store import db
 
 
 def import_inventory(conn: sqlite3.Connection, document: dict) -> None:
@@ -57,32 +55,6 @@ def import_inventory(conn: sqlite3.Connection, document: dict) -> None:
         conn.execute("DELETE FROM expected_funds WHERE amc_name = ? AND report_month = ?",
                      (amc, month))
         conn.executemany("INSERT INTO expected_funds VALUES (?, ?, ?, ?, ?, ?, ?, ?)", values)
-
-
-def audit(conn: sqlite3.Connection, months: list[str]) -> dict:
-    """Registered houses, loaded portfolios and reviewed inventories; no guessed gaps."""
-    houses = {a.amc for a in load_registry()}
-    houses.update(str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM schemes"))
-    if queries.has_table(conn, "coverage_inventories"):
-        houses.update(str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM coverage_inventories"))
-    statuses = queries.scheme_statuses(conn)
-    results = []
-    for month in months:
-        activity = fund_house_activity(conn, month)
-        for amc in sorted(houses):
-            compared = set(activity["houses"].get(amc, {}).get("compared_ids", []))
-            result = house_coverage(conn, month, amc, compared)
-            snapshots = conn.execute(
-                "SELECT DISTINCT s.scheme_id, s.scheme_name, s.scheme_title, s.is_active_equity "
-                "FROM schemes s JOIN mf_holdings_monthly h USING(scheme_id) "
-                "WHERE s.amc_name = ? AND h.report_month = ? ORDER BY s.scheme_id", (amc, month))
-            result["loaded_funds"] = [
-                {"scheme_id": int(sid), "sheet": name, "name": title, "active": bool(active),
-                 "validation": statuses.get((sid, month), "not_validated"),
-                 "compared": sid in compared} for sid, name, title, active in snapshots]
-            results.append({"amc": amc, "month": month, **result})
-    return {"scope": "active stock-pickers, domestic equity; registered-house audit, unknown denominators explicit",
-            "market_completeness": "unknown", "houses": results}
 
 
 def main(argv: list[str] | None = None) -> int:

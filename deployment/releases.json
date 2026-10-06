@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "month": "2026-08",
+  "current_release": "93c004568c08d1361833798a41b18062c7dfaa7040aacb61d9fe986295ed8e8d",
+  "releases": [
+    {
+      "release_id": "93c004568c08d1361833798a41b18062c7dfaa7040aacb61d9fe986295ed8e8d",
+      "rule_version": "readiness-2026-10-06",
+      "database_sha256": "5ddde8610c6ea48bad6e8fe6d643f7d60bf062a43e9e9d92a3600d3ad279ab75",
+      "manifest_sha256": "e4e805cee11aa2b1a4e460594c096928db1efcef11c1ce671348ea29902771fb",
+      "database_bytes": 102207488
+    },
+    {
+      "release_id": "28bb0fa89c482a98b86fa6d3c9f7f9b372bb63d2f8f1aee70a82593eacc756ec",
+      "rule_version": "readiness-2026-10-01",
+      "database_sha256": "dc70cbde430b8e4ce4a7c7d5cdd91b00fbeeefdc6047530c286bfd83b96f4b74",
+      "manifest_sha256": "528770f8cd60384f9ddda464dc14b2cb295b0065ea46b72a4a25ed8571916647",
+      "database_bytes": 102060032
+    }
+  ]
+}

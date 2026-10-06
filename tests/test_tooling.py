@@ -114,7 +114,7 @@ def test_pyproject_parses():
     ]:
         assert pinned in deps, f"missing dependency {pinned}"
     dev = data["project"]["optional-dependencies"]["dev"]
-    assert "pytest==8.4.2" in dev
+    assert "pytest==9.0.3" in dev
     assert "ruff==0.16.5" in dev
     ruff = data["tool"]["ruff"]
     assert ruff["target-version"] == "py312"

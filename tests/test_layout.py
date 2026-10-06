@@ -56,8 +56,12 @@ def test_no_module_imports_a_higher_layer():
 
 
 def test_all_code_lives_in_the_package():
-    """Stray top-level modules are importable only by accident of the cwd."""
-    assert sorted(p.name for p in ROOT.glob("*.py")) == []
+    """Only the explicit Vercel adapter lives outside the installed package.
+
+    Vercel imports a root ASGI instance; application behavior stays in findit.
+    Requiring this exact set still rejects every other stray top-level module.
+    """
+    assert sorted(p.name for p in ROOT.glob("*.py")) == ["app.py"]
 
 
 def test_every_command_is_reachable_through_findit(capsys):
