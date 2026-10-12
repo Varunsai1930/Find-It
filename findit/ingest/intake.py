@@ -173,7 +173,8 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
     result.problems.extend(_expand_zips(folder))
     books = _workbooks(folder)
     if amc == "UTI AMC" and any(
-        p.name.startswith("fw_uti_mf_scheme_portfolios_") for p in folder.glob("*.zip")
+        re.match(r"fw_+uti_mf_scheme_portfolios_", p.name, re.I)
+        for p in folder.glob("*.zip")
     ):
         # The official ZIP also contains riskometer, dividend, and futures
         # tables. Only the SEBI exposure workbook contains scheme holdings.

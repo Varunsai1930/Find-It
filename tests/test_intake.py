@@ -14,6 +14,7 @@ from pathlib import Path
 
 import openpyxl
 import pandas as pd
+import pytest
 
 from findit.ingest import amfi_mf_parser
 from findit.cli import intake as intake_cli
@@ -78,20 +79,24 @@ def test_accepted_folders_give_csvs_and_the_load_command(tmp_path):
     assert missing["HDFC AMC"].startswith("https://www.hdfcfund.com/")
 
 
-def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path):
+@pytest.mark.parametrize("archive_name", [
+    "fw_uti_mf_scheme_portfolios_31.08.2026.zip",
+    "FW__UTI_MF_SCHEME_PORTFOLIOS_-_30.09.2026_.zip",
+])
+def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path, archive_name):
     month = _month(tmp_path)
     exposure = _book(tmp_path / "exposure.xlsx", {"UTI Flexi Cap Fund": "UTI Flexi Cap Fund"})
     auxiliary = _book(tmp_path / "risk.xlsx", {"Notes": "Riskometer"})
     folder = month / "UTI AMC"
     folder.mkdir(parents=True)
-    with zipfile.ZipFile(folder / "fw_uti_mf_scheme_portfolios_31.08.2026.zip", "w") as zf:
+    with zipfile.ZipFile(folder / archive_name, "w") as zf:
         zf.write(exposure, "Sebi Exposure as on 31 Aug 2026.xlsx")
         zf.write(auxiliary, "Risk-o-meter_Funds and Benchmark_Aug 2026.xlsx")
     report = intake.prepare(month, "2026-08")
     assert report.ok, intake.render(report)
     assert not (folder / intake.UNZIPPED_DIR).exists()
     assert report.results[0].files == [
-        "_unzipped/fw_uti_mf_scheme_portfolios_31.08.2026/"
+        f"_unzipped/{Path(archive_name).stem}/"
         "Sebi Exposure as on 31 Aug 2026.xlsx"]
 
 
