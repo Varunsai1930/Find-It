@@ -185,3 +185,17 @@ def test_an_isin_on_several_lines_is_one_holding(tmp_path):
     assert stored[HDFC_BANK] == (2857268 + 1164800, 21376.65 + 8714.45, 5.63 + 2.29)
     assert stored[RELIANCE] == (50, 5401.89, 4.5)
     assert stored["INE975G08140"] == (0, None, 34.3)  # as before: the last line stands
+
+
+def test_a_lot_with_an_unreadable_value_leaves_the_holding_value_unavailable(tmp_path):
+    """Summing only the readable lots once stored 150 shares worth the value of
+    100, which halved the implied price and understated the trading flow."""
+    july = _csv(tmp_path, "j.csv", "2026-07", [(HDFC_BANK, 100, 10.0, 100.0)])
+    august = _csv(tmp_path, "a.csv", "2026-08",
+                  [(HDFC_BANK, 100, 10.0, 60.0), (HDFC_BANK, 50, None, None)])
+    conn = _run(tmp_path, july, august)
+    assert conn.execute("SELECT quantity, market_value_lakhs, pct_nav FROM mf_holdings_monthly "
+                        "WHERE report_month = '2026-08'").fetchone() == (150, None, None)
+    # The share change is known; its rupee value is not.
+    assert conn.execute("SELECT qty_change, flow_lakhs FROM mf_holding_deltas "
+                        "WHERE report_month = '2026-08'").fetchone() == (50, None)
