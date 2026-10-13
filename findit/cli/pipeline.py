@@ -9,6 +9,8 @@ Loads every CSV into the database, runs the validation gate, computes deltas
 between --prev and --curr, and prints the consensus, the MF + FII/DII overlap,
 the signal's track record and a summary for every compared scheme. The steps
 themselves live in findit.pipeline; this module parses arguments and prints.
+--prev must be the calendar month before --curr; any other pair is refused
+before the database is opened.
 """
 import argparse
 import json
@@ -21,6 +23,7 @@ from pathlib import Path
 import pandas as pd
 
 from findit.core import consensus_signals, delta_calculator
+from findit.core.publication import require_adjacent_months
 from findit.pipeline import (
     build_overlap_view,
     file_sha256,
@@ -58,10 +61,16 @@ def main(argv: list[str] | None = None) -> None:
         metavar="CSV",
         help="One or more parsed CSVs to load (repeat --load for each batch)",
     )
-    ap.add_argument("--prev", required=True, help="Previous report month, e.g. 2026-03")
+    ap.add_argument("--prev", required=True,
+                    help="Previous report month, the month before --curr, e.g. 2026-03")
     ap.add_argument("--curr", required=True, help="Current report month, e.g. 2026-04")
     ap.add_argument("--db", default="tracker.db", help="SQLite file to use")
     args = ap.parse_args(argv)
+    # Before the database is opened: a refused run must load nothing.
+    try:
+        require_adjacent_months(args.prev, args.curr)
+    except ValueError as exc:
+        ap.error(f"--prev/--curr: {exc}")
 
     conn = db.get_connection(args.db)
     # The run log says "running" until the last step finishes, and "failed"

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from findit.store import db
 from findit.core import delta_calculator
+from findit.core.publication import require_adjacent_months
 
 
 def rebuild_copy(src_db: str | Path, dst_copy: str | Path, prev: str, curr: str) -> int:
@@ -50,13 +51,20 @@ def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--db", default=None, help="Source (original) DB; copied, never written")
     ap.add_argument("--db-copy", required=True, help="Destination copy DB to rebuild")
-    ap.add_argument("--prev", required=True, help="Previous report month, e.g. 2026-03")
+    ap.add_argument("--prev", required=True,
+                    help="Previous report month, the month before --curr, e.g. 2026-03")
     ap.add_argument("--curr", required=True, help="Current report month, e.g. 2026-04")
     return ap
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    ap = build_parser()
+    args = ap.parse_args(argv)
+    # Before copying or opening anything.
+    try:
+        require_adjacent_months(args.prev, args.curr)
+    except ValueError as exc:
+        ap.error(f"--prev/--curr: {exc}")
     if args.db:
         n = rebuild_copy(args.db, args.db_copy, args.prev, args.curr)
         print(f"Rebuilt {n} deltas for {args.prev} -> {args.curr} in {args.db_copy}")

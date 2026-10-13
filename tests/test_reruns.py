@@ -117,6 +117,28 @@ def test_a_failure_part_way_through_a_file_writes_nothing(tmp_path, monkeypatch)
     assert _holdings(conn, "2026-08") == [RELIANCE, HDFC_BANK]
 
 
+@pytest.mark.parametrize("prev, curr", [("2026-08", "2026-07"), ("2026-06", "2026-08"),
+                                        ("2026-07", "2026-8")])
+def test_the_pipeline_refuses_non_adjacent_months_before_opening_the_database(
+        tmp_path, capsys, prev, curr):
+    """Swapped months once published time-reversed buying and selling."""
+    july, august = (_csv(tmp_path, "j.csv", "2026-07", JULY),
+                    _csv(tmp_path, "a.csv", "2026-08", AUGUST))
+    with pytest.raises(SystemExit) as exit_info:
+        _run(tmp_path, july, august, prev=prev, curr=curr)
+    assert exit_info.value.code == 2
+    assert "--prev/--curr:" in capsys.readouterr().err
+    assert not (tmp_path / "t.db").exists()
+
+
+def test_comparisons_are_only_between_adjacent_months(tmp_path):
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    assert delta_calculator.compute_deltas(conn, "2025-12", "2026-01").empty
+    for prev, curr in (("2026-08", "2026-07"), ("2026-06", "2026-08"), ("2026-07", "2026-7")):
+        with pytest.raises(ValueError):
+            delta_calculator.compute_deltas(conn, prev, curr)
+
+
 @pytest.mark.parametrize("month", ["2026-4", "2026-13", "2026-08-31", "Aug 2026", None])
 def test_a_malformed_month_is_refused_before_anything_is_written(tmp_path, month):
     """'2026-4' once loaded fine and then made every dashboard page fail."""

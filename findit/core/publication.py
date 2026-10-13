@@ -50,6 +50,19 @@ def require_report_month(value) -> str:
     return text
 
 
+def require_adjacent_months(previous: str, current: str) -> None:
+    """A monthly comparison is current against the calendar month before it.
+
+    Swapped months would publish time-reversed buying and selling; a gap
+    would present several months of change as one.
+    """
+    require_report_month(previous)
+    require_report_month(current)
+    if f"{month_end(previous) + timedelta(days=1):%Y-%m}" != current:
+        raise ValueError(f"previous month must be the calendar month before {current}, "
+                         f"got {previous}")
+
+
 def month_end(report_month: str) -> date:
     """Calendar month end for YYYY-MM (raises ValueError on a bad month)."""
     parts = str(report_month).split("-")

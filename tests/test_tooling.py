@@ -185,6 +185,21 @@ def test_rebuild_uses_copy_only(tmp_path):
     assert _delta_count_ro(orig, CURR) == 0
 
 
+def test_rebuild_refuses_swapped_months_before_copying(tmp_path, capsys):
+    orig = tmp_path / "orig.db"
+    copy = tmp_path / "copy.db"
+    _seed_holdings(orig)
+    try:
+        rebuild_cli.main(["--db", str(orig), "--db-copy", str(copy),
+                          "--prev", CURR, "--curr", PREV])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("rebuild must refuse a previous month after the current one")
+    assert "--prev/--curr: previous month must be" in capsys.readouterr().err
+    assert not copy.exists()
+
+
 def test_rebuild_refuses_same_file(tmp_path):
     orig = tmp_path / "same.db"
     _seed_holdings(orig)

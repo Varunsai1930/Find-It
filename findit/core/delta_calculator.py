@@ -17,6 +17,8 @@ import sqlite3
 import pandas as pd
 import numpy as np
 
+from findit.core.publication import require_adjacent_months
+
 
 def _fetch_month(conn: sqlite3.Connection, report_month: str) -> pd.DataFrame:
     return pd.read_sql_query(
@@ -34,7 +36,8 @@ def unmatched_schemes(conn: sqlite3.Connection, prev_month: str, curr_month: str
 
 
 def compute_deltas(conn: sqlite3.Connection, prev_month: str, curr_month: str) -> pd.DataFrame:
-    """diff_holdings over the two months' stored holdings."""
+    """diff_holdings over the two months' stored holdings (adjacent months only)."""
+    require_adjacent_months(prev_month, curr_month)
     return diff_holdings(_fetch_month(conn, prev_month), _fetch_month(conn, curr_month),
                          prev_month, curr_month)
 
