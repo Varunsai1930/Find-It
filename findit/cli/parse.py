@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from findit.core.publication import require_report_month
 from findit.ingest import amfi_mf_parser
 
 
@@ -15,6 +16,10 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--month", required=True, help="Report month, e.g. 2026-08")
     ap.add_argument("--out", type=Path, default=None, help="Output CSV path")
     args = ap.parse_args(argv)
+    try:
+        require_report_month(args.month)
+    except ValueError as exc:
+        ap.error(f"--month: {exc}")
 
     print(f"Parsing {args.file} ...")
     df = amfi_mf_parser.parse_workbook(args.file, args.amc, args.month)

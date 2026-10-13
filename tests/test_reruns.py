@@ -117,6 +117,17 @@ def test_a_failure_part_way_through_a_file_writes_nothing(tmp_path, monkeypatch)
     assert _holdings(conn, "2026-08") == [RELIANCE, HDFC_BANK]
 
 
+@pytest.mark.parametrize("month", ["2026-4", "2026-13", "2026-08-31", "Aug 2026", None])
+def test_a_malformed_month_is_refused_before_anything_is_written(tmp_path, month):
+    """'2026-4' once loaded fine and then made every dashboard page fail."""
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    path = _csv(tmp_path, "a.csv", month, AUGUST)
+    with pytest.raises(ValueError, match="report_month must be YYYY-MM"):
+        db.load_parsed_csv(conn, path)
+    assert conn.execute("SELECT COUNT(*) FROM schemes").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM mf_holdings_monthly").fetchone()[0] == 0
+
+
 def test_the_run_log_never_calls_an_unfinished_run_completed(tmp_path, monkeypatch):
     july, august = (_csv(tmp_path, "j.csv", "2026-07", JULY),
                     _csv(tmp_path, "a.csv", "2026-08", AUGUST))

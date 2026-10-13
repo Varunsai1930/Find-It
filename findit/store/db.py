@@ -12,6 +12,7 @@ from pathlib import Path
 import pandas as pd
 
 from findit.core.instruments import classify_isin  # noqa: F401  (re-exported)
+from findit.core.publication import require_report_month
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schemes (
@@ -594,6 +595,13 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"{csv_path} is missing expected columns: {missing}")
+    # Refuse the file before writing: one malformed month key would break
+    # every page that lists or compares months.
+    for month in df["report_month"].unique():
+        try:
+            require_report_month(month)
+        except ValueError as exc:
+            raise ValueError(f"{csv_path}: {exc}") from exc
 
     # Normalise pct_nav to percent scale (0..100) if file stores it as fraction (0..1)
     df = df.copy()

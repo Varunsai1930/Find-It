@@ -20,6 +20,7 @@ trading day after D: a 7pm broadcast cannot be traded at D's close.
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, timedelta
 
 # SEBI: AMCs disclose scheme portfolios within 10 days of month end.
@@ -33,6 +34,20 @@ QUARTER_END_MONTH_DAYS = ("03-31", "06-30", "09-30", "12-31")
 
 BASIS_OBSERVED = "observed"
 BASIS_DEADLINE = "regulatory_deadline"
+
+_REPORT_MONTH_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
+
+
+def require_report_month(value) -> str:
+    """A report month as stored: zero-padded YYYY-MM (raises ValueError otherwise).
+
+    Months are keyed and compared as text, so "2026-4" would be a separate
+    month that no page or comparison could read.
+    """
+    text = str(value)
+    if not _REPORT_MONTH_RE.fullmatch(text):
+        raise ValueError(f"report_month must be YYYY-MM, got {value!r}")
+    return text
 
 
 def month_end(report_month: str) -> date:

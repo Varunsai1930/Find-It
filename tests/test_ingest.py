@@ -38,6 +38,16 @@ HEADER = [
 ]
 
 
+def test_parse_command_refuses_a_malformed_month_before_reading(tmp_path, capsys):
+    from findit.cli import parse as parse_cli
+
+    with pytest.raises(SystemExit) as exit_info:
+        parse_cli.main([str(tmp_path / "unread.xlsx"), "--amc", "HDFC AMC", "--month", "2026-4"])
+    assert exit_info.value.code == 2
+    assert "--month: report_month must be YYYY-MM, got '2026-4'" in capsys.readouterr().err
+    assert not list(tmp_path.iterdir())
+
+
 def test_mirae_market_value_header_is_recognized():
     columns = ["Name of the Instrument", "ISIN", "Quantity",
                "Market/Fair Value \n(Rs. in Lacs)", "% to Net Assets"]
