@@ -339,15 +339,19 @@ def get_bse_filings(
     except requests.JSONDecodeError as exc:
         raise ShareholdingFetchError("BSE filing index did not return JSON") from exc
 
-    table = payload.get("Table")
+    # An error reply can be valid JSON of another shape (null, a list or a
+    # string); it is one stock's failed index, never a crash of the whole run.
+    table = payload.get("Table") if isinstance(payload, dict) else None
     if not isinstance(table, list):
         raise ShareholdingFetchError("BSE filing index has no Table list")
 
     usable: list[dict[str, str]] = []
     seen_quarters: set[str] = set()
+    # Only text dates can be read; a number would become a 1970 timestamp.
     for filing in sorted(
-        (item for item in table if isinstance(item, dict)),
-        key=lambda item: item.get("EndDate") or "",
+        (item for item in table
+         if isinstance(item, dict) and isinstance(item.get("EndDate"), str)),
+        key=lambda item: item["EndDate"],
         reverse=True,
     ):
         attachment = filing.get("XBRLAttachment")

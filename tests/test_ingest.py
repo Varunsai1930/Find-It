@@ -483,6 +483,23 @@ def test_get_bse_filings_keeps_quarterly_and_interim():
     assert by_q["2026-05-15"]["filing_type"] == "interim"
 
 
+@pytest.mark.parametrize("payload", [None, [], "Service unavailable"])
+def test_a_non_object_bse_filing_index_is_one_failed_stock(payload):
+    """An AttributeError here once stopped a multi-hour shareholding fetch."""
+    with pytest.raises(ShareholdingFetchError, match="no Table list"):
+        fetch_shareholding.get_bse_filings(_FilingsSession(payload), "500325")
+
+
+def test_bse_filing_dates_that_are_not_text_are_skipped():
+    payload = {"Table": [
+        {"EndDate": 20260630, "IsXBRL": True, "XBRLAttachment": "/a/number.xml"},
+        {"EndDate": None, "IsXBRL": True, "XBRLAttachment": "/a/none.xml"},
+        {"EndDate": "2026-03-31", "IsXBRL": True, "XBRLAttachment": "/a/q1.xml"},
+    ]}
+    filings = fetch_shareholding.get_bse_filings(_FilingsSession(payload), "500325")
+    assert [f["quarter_end"] for f in filings] == ["2026-03-31"]
+
+
 # ---- attachment persistence + single-filing never invents zeros ----------------
 
 
@@ -620,6 +637,25 @@ def _many_isins_db(tmp_path, n):
         "SYMBOL,ISIN NUMBER\n" + "".join(f"S{i},{isin}\n" for i, isin in enumerate(isins)),
         encoding="utf-8")
     return conn, cache_dir
+
+
+class _ErrorIndexSession:
+    """Every scrip resolves; every filing index replies with a JSON list."""
+
+    def get(self, url, **kwargs):
+        if "PeerSmartSearch" in url:
+            return _FetchResp(text=_scrip_html("500325", kwargs["params"]["text"]))
+        return _FetchResp(json_data=[])
+
+
+def test_an_error_shaped_filing_index_fails_one_stock_and_the_run_continues(tmp_path):
+    conn, cache_dir = _many_isins_db(tmp_path, 3)
+    stats = fetch_shareholding.fetch_shareholding(conn, _ErrorIndexSession(), cache_dir)
+    assert stats.attempted == 3
+    assert len(stats.failed_isins) == 3
+    assert all("no Table list" in failure for failure in stats.failed_isins)
+    assert stats.stopped_early is None
+    conn.close()
 
 
 def test_an_outage_stops_the_run_instead_of_failing_every_stock(tmp_path):
