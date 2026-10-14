@@ -45,6 +45,20 @@ def test_validated_month_returns_the_rule_summary(tmp_path):
     conn.close()
 
 
+@pytest.mark.parametrize("action, qty, line", [
+    ("added", 10.0, "up 10 shares."), ("trimmed", -10.0, "down 10 shares.")])
+def test_an_unknown_rupee_value_leaves_no_gap_before_the_full_stop(tmp_path, action, qty, line):
+    """Once read 'up 50 shares .' when the value was unavailable."""
+    conn = _db(tmp_path, action=action, qty=qty, value=None)
+    assert line in build_summary(conn, 1, "2026-08")
+    conn.close()
+
+
+def test_a_known_rupee_value_is_still_separated_by_one_space(tmp_path):
+    text = build_summary(_db(tmp_path), 1, "2026-08")
+    assert "up 10 shares (+₹1.0 Cr flow, +₹1.0 Cr value change)." in text
+
+
 def test_quarantined_month_is_withheld_not_summarised(tmp_path):
     conn = _db(tmp_path, status="quarantined")
     result = get_summary(conn, 1, "2026-08")

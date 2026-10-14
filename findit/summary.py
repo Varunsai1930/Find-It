@@ -36,15 +36,18 @@ def _fmt_cr(lakhs) -> str:
 
 
 def _flow_value_detail(row) -> str:
-    """'(+₹X Cr flow, -₹Y Cr value change)' or value-only fallback."""
+    """' (+₹X Cr flow, -₹Y Cr value change)' or value-only fallback; '' when neither.
+
+    The leading space is part of the detail, so a missing one leaves no gap.
+    """
     has_flow = "flow_lakhs" in row and pd.notna(row["flow_lakhs"])
     has_val = "value_change_lakhs" in row and pd.notna(row["value_change_lakhs"])
     if has_flow and has_val:
-        return f"({_fmt_cr(row['flow_lakhs'])} flow, {_fmt_cr(row['value_change_lakhs'])} value change)"
+        return f" ({_fmt_cr(row['flow_lakhs'])} flow, {_fmt_cr(row['value_change_lakhs'])} value change)"
     if has_val:
-        return f"({_fmt_cr(row['value_change_lakhs'])})"
+        return f" ({_fmt_cr(row['value_change_lakhs'])})"
     if has_flow:
-        return f"({_fmt_cr(row['flow_lakhs'])} flow)"
+        return f" ({_fmt_cr(row['flow_lakhs'])} flow)"
     return ""
 
 
@@ -71,7 +74,7 @@ def _has_material_price_effect(row) -> bool:
 
 
 def _flow_price_value_detail(row) -> str:
-    """'(+₹X Cr flow, -₹Y Cr price effect, -₹Z Cr value change)' when the
+    """' (+₹X Cr flow, -₹Y Cr price effect, -₹Z Cr value change)' when the
     price leg is present and material; otherwise same as _flow_value_detail.
 
     Used for added/trimmed tops where flow and value can diverge (sign
@@ -82,7 +85,7 @@ def _flow_price_value_detail(row) -> str:
     has_val = "value_change_lakhs" in row and pd.notna(row["value_change_lakhs"])
     if has_flow and has_val and _has_material_price_effect(row):
         return (
-            f"({_fmt_cr(row['flow_lakhs'])} flow, "
+            f" ({_fmt_cr(row['flow_lakhs'])} flow, "
             f"{_fmt_cr(row['price_effect_lakhs'])} price effect, "
             f"{_fmt_cr(row['value_change_lakhs'])} value change)"
         )
@@ -145,7 +148,7 @@ def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
                  else "One new entry was")
         lines.append(
             f"- Opened {len(new)} new position(s). {entry} "
-            f"{top['stock_name']}, {value_text} ({nav_text}) {detail}."
+            f"{top['stock_name']}, {value_text} ({nav_text}){detail}."
         )
     if not added.empty:
         top = added.sort_values(_sort_col(added), ascending=False).iloc[0]
@@ -154,7 +157,7 @@ def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
                     else "One addition was")
         lines.append(
             f"- Added to {len(added)} existing position(s). {addition} "
-            f"{top['stock_name']}, up {top['qty_change']:,.0f} shares "
+            f"{top['stock_name']}, up {top['qty_change']:,.0f} shares"
             f"{flow_detail}."
         )
     if not trimmed.empty:
@@ -164,7 +167,7 @@ def _append_action_lines(deltas: pd.DataFrame, lines: list) -> None:
                else "One cut was")
         lines.append(
             f"- Trimmed {len(trimmed)} position(s). {cut} "
-            f"{top['stock_name']}, down {abs(top['qty_change']):,.0f} shares "
+            f"{top['stock_name']}, down {abs(top['qty_change']):,.0f} shares"
             f"{flow_detail}."
         )
     if not exited.empty:
