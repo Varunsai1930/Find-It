@@ -261,6 +261,33 @@ test('watchlist downloads pin the displayed release and clearing aborts stale wo
   assert.equal(ui.elements['watchlist-report'].hidden, true);
 });
 
+test('watchlist export keeps its file URL alive until the download has started', async () => {
+  const { createObjectURL, revokeObjectURL } = URL;
+  const blobs = [], revoked = [];
+  URL.createObjectURL = blob => { blobs.push(blob); return 'blob:export-' + blobs.length; };
+  URL.revokeObjectURL = url => revoked.push(url);
+  try {
+    const ui = boot({ watch: ['INE002A01018', 'INE040A01034'], controls: true });
+    // ui.type also runs every pending timer; it is the harness's timer flush.
+    await ui.type('stock-search', '');
+    ui.elements['watchlist-export'].emit('click');
+    const link = ui.created.at(-1);
+    assert.equal(link.download, 'findit-watchlist.json');
+    assert.equal(link.href, 'blob:export-1');
+    assert.ok(ui.body.children.includes(link), 'link is attached before clicking');
+    assert.equal(link.clicked, true);
+    assert.equal(link.removed, true);
+    // Revoking straight after click() cancelled the download in some browsers.
+    assert.deepEqual(revoked, []);
+    await ui.type('stock-search', '');
+    assert.deepEqual(revoked, ['blob:export-1']);
+    assert.deepEqual(JSON.parse(await blobs[0].text()),
+      { version: 1, stocks: ['INE002A01018', 'INE040A01034'] });
+  } finally {
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+  }
+});
+
 test('malformed watchlist imports preserve the existing list', async () => {
   const ui = boot({ watch: ['INE002A01018'], controls: true });
   const importer = ui.elements['watchlist-import'];

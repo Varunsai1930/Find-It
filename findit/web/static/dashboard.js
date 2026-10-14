@@ -185,8 +185,8 @@
       }
     });
     document.getElementById("watchlist-export").addEventListener("click", function () {
-      var url = URL.createObjectURL(new Blob([JSON.stringify({ version: 1, stocks: watchlist }, null, 2)], { type: "application/json" }));
-      var link = document.createElement("a"); link.href = url; link.download = "findit-watchlist.json"; link.click(); URL.revokeObjectURL(url);
+      downloadText(JSON.stringify({ version: 1, stocks: watchlist }, null, 2), "application/json",
+                   "findit-watchlist.json");
     });
     document.getElementById("watchlist-import").addEventListener("change", async function (event) {
       try {
