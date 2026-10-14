@@ -1,39 +1,48 @@
+{% from "_macros.html" import icon %}
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · Evidence</title>{% include "_theme_init.html" %}<link rel="stylesheet" href="{{ asset_url('style.css') }}"></head>
-<body>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>FindIt · Evidence</title>{% include "_theme_init.html" %}<link rel="icon" href="/static/favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="{{ asset_url('style.css') }}"></head>
+<body class="research-page">
 <a class="skip" href="#evidence-main">Skip to evidence</a>
 <header class="topbar"><div class="topbar__inner">
-<a class="brand" href="/">FindIt</a>
-<a class="coverage-back" href="/?{{ dict(month=e.month, active_only=e.active_only|int)|urlencode }}#monthly-summary">← Monthly activity</a>
-<button class="btn btn--quiet theme-toggle" id="theme-toggle" type="button" hidden>Appearance</button>
+<a class="brand" href="/?{{ dict(month=e.month, active_only=e.active_only|int)|urlencode }}" aria-label="FindIt home"><span class="brand__mark" aria-hidden="true">f<span>.</span></span><span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span></a>
+<a class="coverage-back" href="/?{{ dict(month=e.month, active_only=e.active_only|int)|urlencode }}#monthly-activity">{{ icon('arrow-left', 16) }} Monthly activity</a>
+<button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
 </div></header>
 <main class="page evidence-page" id="evidence-main">
-<p class="eyebrow">Sources and calculations</p>
+<div class="page-heading">
+<div class="page-heading__copy"><p class="eyebrow">Sources and calculations</p>
 <h1>View evidence</h1>
 <p class="evidence-id">{{ e.isin }}</p>
-<p>{{ e.amc or 'All compared fund houses' }} · {% if not e.baseline %}{{ e.prev_month|month_label }} →{% endif %} {{ e.month|month_label }} · {{ 'Active stock-pickers' if e.active_only else 'All fund types' }} · domestic equity</p>
-{% if e.cohort is defined %}<p><strong>{{ e.cohort_count }} funds in the fixed historical cohort</strong> · {{ e.history_start|month_label }} → {{ e.history_end|month_label }}. {{ e.funds|length }} contributing funds shown below; cohort members without this stock contribute zero.</p>
+<p class="scope-line">{{ e.amc or 'All compared fund houses' }} · {% if not e.baseline %}{{ e.prev_month|month_label }} →{% endif %} {{ e.month|month_label }} · {{ 'Active stock-pickers' if e.active_only else 'All fund types' }} · domestic equity</p></div>
+<span class="page-heading__icon" aria-hidden="true">{{ icon('file', 24) }}</span>
+</div>
+{% if e.history_url %}<div class="detail-links"><a href="{{ e.history_url }}">{{ icon('clock', 16) }} Holding history · same release and filters {{ icon('chevron-right', 14) }}</a></div>{% endif %}
+<section class="panel evidence-overview" aria-labelledby="evidence-overview-title">
+<div class="panel__head"><h2 id="evidence-overview-title">{% if e.baseline %}Holdings snapshot{% else %}Share comparison{% endif %}</h2><p class="panel__meta">These values include only the compared funds in this scope.</p></div>
+<div class="panel__body">
+{% if e.cohort is defined %}<p><strong>{{ e.cohort_count }} funds in the fixed group (cohort)</strong> · {{ e.history_start|month_label }} → {{ e.history_end|month_label }}. The {{ e.funds|length }} funds listed below contribute to these figures. Funds in the group that do not hold this stock count as zero.</p>
 <details class="evidence-method"><summary>Fixed cohort fund IDs</summary><p>{{ e.cohort|join(', ') }}</p></details>{% endif %}
-{% if e.history_url %}<p><a href="{{ e.history_url }}">Holding history · same release and filters →</a></p>{% endif %}
-{% if e.baseline %}<p>First snapshot in this historical range. No prior-period trade is implied.</p><dl class="evidence-metrics"><div><dt>Shares held</dt><dd>{{ e.current_shares|signed|replace('+','') }}</dd></div></dl>
+{% if e.baseline %}<p>This is the first snapshot in the selected range, so it shows holdings only, not trades.</p><dl class="evidence-metrics"><div><dt>Shares held</dt><dd>{{ e.current_shares|signed|replace('+','') }}</dd></div></dl>
 {% elif e.no_data %}<p class="state">No usable comparison in this scope. Missing snapshots are not zero holdings or trades.</p>{% else %}
 <dl class="evidence-metrics"><div><dt>Previous shares, adjusted</dt><dd>{{ e.adjusted_previous_shares|signed|replace('+','') }}</dd></div><div><dt>Current shares</dt><dd>{{ e.current_shares|signed|replace('+','') }}</dd></div><div><dt>Net share change</dt><dd>{{ e.net_share_change|signed }}</dd></div></dl>
-<p>Added {{ e.gross_added_shares|signed }} shares; reduced {{ e.gross_reduced_shares|signed }} shares. Opposing trades are netted. Estimated net trading value: ₹{{ e.net_flow_lakhs|crore }} Cr.</p>
+<p>Funds added {{ e.gross_added_shares|signed|replace('+','') }} shares and reduced {{ e.gross_reduced_shares|signed|replace('+','') }} shares. The net change subtracts the reductions from the additions. Estimated net trading value: ₹{{ e.net_flow_lakhs|crore }} Cr.</p>
 {% endif %}
+</div></section>
+<div class="research-note">{{ icon('shield', 16) }}<p>Independent review: pending. An unknown publication date stays unknown. The dashboard's cutoff date assumes that each filing was published by its deadline.</p></div>
 <details class="evidence-method"><summary>How these changes are calculated</summary><p>{{ e.price_convention }}</p><p>{{ e.ownership_note }}</p></details>
-<p class="evidence-notice">Independent review: pending. Unknown publication dates remain unknown; the dashboard's cutoff uses a deadline assumption.</p>
-<details class="evidence-method"><summary>Data release and calculation rules</summary><p style="overflow-wrap:anywhere">Release: {{ e.release_id }} · Rules: {{ e.rule_version }}</p></details>
-{% if e.coverage %}<section class="evidence-scope" aria-labelledby="evidence-scope-title">
-<h2 id="evidence-scope-title">Comparison coverage</h2>
+<details class="evidence-method"><summary>Data release and calculation rules</summary><p class="source-code">Release: {{ e.release_id }} · Rules: {{ e.rule_version }}</p></details>
+{% if e.coverage %}<section class="panel evidence-scope" aria-labelledby="evidence-scope-title">
+<div class="panel__head"><h2 id="evidence-scope-title">Comparison coverage</h2><p class="panel__meta">Availability and validation for each fund house.</p></div>
+<div class="panel__body">
 {% for house, coverage in e.coverage.items() %}
-<div class="evidence-house"><h3>{{ house }} <span class="tag tag--{{ 'ok' if coverage.coverage_state == 'complete' else 'stale' }}">{{ coverage.coverage_state|replace('_',' ') }}</span></h3>
+<div class="evidence-house"><div class="section-heading"><h3>{{ house }}</h3><span class="tag tag--{{ 'ok' if coverage.coverage_state == 'complete' else 'stale' }}">{{ coverage.coverage_state|replace('_',' ') }}</span></div>
 <dl class="coverage-totals"><div><dt>Expected</dt><dd>{{ coverage.expected if coverage.expected is not none else 'Unknown' }}</dd></div><div><dt>Loaded</dt><dd>{{ coverage.loaded }}</dd></div><div><dt>Validated</dt><dd>{{ coverage.validated_count }}</dd></div><div><dt>Compared</dt><dd>{{ coverage.compared }}</dd></div></dl></div>
 {% endfor %}
-<p class="muted">Expected counts eligible funds. Loaded and validated count portfolios, including those outside eligible scope. Compared funds passed validation in both months.</p>
-</section>{% endif %}
+<p class="muted">Expected counts the eligible funds. Loaded and Validated count portfolios, including portfolios outside the eligible scope. Compared funds passed validation in both months.</p>
+</div></section>{% endif %}
 <h2 class="evidence-funds-title">Evidence by individual fund <span class="muted">· {{ e.funds|length }}</span></h2>
 {% for f in e.funds %}
-<section class="panel evidence-fund"><h3>{{ f.scheme_name }}</h3><p class="muted">{{ f.amc_name }}</p>
+<section class="panel evidence-fund"><div class="panel__head"><p class="eyebrow">{{ f.amc_name }}</p><h3>{{ f.scheme_name }}</h3></div><div class="panel__body">
 <dl class="evidence-metrics evidence-metrics--fund">
 {% if not e.baseline %}<div><dt>Previous shares, adjusted</dt><dd>{{ f.quantity_prev|signed|replace('+','') }}</dd></div>{% endif %}
 <div><dt>Current shares</dt><dd>{{ f.quantity_curr|signed|replace('+','') }}</dd></div>
@@ -42,12 +51,12 @@
 </dl>
 {% if not e.baseline %}<details class="evidence-method"><summary>Adjustment calculation</summary>
 <p>{{ f.raw_quantity_prev|signed|replace('+','') }} raw previous shares × {{ f.split_ratio }} = {{ f.quantity_prev|signed|replace('+','') }} adjusted shares.</p>
-<p>Split/bonus adjustment: {{ f.adjustment_basis }}. {% if f.adjustment_basis == 'inferred' %}Inferred from quantities and inverse prices; not an independently confirmed corporate action.{% endif %}</p></details>{% endif %}
+<p>Split or bonus adjustment: {{ f.adjustment_basis }}. {% if f.adjustment_basis == 'inferred' %}FindIt inferred it from the quantities and the inverse prices. No independent source confirms this corporate action.{% endif %}</p></details>{% endif %}
 {% for source in ([f.current_source] if e.baseline else [f.previous_source, f.current_source]) %}
 <details class="evidence-source"><summary>{{ source.month|month_label }} · {{ source.validation }} · provenance {{ source.provenance_status|replace('_',' ') }}</summary>
 {% if not source.sources %}<p>Original-source provenance is unavailable for this legacy snapshot.</p>{% endif %}
-{% for s in source.sources %}<p>{{ s.workbook }}{% if s.url %} · <a href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Official disclosure</a>{% else %} · official URL not recorded{% endif %}<br>Workbook SHA-256 (named file after extraction if downloaded in an archive): <code style="overflow-wrap:anywhere">{{ s.sha256 }}</code><br>Published: {{ s.published_at or 'unknown' }} · Retrieved: {{ s.retrieved_at or 'unknown' }} · Parser: {{ s.parser_version }}</p>{% endfor %}
-{% for r in source.rows %}<p>Sheet {{ r.sheet }} · row {{ r.row }}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere">Raw: {{ r.raw|tojson }}
+{% for s in source.sources %}<p>{{ s.workbook }}{% if s.url %} · <a class="detail-link" href="{{ s.url }}" target="_blank" rel="noopener noreferrer">Official disclosure {{ icon('arrow-up-right', 14) }}</a>{% else %} · official URL not recorded{% endif %}<br>Workbook SHA-256 (named file after extraction if downloaded in an archive): <code class="source-code">{{ s.sha256 }}</code><br>Published: {{ s.published_at or 'unknown' }} · Retrieved: {{ s.retrieved_at or 'unknown' }} · Parser: {{ s.parser_version }}</p>{% endfor %}
+{% for r in source.rows %}<p>Sheet {{ r.sheet }} · row {{ r.row }}</p><pre class="source-code">Raw: {{ r.raw|tojson }}
 Normalized: {{ r.normalized|tojson }}</pre>{% endfor %}
-</details>{% endfor %}</section>{% endfor %}
+</details>{% endfor %}</div></section>{% endfor %}
 </main><script src="{{ asset_url('dashboard.js') }}" defer></script></body></html>

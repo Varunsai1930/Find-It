@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+{% from "_macros.html" import icon %}
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -10,7 +11,7 @@
 <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="{{ asset_url('style.css') }}">
 </head>
-<body>
+<body class="dashboard-page">
 <a class="skip" href="#month-view">Skip to results</a>
 
 <header class="topbar">
@@ -19,25 +20,30 @@
       <span class="brand__mark" aria-hidden="true">f<span>.</span></span>
       <span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span>
     </a>
+    <p class="sidebar-label">Workspace</p>
     <nav class="nav" id="section-nav" aria-label="Main navigation">
-      {% if month %}<a href="#monthly-summary" aria-current="location">Monthly summary</a>{% endif %}
-      <a href="{{ '#monthly-activity' if month else '#month-view' }}">Monthly activity</a>
-      {% if scheme_options %}<a href="#scheme-summary">Fund summary</a>{% endif %}
-      <a href="#notes-title">Reading guide</a>
+      <a href="{{ '#monthly-activity' if month else '#month-view' }}" aria-current="location">{{ icon('chart', 16) }}Monthly activity</a>
+      {% if month %}<a href="#monthly-summary">{{ icon('grid', 16) }}Monthly summary</a>{% endif %}
+      {% if scheme_options %}<a href="#watchlist">{{ icon('bookmark', 16) }}My watchlist</a><a href="#scheme-summary">{{ icon('layers', 16) }}Fund summary</a>{% endif %}
+      <a href="#notes-title">{{ icon('file', 16) }}Reading guide</a>
     </nav>
-    <span class="edition">India / Monthly disclosures</span>
-    <button class="btn btn--quiet theme-toggle" id="theme-toggle" type="button" hidden>Appearance</button>
+    <div class="sidebar-note">{{ icon('shield', 20) }}<strong>Check every number</strong><p>Each change links to the published portfolio and the calculation behind it.</p>{% if month %}<a data-coverage-link href="/coverage?month={{ month }}&amp;active_only={{ active_only }}">See data coverage {{ icon('arrow-up-right', 14) }}</a>{% endif %}</div>
+    <span class="edition"><span class="edition__dot" aria-hidden="true"></span>India · Monthly disclosures</span>
   </div>
 </header>
 
+<div class="workspace-bar">
+  <span class="workspace-bar__title">Research workspace <span aria-hidden="true">/</span> <strong>Mutual fund holdings</strong></span>
+  <button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
+</div>
 <main class="page">
   <section class="intro" aria-labelledby="page-title">
     <div>
-      <p class="eyebrow">The fund activity desk</p>
-      <h1 id="page-title">Monthly fund activity<span class="intro__dot">.</span></h1>
-      <p class="intro__description">See what India's mutual funds bought and sold. Compare fund houses, explore individual holdings, and check the evidence behind each change.</p>
+      <p class="eyebrow">Monthly portfolio disclosures</p>
+      <h1 id="page-title">Monthly fund activity</h1>
+      <p class="intro__description">This page shows which stocks Indian mutual funds bought and sold each month. Select a stock to see the funds that hold it and the source data behind each number.</p>
     </div>
-    <a class="intro__link" href="#notes-title">How to read the data <span aria-hidden="true">↗</span></a>
+    <a class="intro__link" href="#notes-title">How to read the data {{ icon('arrow-up-right', 14) }}</a>
   </section>
 
   {% if months %}
@@ -52,8 +58,10 @@
       </label>
       <fieldset class="segmented">
         <legend class="field__label">Show</legend>
-        <label><input type="radio" name="side" value="buy"{% if side != 'sell' %} checked{% endif %}><span>Buying</span></label>
-        <label><input type="radio" name="side" value="sell"{% if side == 'sell' %} checked{% endif %}><span>Selling</span></label>
+        <div class="segmented__track">
+          <label><input type="radio" name="side" value="buy"{% if side != 'sell' %} checked{% endif %}><span>Buying</span></label>
+          <label><input type="radio" name="side" value="sell"{% if side == 'sell' %} checked{% endif %}><span>Selling</span></label>
+        </div>
       </fieldset>
       <label class="field field--rows">
         <span class="field__label">Rows</span>
@@ -73,7 +81,8 @@
     </form>
     <form class="lookup" id="stock-form" role="search" autocomplete="off">
       <label class="field__label" for="stock-search">Find a stock</label>
-      <div class="combo">
+      <div class="combo combo--search">
+        {{ icon('search', 17) }}
         <input id="stock-search" name="q" type="text" role="combobox" aria-autocomplete="list"
                aria-expanded="false" aria-controls="stock-options" spellcheck="false"
                placeholder="Company name or ISIN" aria-describedby="stock-search-hint">
@@ -93,7 +102,7 @@
     <section class="panel empty-state" aria-labelledby="empty-title">
       <h2 id="empty-title">{{ 'Connect your holdings data' if missing_db else 'No coverage data available yet' }}</h2>
       {% if missing_db %}<p class="state state--error" role="alert">{{ missing_db }}</p>{% endif %}
-      <p>Load monthly AMC disclosures using the pipeline, then reload this page. The README includes an offline sample to get started.</p>
+      <p>Use the pipeline to load the monthly portfolio disclosures from each asset management company (AMC). Then reload this page. The README has an offline sample that you can use to start.</p>
       <p class="muted">To use an existing database, start FindIt with <code>FINDIT_DB=/path/to/tracker.db</code>.</p>
     </section>
     {% endif %}
@@ -101,14 +110,15 @@
 
   {% if scheme_options %}
   <section class="panel" id="watchlist" aria-labelledby="watchlist-title">
-    <div class="panel__head"><h2 id="watchlist-title">Changes in my stocks</h2><p>Follow a stock from its detail panel. Your list is saved on this device; export and import to move it between devices. Selected stocks are sent to the server to calculate changes and download reports. The server does not save your list.</p></div>
-    <div style="padding:20px"><button class="btn btn--quiet" type="button" id="watchlist-export">Export watchlist</button> <a class="btn btn--quiet" id="watchlist-report" hidden>Download monthly report</a><label class="field" style="margin-top:16px">Import watchlist <input type="file" id="watchlist-import" accept="application/json" style="max-width:100%"></label>
-    <p id="watchlist-status" role="status" aria-live="polite"></p><div id="watchlist-results">Your watchlist is empty.</div></div>
+    <div class="panel__head"><div class="section-title">{{ icon('bookmark', 20) }}<h2 id="watchlist-title">Changes in my stocks</h2></div><p class="panel__meta">To add a stock, open it and select Follow stock. This list then shows its changes for the selected month.</p></div>
+    <div class="panel__body"><div class="watchlist-tools"><button class="btn btn--quiet" type="button" id="watchlist-export">{{ icon('download', 16) }}Export watchlist</button><a class="btn btn--quiet" id="watchlist-report" hidden>{{ icon('file', 16) }}Download monthly report</a><label class="btn btn--quiet file-button">Import watchlist <input type="file" id="watchlist-import" accept="application/json"></label></div>
+    <p class="watchlist-status" id="watchlist-status" role="status" aria-live="polite"></p><div class="watchlist-results" id="watchlist-results">Your watchlist is empty.</div>
+    <details class="coverage watchlist-privacy"><summary>How your watchlist is saved</summary><p>Your list is saved in this browser on this device. To move it to another device, export it here and import it there. To calculate changes and make reports, the page sends the selected stocks to the server. The server does not save your list.</p></details></div>
   </section>
 
-  <section class="panel panel--narrow" id="scheme-summary" aria-labelledby="summary-title">
+  <section class="panel" id="scheme-summary" aria-labelledby="summary-title">
     <div class="panel__head">
-      <h2 id="summary-title">Individual fund summary</h2>
+      <div class="section-title">{{ icon('layers', 20) }}<h2 id="summary-title">Individual fund summary</h2></div>
       <p class="panel__meta">Choose one fund, such as HDFC Large Cap Fund, to see what it changed this month.</p>
     </div>
     <form class="inline-form" id="summary-form" autocomplete="off">
@@ -135,21 +145,23 @@
     <h2 id="notes-title">Reading this page</h2>
     <dl>
       <dt>Fund houses and individual funds</dt>
-      <dd>A fund house (AMC), such as HDFC Mutual Fund, runs many individual funds (schemes). HDFC Large Cap Fund is one of those funds, with its own portfolio.</dd>
+      <dd>A fund house, or asset management company (AMC), runs many individual funds. Individual funds are also called schemes. For example, HDFC Mutual Fund is a fund house, and HDFC Large Cap Fund is one of its funds. Each individual fund has its own portfolio.</dd>
       <dt>Monthly change</dt>
-      <dd>Every figure compares an individual fund's holdings with the previous month. Stocks no fund bought or sold are not ranked, and a stock with no monthly change is never shown as a buy.</dd>
+      <dd>Each figure compares an individual fund's holdings in one month with its holdings in the previous month. A stock that no fund bought or sold is not ranked. A stock with no monthly change never shows as a buy.</dd>
       <dt>Net fund houses</dt>
-      <dd>Fund houses buying minus those selling. For example, 5 buying and 2 selling gives +3; 2 buying and 5 selling gives −3. Buying puts the highest balance first; selling puts the lowest first. Individual-fund counts show how many portfolios changed, rather than how many fund houses.</dd>
+      <dd>The number of fund houses buying a stock minus the number selling it. For example, 5 buying and 2 selling gives +3, and 2 buying and 5 selling gives −3. The Buying view puts the highest result first. The Selling view puts the lowest result first. The individual-fund counts show how many portfolios changed, not how many fund houses.</dd>
       <dt>Net buying and discretionary net</dt>
-      <dd>Net buying is estimated purchases minus sales in stocks the funds already held, in ₹ crore; a negative amount means net selling. Discretionary net counts only fund houses whose change beats the drift that price moves alone would cause. It, new-position flow and FII/DII changes are under <em>More columns</em> and in each stock's detail.</dd>
+      <dd>Net buying is the estimated value of purchases minus sales, in ₹ crore, for stocks that the funds already held. A negative amount means net selling. Discretionary net counts only the fund houses whose change is larger than the change that price movement alone would cause. Select <em>More columns</em> to see discretionary net, the value of new positions and FII/DII changes. Each stock's detail also shows them.</dd>
       <dt>Units</dt>
-      <dd>Flows are in ₹ crore. FII and DII changes are percentage points of the company's shares between its two latest quarterly filings.</dd>
+      <dd>Flows are in ₹ crore. One crore is 10 million rupees. FII and DII changes are in percentage points (pp) of the company's shares, measured between its two latest quarterly filings.</dd>
       <dt>Missing, no increase and stale</dt>
-      <dd><span class="tag tag--missing">missing</span> means no quarterly filing was published by the date the month's portfolios became public. It is never read as zero or as <em>no increase</em>. <em>No increase</em> means two filings exist and the holding did not rise. <em>No prior quarter</em> means only one filing exists, so no change can be measured. <span class="tag tag--stale">stale</span> marks a filing more than 200 days old at that date.</dd>
+      <dd><span class="tag tag--missing">missing</span> means the company published no quarterly shareholding filing by the date the month's portfolios became public. FindIt never reads it as zero or as <em>no increase</em>. <em>No increase</em> means two filings exist and the holding did not go up. <em>No prior quarter</em> means only one filing exists, so FindIt cannot measure a change. <span class="tag tag--stale">stale</span> marks a filing that was more than 200 days old on that date.</dd>
+      <dt>FII</dt>
+      <dd>Foreign institutional investors: investment funds and institutions based outside India.</dd>
       <dt>DII (MF+banks+insurance)</dt>
-      <dd>A conservative aggregate of mutual funds, banks, insurance companies and other financial institutions.</dd>
+      <dd>Domestic institutional investors. FindIt uses a conservative total of mutual funds, banks, insurance companies and other financial institutions.</dd>
       <dt>What this is not</dt>
-      <dd>A record of what funds did, not a buy list. It reports changes in quantity, flow and value, not performance.</dd>
+      <dd>This page records what funds did. It is not a list of stocks to buy. It reports changes in share quantity, trading value and holding value. It does not report investment performance.</dd>
     </dl>
   </section>
   <footer class="footer"><span>FindIt / Fund holdings research</span><span>Monthly disclosures. Measured changes.</span></footer>
@@ -159,7 +171,7 @@
   <div class="drawer__inner">
     <div class="drawer__head">
       <h2 id="stock-dialog-title">Stock detail</h2>
-      <button type="button" class="drawer__close" id="stock-dialog-close" aria-label="Close stock detail">×</button>
+      <button type="button" class="drawer__close" id="stock-dialog-close" aria-label="Close stock detail">{{ icon('close', 20) }}</button>
     </div>
     <div class="drawer__body" id="stock-box"></div>
   </div>

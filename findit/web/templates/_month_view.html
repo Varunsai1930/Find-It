@@ -1,14 +1,12 @@
 {#- One month: three coverage facts, the expandable data coverage, and the
     consensus table. Rendered into the page on first load and re-rendered by
     /fragments/month when a filter changes. -#}
-{%- from "_macros.html" import holder_change, filing_status, scope, fund_counts -%}
+{%- from "_macros.html" import holder_change, filing_status, scope, fund_counts, icon -%}
 {%- set all_cols = cols == 'all' -%}
 {%- set side_title = 'Stocks ranked by fund-house selling' if side == 'sell' else 'Stocks ranked by fund-house buying' -%}
 
-{% include "_fund_summary.html" %}
 <div id="monthly-activity">
-<h2 class="activity-heading">Monthly activity <span class="muted">· {{ month|month_label }}</span></h2>
-<p class="state">Market-wide completeness: unknown. Expected eligible inventory has not been established across all fund houses. The ranking covers {{ coverage.compared }} compared funds; the eight featured houses are a separate selected scope.</p>
+<div class="section-heading"><h2 class="activity-heading">Monthly activity</h2><span class="month-stamp">{{ icon('clock', 14) }}{{ month|month_label }}</span></div>
 <dl class="facts" aria-label="Coverage for {{ month|month_label }}">
   <div class="fact">
     <dt class="fact__label">Individual funds compared</dt>
@@ -19,7 +17,7 @@
     <dt class="fact__label">Withheld</dt>
     {% if coverage.validated %}
     <dd class="fact__value">{{ coverage.withheld }}</dd>
-    <dd class="fact__sub">{% if coverage.withheld %}failed validation · excluded, not zero{% else %}none of {{ coverage.in_scope }} {{ 'active ' if active_only }}fund{{ 's' if coverage.in_scope != 1 }} failed validation{% endif %}</dd>
+    <dd class="fact__sub">{% if coverage.withheld %}failed validation · excluded, not counted as zero{% else %}none of {{ coverage.in_scope }} {{ 'active ' if active_only }}fund{{ 's' if coverage.in_scope != 1 }} failed validation{% endif %}</dd>
     {% else %}
     <dd class="fact__value">–</dd>
     <dd class="fact__sub">validation not run on this database</dd>
@@ -28,9 +26,10 @@
   <div class="fact">
     <dt class="fact__label">Portfolios public</dt>
     <dd class="fact__value">{{ coverage.public_on|month_label(true) }}</dd>
-    <dd class="fact__sub">deadline assumption · actual publication dates may be unknown</dd>
+    <dd class="fact__sub">assumed from the filing deadline · actual dates can be unknown</dd>
   </div>
 </dl>
+<p class="coverage-note">{{ icon('shield', 14) }}<span><strong>Market-wide completeness: unknown.</strong> The ranking uses {{ coverage.compared }} compared funds. The number of eligible funds across all fund houses is not confirmed, so the ranking can miss some funds. The eight fund houses in the monthly summary are a separate, selected group.</span></p>
 
 <details class="coverage" id="coverage-details">
   <summary>Data coverage <span class="muted">· freshness and method for {{ month|month_label }}</span></summary>
@@ -59,10 +58,10 @@
       </div>
     </dl>
     <ul class="coverage__method">
-      <li>An individual fund is compared when its {{ month|month_label }} holdings match a previous month. Funds without one, and funds withheld by validation, are not counted.</li>
-      <li>Counting {{ scope(view) }}.{% if active_only %} Index funds, ETFs, arbitrage, FoFs and debt funds are excluded.{% endif %}</li>
-      <li>Ranked by net fund houses {{ 'selling' if side == 'sell' else 'buying' }}, then by money moved into stocks funds already held.</li>
-      <li>FII and DII changes use only quarterly filings published by {{ coverage.public_on|month_label(true) }}.</li>
+      <li>FindIt compares an individual fund when it has holdings for both {{ month|month_label }} and the previous month. Funds without a previous month, and funds withheld by validation, are not counted.</li>
+      <li>This view counts {{ scope(view) }}.{% if active_only %} It excludes index funds, exchange-traded funds (ETFs), arbitrage funds, funds of funds (FoFs) and debt funds.{% endif %}</li>
+      <li>Stocks are ranked by net fund houses {{ 'selling' if side == 'sell' else 'buying' }}, then by the money moved in stocks that funds already held.</li>
+      <li>FII and DII changes use only the quarterly filings published by {{ coverage.public_on|month_label(true) }}.</li>
     </ul>
   </div>
 </details>
@@ -77,10 +76,10 @@
     </div>
     {% if rows %}
     <p class="panel__meta">{{ rows|length }} of {{ total }} stocks with buying or selling activity{% if coverage.prev_month %} · {{ month|month_label }} vs {{ coverage.prev_month|month_label }}{% endif %}. Ranked by fund houses, not the number of individual funds.</p>
-    <div class="fund-terms" aria-label="Fund houses and individual funds explained">
+    <details class="fund-terms-disclosure"><summary>Fund houses or individual funds?</summary><div class="fund-terms" aria-label="Fund houses and individual funds explained">
       <p><strong>Fund house <span>(AMC)</span></strong>HDFC Mutual Fund<br><span>runs many individual funds</span></p>
       <p><strong>Individual fund <span>(scheme)</span></strong>HDFC Large Cap Fund<br><span>one portfolio that buys or sells stocks</span></p>
-    </div>
+    </div></details>
     {% endif %}
   </div>
   {% if rows %}
@@ -141,3 +140,5 @@
   {% endif %}
 </section>
 </div>
+
+{% include "_fund_summary.html" %}

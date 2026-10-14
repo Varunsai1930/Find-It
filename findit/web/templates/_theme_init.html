@@ -1,6 +1,8 @@
 <script>
-try {
-  document.documentElement.dataset.theme = localStorage.getItem("findit-theme") ||
+(function () {
+  var preference;
+  try { preference = localStorage.getItem("findit-theme"); } catch (e) { /* Storage is optional. */ }
+  document.documentElement.dataset.theme = preference === "light" || preference === "dark" ? preference :
     (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-} catch (e) { /* Storage is optional; the default light palette remains usable. */ }
+})();
 </script>

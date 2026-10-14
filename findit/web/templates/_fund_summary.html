@@ -1,6 +1,6 @@
 <section class="fund-summary" id="monthly-summary" aria-labelledby="fund-summary-title">
   <div class="fund-summary__head">
-    <h2 id="fund-summary-title">Monthly summary <span class="muted">· {{ month|month_label }}</span></h2>
+    <div class="section-heading"><h2 id="fund-summary-title">Monthly summary</h2><span class="month-stamp">{{ month|month_label }}</span></div>
     <p>How fund houses changed their stock holdings since {{ summary_prev_month|month_label }}.</p>
   </div>
   {% for group in fund_groups %}
@@ -9,7 +9,7 @@
     <div class="fund-grid">
       {% for fund in group.funds %}
       <article class="fund-card{% if not fund.compared %} fund-card--unavailable{% endif %}" aria-label="{{ fund.name }} monthly summary">
-        <h4>{{ fund.name }}</h4>
+        <div class="fund-card__identity"><span class="fund-card__mark" aria-hidden="true">{{ fund.name[0] }}</span><h4>{{ fund.name }}</h4></div>
         <p class="tag fund-card__badge tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_', ' ')|capitalize }}</p>
         {% if fund.compared %}
         <dl class="fund-card__changes">
@@ -23,7 +23,7 @@
           <p class="fund-card__stake {{ 'pos' if fund.biggest.qty_change > 0 else 'neg' }}">{{ fund.biggest.qty_change|compact_shares }} shares</p>
         </div>
         {% elif fund.increased or fund.reduced %}
-        <p class="fund-card__empty">Shares changed; price data is unavailable to rank the biggest move.</p>
+        <p class="fund-card__empty">Holdings changed, but price data is not available to find the biggest move.</p>
         {% else %}
         <p class="fund-card__empty">No net change in stock holdings.</p>
         {% endif %}
@@ -41,16 +41,16 @@
             <p class="fund-card__exact {{ 'pos' if fund.biggest.qty_change > 0 else 'neg' }}">{{ fund.biggest.qty_change|signed }} shares<span class="sub">{% if fund.biggest.change_pct is not none %}{{ fund.biggest.change_pct|signed(1) }}% vs previous holding{% else %}New holding in compared funds{% endif %}</span></p>
             <p>Estimated net {{ 'purchase' if fund.biggest.qty_change > 0 else 'sale' }} · ₹{{ fund.biggest.flow_lakhs|abs|crore }} Cr</p>
             {% endif %}
-            {% if fund.unpriced %}<p>{{ fund.unpriced }} unpriced stock change{{ 's' if fund.unpriced != 1 }} excluded from the biggest move.</p>{% endif %}
+            {% if fund.unpriced %}<p>{{ fund.unpriced }} stock change{{ 's' if fund.unpriced != 1 }} without a price {{ 'are' if fund.unpriced != 1 else 'is' }} not used for the biggest move.</p>{% endif %}
             {% elif fund.loaded %}<p>Both monthly snapshots must be available and pass validation.</p>
-            {% else %}<p>Monthly changes will appear when comparable disclosures are available.</p>{% endif %}
+            {% else %}<p>Monthly changes appear when disclosures for both months are available.</p>{% endif %}
             <dl class="fund-card__counts">
               <div><dt>Expected</dt><dd>{{ fund.expected if fund.expected is not none else 'Unknown' }}</dd></div>
               <div><dt>Loaded</dt><dd>{{ fund.loaded }}</dd></div>
               <div><dt>Validated</dt><dd>{{ fund.validated_count }}</dd></div>
               <div><dt>Compared</dt><dd>{{ fund.compared }}</dd></div>
             </dl>
-            {% if not fund.inventory_known %}<p>Official eligible inventory is not established for both months.{% if fund.expected_current is not none %} Current official eligible inventory: {{ fund.expected_current }} funds.{% endif %}</p>{% endif %}
+            {% if not fund.inventory_known %}<p>The official list of eligible funds is not confirmed for both months.{% if fund.expected_current is not none %} The current month's official list has {{ fund.expected_current }} funds.{% endif %}</p>{% endif %}
             <div class="fund-card__actions">
               {% if fund.biggest %}<a href="/evidence/{{ fund.biggest.isin }}?{{ dict(month=month, amc=fund.amc, active_only=active_only)|urlencode }}">View evidence ↗</a>{% endif %}
               <a href="/coverage?{{ dict(view, amc=fund.amc)|urlencode }}">Coverage breakdown <span aria-hidden="true">→</span></a>
@@ -62,6 +62,6 @@
     </div>
   </div>
   {% endfor %}
-  <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All fund types' }} · domestic equity. Biggest move uses estimated net trading value, including new holdings and exits; splits and bonuses are adjusted.</p>
-  <p class="fund-summary__source">Top five by <a href="{{ aum_source }}" target="_blank" rel="noopener noreferrer">AMFI average AUM</a>, {{ aum_period }} (excluding domestic FoFs). Foreign-owned houses are three additional selections; Nippon is already in the top five.</p>
+  <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All fund types' }} · domestic equity. The biggest move is the change with the largest estimated net trading value, including new holdings and exits. Share counts are adjusted for splits and bonus issues.</p>
+  <p class="fund-summary__source">The top five are the largest fund houses by average assets under management (AUM), as published by the <a href="{{ aum_source }}" target="_blank" rel="noopener noreferrer">Association of Mutual Funds in India (AMFI)</a> for {{ aum_period }}, excluding domestic funds of funds (FoFs). The three foreign-owned fund houses are an additional selection. Nippon India is also foreign-owned, and it is already in the top five.</p>
 </section>

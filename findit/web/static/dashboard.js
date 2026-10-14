@@ -9,14 +9,6 @@
       if (link === selected) link.setAttribute("aria-current", "location");
       else link.removeAttribute("aria-current");
     });
-    if (selected) {
-      var navBounds = sectionNav.getBoundingClientRect();
-      var linkBounds = selected.getBoundingClientRect();
-      sectionNav.style.setProperty("--nav-x", (linkBounds.left - navBounds.left) + "px");
-      sectionNav.style.setProperty("--nav-y", (linkBounds.bottom - navBounds.top - 2) + "px");
-      sectionNav.style.setProperty("--nav-width", linkBounds.width + "px");
-      sectionNav.dataset.indicator = "ready";
-    }
   }
   function updateNavigation() {
     if (!sectionNav) return;
@@ -24,7 +16,8 @@
       return { link: link, target: document.getElementById(link.getAttribute("href").slice(1)) };
     }).filter(function (section) { return section.target; });
     if (!sections.length) return;
-    var topbar = document.querySelector(".topbar");
+    var workspaceBar = document.querySelector(".workspace-bar");
+    var topbar = workspaceBar && window.innerWidth >= 1100 ? workspaceBar : document.querySelector(".topbar");
     var readingLine = (topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0) + 24;
     var selected = sections[0].link;
     sections.forEach(function (section) {
@@ -63,18 +56,41 @@
   }
   var themeToggle = document.getElementById("theme-toggle");
   if (themeToggle) {
+    var themeText = themeToggle.querySelector("[data-theme-label]") || themeToggle;
+    var themeChosen = false;
     function themeLabel() {
       var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      themeToggle.textContent = next === "light" ? "Light mode" : "Dark mode";
+      themeText.textContent = next === "light" ? "Light mode" : "Dark mode";
       themeToggle.setAttribute("aria-label", "Switch to " + next + " mode");
+    }
+    function applyTheme(next) {
+      // Commit the palette as one change before restoring hover/press transitions.
+      // The toggle's own icon pair keeps its cross-fade; it animates no colors.
+      var override = document.createElement("style");
+      override.textContent = "*:not(.icon-swap>.icon),*::before,*::after{transition:none!important}";
+      document.head.append(override);
+      document.documentElement.dataset.theme = next;
+      void document.documentElement.offsetHeight;
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { override.remove(); });
+      });
+      themeLabel();
     }
     themeToggle.hidden = false;
     themeLabel();
     themeToggle.addEventListener("click", function () {
       var next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
-      document.documentElement.dataset.theme = next;
+      themeChosen = true;
+      applyTheme(next);
       try { localStorage.setItem("findit-theme", next); } catch (e) { /* Optional storage. */ }
-      themeLabel();
+    });
+    // Follow system appearance until the reader chooses a device preference.
+    var systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    systemTheme.addEventListener("change", function (event) {
+      if (themeChosen) return;
+      var preference;
+      try { preference = localStorage.getItem("findit-theme"); } catch (e) { /* Optional storage. */ }
+      if (preference !== "light" && preference !== "dark") applyTheme(event.matches ? "dark" : "light");
     });
   }
   var form = document.getElementById("view-controls");
@@ -87,6 +103,14 @@
   var stockBox = document.getElementById("stock-box");
   var inflight = {};
   var stockOpener = null;
+  var keyboardAction = false;
+  var dialogSequence = 0;
+  var dialogCloseTimer = null;
+  document.addEventListener("keydown", function () { keyboardAction = true; }, true);
+  document.addEventListener("pointerdown", function () { keyboardAction = false; }, true);
+  function isKeyboardAction(event) {
+    return keyboardAction || !!(event && (event.type === "keydown" || event.detail === 0));
+  }
   var watchlist = [];
   var watchStatus = document.getElementById("watchlist-status");
   var watchResults = document.getElementById("watchlist-results");
@@ -111,6 +135,24 @@
       if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
     }
   }
+  function updateFollowButtons() {
+    if (!stockBox) return;
+    stockBox.querySelectorAll("[data-watch-stock]").forEach(function (button) {
+      var followed = watchlist.includes(button.dataset.watchStock);
+      var label = button.querySelector("[data-follow-label]") || button;
+      label.textContent = followed ? "Following on this device" : "Follow stock on this device";
+      button.setAttribute("aria-pressed", followed ? "true" : "false");
+    });
+  }
+  function setFollowed(isin, followed) {
+    if (followed === watchlist.includes(isin)) return;
+    if (followed && watchlist.length >= 100) {
+      if (watchStatus) watchStatus.textContent = "Keep at most 100 followed stocks.";
+      return;
+    }
+    watchlist = followed ? watchlist.concat(isin).sort() : watchlist.filter(function (s) { return s !== isin; });
+    saveWatchlist(); updateFollowButtons(); refreshWatchlist();
+  }
   function downloadText(contents, type, filename) {
     var url = URL.createObjectURL(new Blob([contents], { type: type }));
     var link = document.createElement("a");
@@ -119,6 +161,46 @@
     link.click(); link.remove();
     // Give the browser time to start reading the Blob before releasing it.
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+  var watchStates = { changed: "Changed", unchanged_in_compared_funds: "No change in compared funds",
+    net_unchanged_with_opposing_changes: "No net change: additions and reductions cancel out",
+    unavailable: "No usable comparison", unknown_stock: "Unknown stock" };
+  function formatCount(value, signed) {
+    if (value === null || value === undefined) return "unavailable";
+    var digits = new Intl.NumberFormat("en-US").format(Math.abs(value));
+    return (value < 0 ? "−" : signed && value > 0 ? "+" : "") + digits;
+  }
+  // One followed stock: name, comparison state, four facts, then Unfollow last.
+  function watchItem(stock) {
+    var item = document.createElement("article"), head = document.createElement("div");
+    var name = document.createElement("strong"), state = document.createElement("span");
+    var link = document.createElement("a"), facts = document.createElement("dl");
+    var remove = document.createElement("button");
+    var largest = stock.largest_compared_changes[0];
+    item.className = "watch-item";
+    head.className = "watch-item__head";
+    name.textContent = stock.name;
+    state.className = "tag" + (stock.status === "unavailable" ? " tag--stale" :
+      stock.status === "unknown_stock" ? " tag--missing" : "");
+    state.textContent = watchStates[stock.status] || stock.status.replaceAll("_", " ");
+    link.href = stock.evidence_url; link.textContent = "View evidence";
+    head.append(name, state, link);
+    facts.className = "watch-item__facts";
+    [["Fund houses", stock.houses_buying === null ? "unavailable" :
+        stock.houses_buying + " adding · " + stock.houses_selling + " reducing"],
+     ["Net share change", formatCount(stock.net_share_change, true)],
+     ["Funds opening / exiting", formatCount(stock.additions) + " / " + formatCount(stock.exits)],
+     ["Largest fund change", largest ? largest.fund + ": " + formatCount(largest.shares, true) : "none"]
+    ].forEach(function (fact) {
+      var row = document.createElement("div"), term = document.createElement("dt"), value = document.createElement("dd");
+      term.textContent = fact[0]; value.textContent = fact[1];
+      row.append(term, value); facts.append(row);
+    });
+    remove.type = "button"; remove.className = "btn btn--quiet"; remove.textContent = "Unfollow";
+    remove.setAttribute("aria-label", "Unfollow " + stock.name);
+    remove.addEventListener("click", function () { setFollowed(stock.isin, false); });
+    item.append(head, facts, remove);
+    return item;
   }
   var watchlistSequence = 0;
   async function refreshWatchlist() {
@@ -129,8 +211,7 @@
     download.hidden = true;
     delete download.dataset.reportRequest;
     if (!watchlist.length) {
-      watchResults.textContent = "Your watchlist is empty. Open a stock and choose Follow stock.";
-      download.hidden = true;
+      watchResults.textContent = "Your watchlist is empty. To add a stock, open it and select Follow stock.";
       return;
     }
     var body = { month: currentMonth(), stocks: watchlist.slice(),
@@ -142,25 +223,16 @@
       if (sequence !== watchlistSequence) return;
       if (!result.ok) throw new Error("HTTP " + result.status);
       var report = JSON.parse(result.body);
-      watchResults.replaceChildren();
       var note = document.createElement("p");
-      note.textContent = report.scope + "; market completeness unknown. Release " + report.release_id.slice(0, 12) + ". House directions net the compared individual funds’ share changes within each house; the stock detail counts houses with any buying or selling fund, so a house can appear on both sides there.";
-      watchResults.append(note);
-      report.stocks.forEach(function (stock) {
-        var row = document.createElement("p"), link = document.createElement("a"), remove = document.createElement("button");
-        link.href = stock.evidence_url; link.textContent = stock.name + " · View evidence";
-        row.append(link, " — " + stock.status.replaceAll("_", " ") + "; " + (stock.houses_buying === null ? "unavailable" : stock.houses_buying) + " houses net adding shares / " + (stock.houses_selling === null ? "unavailable" : stock.houses_selling) + " net reducing shares. ");
-        var number = function (v) { return v === null ? "unavailable" : new Intl.NumberFormat("en-IN").format(v); };
-        row.append("Net change: " + number(stock.net_share_change) + " shares. Individual-fund additions / exits: " + number(stock.additions) + " / " + number(stock.exits) + ". ");
-        if (stock.largest_compared_changes.length) {
-          var largest = stock.largest_compared_changes[0];
-          row.append("Largest compared fund change: " + largest.fund + ", " + number(largest.shares) + " shares. Independent review pending. ");
-        }
-        remove.type = "button"; remove.className = "btn btn--quiet"; remove.textContent = "Unfollow";
-        remove.setAttribute("aria-label", "Unfollow " + stock.name);
-        remove.addEventListener("click", function () { watchlist = watchlist.filter(function (s) { return s !== stock.isin; }); saveWatchlist(); refreshWatchlist(); });
-        row.append(remove); watchResults.append(row);
-      });
+      note.className = "watchlist-note";
+      note.textContent = report.scope + ". Market-wide completeness: " + report.market_completeness + ". Data release " +
+        report.release_id.slice(0, 12) + "." + (report.stocks.some(function (s) {
+          return s.review_status === "not_independently_reviewed"; }) ? " Independent review: pending." : "") +
+        " Here, a fund house counts as adding shares when its compared funds together hold more shares" +
+        " than in the previous month. The stock detail counts a fund house as buying if any one of its" +
+        " funds bought, so one fund house can count as both buying and selling there.";
+      watchResults.replaceChildren(note);
+      report.stocks.forEach(function (stock) { watchResults.append(watchItem(stock)); });
       body.release = report.release_id; body.rules = report.rule_version;
       download.dataset.reportRequest = JSON.stringify(body);
       download.href = "/watchlist/report"; download.hidden = false;
@@ -196,7 +268,7 @@
         var combined = Array.from(new Set(watchlist.concat(imported))).sort();
         if (combined.length > 100) throw new Error("Keep at most 100 stocks.");
         watchlist = combined;
-        saveWatchlist(); refreshWatchlist();
+        saveWatchlist(); updateFollowButtons(); refreshWatchlist();
       } catch (e) { watchStatus.textContent = "Import failed: " + e.message; }
       event.target.value = "";
     });
@@ -284,6 +356,13 @@
       var url = new URL(location.href);
       url.search = q.toString();
       history.replaceState(null, "", url);
+      var coverageLink = document.querySelector("[data-coverage-link]");
+      if (coverageLink) {
+        var coverageUrl = new URL(coverageLink.href, location.href);
+        coverageUrl.searchParams.set("month", month);
+        coverageUrl.searchParams.set("active_only", q.get("active_only"));
+        coverageLink.href = coverageUrl.toString();
+      }
       if (hadFocus) {
         var title = document.getElementById("consensus-title");
         if (title) title.focus();
@@ -346,7 +425,7 @@
         }
         // mousedown would blur the input and close the list before the click lands.
         li.addEventListener("mousedown", function (e) { e.preventDefault(); });
-        li.addEventListener("click", function () { pick(i); });
+        li.addEventListener("click", function (event) { pick(i, event); });
         list.append(li);
       });
       if (note) {
@@ -377,11 +456,11 @@
       }
     }
 
-    function pick(i) {
+    function pick(i, event) {
       var item = items[i];
       close();
       input.value = item.label;
-      opts.onPick(item);
+      opts.onPick(item, event);
     }
 
     input.addEventListener("input", function () {
@@ -396,8 +475,8 @@
         if (list.hidden) { update(); return; }
         setActive(active < 0 ? (e.key === "ArrowDown" ? 0 : -1) : active + (e.key === "ArrowDown" ? 1 : -1));
       } else if (e.key === "Enter") {
-        if (!list.hidden && active >= 0) { e.preventDefault(); pick(active); }
-        else if (!list.hidden && items.length === 1) { e.preventDefault(); pick(0); }
+        if (!list.hidden && active >= 0) { e.preventDefault(); pick(active, e); }
+        else if (!list.hidden && items.length === 1) { e.preventDefault(); pick(0, e); }
       } else if (e.key === "Escape") {
         if (!list.hidden) { e.preventDefault(); close(); }
         else if (input.value) { e.preventDefault(); input.value = ""; if (opts.onType) opts.onType(); }
@@ -422,6 +501,7 @@
       var r = await load("stock", "/fragments/stock?" + q);
       if (!r.ok) throw new Error(r.status === 404 ? "not found" : "HTTP " + r.status);
       stockBox.innerHTML = r.body;
+      updateFollowButtons();
       var head = stockBox.querySelector("[data-stock-isin]");
       // The month goes in too, so the link keeps meaning this month after a newer one loads.
       if (month) setUrlParam("month", month);
@@ -437,25 +517,76 @@
     }
   }
 
-  function openStock(query) {
+  function openStock(query, instant) {
     query = (query || "").trim();
     if (!query) return;
+    var sequence = ++dialogSequence;
+    clearTimeout(dialogCloseTimer);
+    dialogCloseTimer = null;
+    delete dialog.dataset.endingStyle;
+    if (instant) dialog.dataset.instant = "";
+    else delete dialog.dataset.instant;
     if (!dialog.open) {
       stockOpener = document.activeElement;
+      if (!instant) dialog.dataset.startingStyle = "";
       dialog.showModal();
+      if (!instant) {
+        // Start in the closed pose, then let the transition retarget normally.
+        void dialog.offsetWidth;
+        requestAnimationFrame(function () {
+          if (sequence === dialogSequence && dialog.open) delete dialog.dataset.startingStyle;
+        });
+      }
+    } else {
+      delete dialog.dataset.startingStyle;
     }
     loadStock(query);
   }
 
+  function closeStock(instant) {
+    if (!dialog.open) return;
+    var sequence = ++dialogSequence;
+    clearTimeout(dialogCloseTimer);
+    if (inflight.stock) inflight.stock.abort();
+    delete dialog.dataset.startingStyle;
+    if (instant) {
+      dialog.dataset.instant = "";
+      dialog.close();
+      return;
+    }
+    delete dialog.dataset.instant;
+    dialog.dataset.endingStyle = "";
+    // Keep native focus containment until the short exit has finished.
+    dialogCloseTimer = setTimeout(function () {
+      if (sequence === dialogSequence && dialog.open) dialog.close();
+    }, 150);
+  }
+
+  dialog.addEventListener("transitionend", function (event) {
+    if (event.target === dialog && event.propertyName === "opacity" &&
+        dialog.dataset.endingStyle !== undefined) dialog.close();
+  });
+  dialog.addEventListener("cancel", function (event) {
+    event.preventDefault();
+    closeStock(true);
+  });
   dialog.addEventListener("close", function () {
+    // A native close event can arrive after another stock has already reopened.
+    if (dialog.open) return;
+    ++dialogSequence;
+    clearTimeout(dialogCloseTimer);
+    dialogCloseTimer = null;
+    delete dialog.dataset.startingStyle;
+    delete dialog.dataset.endingStyle;
+    delete dialog.dataset.instant;
     if (inflight.stock) inflight.stock.abort();
     setUrlParam("stock", "");
     if (stockOpener && stockOpener.isConnected) stockOpener.focus();
     stockOpener = null;
   });
-  document.getElementById("stock-dialog-close").addEventListener("click", function () { dialog.close(); });
+  document.getElementById("stock-dialog-close").addEventListener("click", function (event) { closeStock(isKeyboardAction(event)); });
   // A click on the backdrop lands on the dialog element itself.
-  dialog.addEventListener("click", function (e) { if (e.target === dialog) dialog.close(); });
+  dialog.addEventListener("click", function (e) { if (e.target === dialog) closeStock(isKeyboardAction(e)); });
 
   // -- scheme summary -------------------------------------------------------
   var pickedScheme = null;
@@ -537,10 +668,10 @@
         });
       },
       emptyText: function (query) { return "No stock matches “" + query + "”."; },
-      onPick: function (item) { openStock(item.value); }
+      onPick: function (item, event) { openStock(item.value, isKeyboardAction(event)); }
     });
     // Enter without choosing a suggestion looks the text up as typed.
-    stockForm.addEventListener("submit", function (e) { e.preventDefault(); openStock(stockInput.value); });
+    stockForm.addEventListener("submit", function (e) { e.preventDefault(); openStock(stockInput.value, keyboardAction); });
   }
 
   // -- view controls ----------------------------------------------------------
@@ -560,15 +691,11 @@
   document.addEventListener("click", function (e) {
     var follow = e.target.closest("[data-watch-stock]");
     if (follow) {
-      var isin = follow.dataset.watchStock;
-      if (watchlist.includes(isin)) { if (watchStatus) watchStatus.textContent = "Already followed on this device."; return; }
-      if (watchlist.length >= 100) { if (watchStatus) watchStatus.textContent = "Keep at most 100 followed stocks."; return; }
-      watchlist.push(isin); watchlist.sort(); saveWatchlist(); refreshWatchlist();
-      follow.textContent = "Following on this device";
+      setFollowed(follow.dataset.watchStock, !watchlist.includes(follow.dataset.watchStock));
       return;
     }
     var link = e.target.closest(".stock-link");
-    if (link) { openStock(link.dataset.isin); return; }
+    if (link) { openStock(link.dataset.isin, isKeyboardAction(e)); return; }
     // "Show all" and the column toggle carry their view in the href; apply it
     // to the form so the URL and later filter changes keep it.
     var viewLink = e.target.closest("[data-view-link]");
@@ -582,5 +709,5 @@
   });
 
   var initialStock = new URL(location.href).searchParams.get("stock");
-  if (initialStock) openStock(initialStock);
+  if (initialStock) openStock(initialStock, true);
 })();

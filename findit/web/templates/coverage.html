@@ -1,3 +1,4 @@
+{% from "_macros.html" import icon %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -9,31 +10,48 @@
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="{{ asset_url('style.css') }}">
 </head>
-<body>
+<body class="research-page">
   <a class="skip" href="#coverage-main">Skip to coverage</a>
   <header class="topbar"><div class="topbar__inner">
-    <a class="brand" href="/?{{ view|urlencode }}#monthly-summary">FindIt</a>
-    <a class="coverage-back" href="/?{{ view|urlencode }}#monthly-summary">← Monthly summary</a>
-    <button class="btn btn--quiet theme-toggle" id="theme-toggle" type="button" hidden>Appearance</button>
+    <a class="brand" href="/?{{ view|urlencode }}#monthly-summary" aria-label="FindIt home"><span class="brand__mark" aria-hidden="true">f<span>.</span></span><span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span></a>
+    <a class="coverage-back" href="/?{{ view|urlencode }}#monthly-summary">{{ icon('arrow-left', 16) }} Monthly summary</a>
+    <button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
   </div></header>
   <main class="page coverage-page" id="coverage-main">
-    <p class="eyebrow">Sources and scope</p>
-    <h1>Coverage breakdown</h1>
-    <p class="coverage-page__intro">{{ summary_prev_month|month_label }} → {{ month|month_label }} · {{ 'Active stock-pickers' if active_only else 'All fund types' }} · domestic equity holdings</p>
-    <p class="muted">Loaded and validated count portfolios, including those without domestic equity. Expected counts the official eligible comparison universe. Compared funds must pass validation in both months. Selected-house completeness does not establish market-wide completeness.</p>
+    <div class="page-heading">
+      <div class="page-heading__copy">
+        <p class="eyebrow">Sources and scope</p>
+        <h1>Coverage breakdown</h1>
+        <p class="coverage-page__intro scope-line">{{ summary_prev_month|month_label }} → {{ month|month_label }} · {{ 'Active stock-pickers' if active_only else 'All fund types' }} · domestic equity holdings</p>
+      </div>
+      <span class="page-heading__icon" aria-hidden="true">{{ icon('shield', 24) }}</span>
+    </div>
+    <div class="research-note">
+      {{ icon('shield', 16) }}
+      <p>Each compared fund passed validation in both months. A complete count for these selected fund houses does not mean that the whole market is complete.</p>
+    </div>
+    <details class="coverage-method evidence-method">
+      <summary>What the coverage counts mean</summary>
+      <dl class="term-list">
+        <dt>Expected</dt><dd>The number of eligible funds on the official list.</dd>
+        <dt>Loaded</dt><dd>The portfolios that FindIt read, including portfolios with no domestic equity.</dd>
+        <dt>Validated</dt><dd>The loaded portfolios that passed the validation checks.</dd>
+        <dt>Compared</dt><dd>The funds that passed validation in both months.</dd>
+      </dl>
+    </details>
     {% for fund in funds %}
     <section class="panel coverage-house" aria-labelledby="house-{{ loop.index }}">
       <div class="panel__head">
-        <h2 id="house-{{ loop.index }}">{{ fund.name }} <span class="tag tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_',' ')|capitalize }}</span></h2>
+        <div class="section-heading"><h2 id="house-{{ loop.index }}">{{ fund.name }}</h2><span class="tag tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_',' ')|capitalize }}</span></div>
         <dl class="coverage-totals">
           <div><dt>Expected</dt><dd>{{ fund.expected if fund.expected is not none else 'Unknown' }}</dd></div>
           <div><dt>Loaded</dt><dd>{{ fund.loaded }}</dd></div>
           <div><dt>Validated</dt><dd>{{ fund.validated_count }}</dd></div>
           <div><dt>Compared</dt><dd>{{ fund.compared }}</dd></div>
         </dl>
-        {% if not fund.inventory_known %}<p class="panel__meta">Official eligible inventory is not established for both months.{% if fund.expected_current is not none %} Current-month eligible inventory: {{ fund.expected_current }} funds.{% endif %}</p>{% endif %}
+        {% if not fund.inventory_known %}<p class="panel__meta">The official list of eligible funds is not confirmed for both months.{% if fund.expected_current is not none %} The current month's official list has {{ fund.expected_current }} funds.{% endif %}</p>{% endif %}
         <p class="panel__meta">{{ fund.out_of_scope }} outside eligible scope · {{ fund.withheld_count }} withheld · {{ fund.not_validated_count }} current snapshots not validated · {{ fund.missing_previous }} loaded without a prior snapshot{% if fund.outside_inventory %} · {{ fund.outside_inventory }} compared outside official inventory{% endif %}</p>
-        {% if fund.inventory_source %}<p class="panel__meta"><a href="{{ fund.inventory_source }}" target="_blank" rel="noopener noreferrer">Official inventory source ↗</a></p>{% endif %}
+        {% if fund.inventory_source %}<p class="panel__meta"><a class="detail-link" href="{{ fund.inventory_source }}" target="_blank" rel="noopener noreferrer">Official inventory source {{ icon('arrow-up-right', 14) }}</a></p>{% endif %}
       </div>
       {% if fund.expected_details %}
       <div class="table-wrap" tabindex="0" role="region" aria-label="{{ fund.name }} eligible funds">
@@ -42,10 +60,10 @@
           <tbody>{% for item in fund.expected_details %}<tr><th scope="row">{{ item.name }}</th><td>{{ item.state|replace('_',' ') }}</td><td>{{ item.reason or '–' }}</td></tr>{% endfor %}</tbody>
         </table>
       </div>
-      {% else %}<p class="state">No reviewed eligible-fund inventory is available. Missing disclosures do not represent zero holdings or trades.</p>{% endif %}
+      {% else %}<p class="state">No reviewed eligible-fund inventory is available. A missing disclosure does not mean zero holdings or zero trades.</p>{% endif %}
     </section>
     {% endfor %}
-    <p class="muted">A missing snapshot is not a purchase or exit. Withheld and unvalidated data stay excluded; validation thresholds are unchanged.</p>
+    <p class="muted">A missing monthly snapshot is not a purchase or an exit. Withheld and unvalidated data stay out of every count, and the validation thresholds stay the same.</p>
   </main>
   <script src="{{ asset_url('dashboard.js') }}" defer></script>
 </body>

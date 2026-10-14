@@ -1,19 +1,97 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FindIt · History</title>{% include "_theme_init.html" %}<link rel="stylesheet" href="{{ asset_url('style.css') }}"></head><body><main style="max-width:1100px;margin:auto;padding:24px">
-<a href="/?{{ dict(month=h.end)|urlencode }}">← Monthly activity</a><h1>Holding history · {{ h.isin }}</h1>
-<p>{{ h.start|month_label }} → {{ h.end|month_label }} · {{ h.amc or 'All compared houses' }} · {{ 'Active stock-pickers' if h.active_only else 'All fund types' }} · domestic equity</p>
-<form method="get" aria-label="History fund-house scope">
-<input type="hidden" name="start" value="{{ h.start }}"><input type="hidden" name="end" value="{{ h.end }}">
-<input type="hidden" name="active_only" value="{{ 1 if h.active_only else 0 }}">
-<input type="hidden" name="release" value="{{ h.release_id }}"><input type="hidden" name="rules" value="{{ h.rule_version }}">
-<label for="history-house">Fund house</label>
-<select id="history-house" name="amc"><option value=""{% if not h.amc %} selected{% endif %}>All compared houses</option>{% for house in houses %}<option value="{{ house }}"{% if h.amc == house %} selected{% endif %}>{{ house }}</option>{% endfor %}</select>
-<button type="submit">Update history</button>
-<p>Changing the fund house recalculates the fixed cohort for this range. Houses without a full comparison across the range remain gaps.</p>
-</form>
-<p><strong>{{ h.cohort_count }} individual funds in the fixed cohort</strong> · {{ h.source_backed_count }} with recorded original-source provenance at every snapshot.</p>
-<p>{{ h.scope }}</p><p>{{ h.limitation }}</p>
-<figure><figcaption>Shares held by the fixed cohort · zero-based scale. Split/bonus changes can affect shares held; the table lists adjustments.</figcaption><div style="display:flex;gap:12px;align-items:end;height:170px;overflow-x:auto;padding:8px" aria-hidden="true">{% for p in h.points %}<div style="flex:1;min-width:45px;text-align:center"><div style="height:125px;display:flex;align-items:end;justify-content:center"><div style="width:65%;height:{{ p.bar_percent }}%;background:var(--ink-3);min-height:{{ 2 if p.shares is not none else 0 }}px"></div></div><small>{{ p.month[5:] if p.shares is not none else 'Gap' }}{% if p.adjustments %} *{% endif %}{% if p.source_revision %} †{% endif %}</small></div>{% endfor %}</div></figure>
-<details><summary>Data release and calculation rules</summary><p style="overflow-wrap:anywhere">{{ h.release_id }} · {{ h.rule_version }}</p></details>
-<div class="table-wrap" tabindex="0" role="region" aria-label="Monthly history"><table class="data"><caption>Accessible monthly history table; gaps are unavailable, never zero activity</caption><thead><tr><th>Month</th><th>Shares held</th><th>Adjusted share change</th><th>Fund houses net adding / reducing shares</th><th>Net trading ₹ Cr</th><th>Scope and adjustments</th></tr></thead><tbody>{% for p in h.points %}<tr><th>{% if p.evidence_url %}<a href="{{ p.evidence_url }}">{{ p.month|month_label }}</a>{% else %}{{ p.month|month_label }} · unavailable{% endif %}</th><td>{{ p.shares|signed }}</td><td>{{ p.net_share_change|signed }}</td><td>{{ p.houses_buying if p.houses_buying is not none else '–' }} / {{ p.houses_selling if p.houses_selling is not none else '–' }}</td><td>{{ p.net_flow_lakhs|crore }}</td><td>{{ p.status|replace('_',' ') }} · {{ p.funds }} funds{% if p.adjustments %} · {{ p.adjustments|join(', ') }} split/bonus{% endif %}{% if p.source_revision %} · † retained source revision; see evidence{% endif %}</td></tr>{% endfor %}</tbody></table></div>
-<p>Each evidence link uses this exact fixed cohort, period, filters and data release. The first point is a holdings snapshot; it has no preceding comparison within this range.</p>
-</main></body></html>
+{% from "_macros.html" import icon %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>FindIt · Holding history</title>
+  {% include "_theme_init.html" %}
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="{{ asset_url('style.css') }}">
+</head>
+<body class="research-page">
+  <a class="skip" href="#history-main">Skip to holding history</a>
+  <header class="topbar"><div class="topbar__inner">
+    <a class="brand" href="/?{{ dict(month=h.end,active_only=h.active_only|int)|urlencode }}" aria-label="FindIt home"><span class="brand__mark" aria-hidden="true">f<span>.</span></span><span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span></a>
+    <a class="coverage-back" href="/?{{ dict(month=h.end,active_only=h.active_only|int)|urlencode }}#monthly-activity">{{ icon('arrow-left', 16) }} Monthly activity</a>
+    <button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
+  </div></header>
+  <main class="page history-page" id="history-main">
+    <div class="page-heading">
+      <div class="page-heading__copy">
+        <p class="eyebrow">Ownership over time</p>
+        <h1>Holding history</h1>
+        <p class="evidence-id">{{ h.isin }}</p>
+        <p class="scope-line">{{ h.start|month_label }} → {{ h.end|month_label }} · {{ h.amc or 'All compared houses' }} · {{ 'Active stock-pickers' if h.active_only else 'All fund types' }} · domestic equity</p>
+      </div>
+      <span class="page-heading__icon" aria-hidden="true">{{ icon('clock', 24) }}</span>
+    </div>
+
+    <section class="panel history-scope" aria-labelledby="history-scope-title">
+      <div class="panel__head">
+        <h2 id="history-scope-title">Comparison scope</h2>
+        <p class="panel__meta">This history follows the same funds through the whole range.</p>
+      </div>
+      <div class="panel__body">
+        <form class="history-filter" method="get" aria-label="History fund-house scope">
+          <input type="hidden" name="start" value="{{ h.start }}">
+          <input type="hidden" name="end" value="{{ h.end }}">
+          <input type="hidden" name="active_only" value="{{ 1 if h.active_only else 0 }}">
+          <input type="hidden" name="release" value="{{ h.release_id }}">
+          <input type="hidden" name="rules" value="{{ h.rule_version }}">
+          <div class="field"><label for="history-house">Fund house</label>
+            <select id="history-house" name="amc"><option value=""{% if not h.amc %} selected{% endif %}>All compared houses</option>{% for house in houses %}<option value="{{ house }}"{% if h.amc == house %} selected{% endif %}>{{ house }}</option>{% endfor %}</select>
+          </div>
+          <button class="btn" type="submit">Update history {{ icon('chevron-right', 16) }}</button>
+        </form>
+        <p class="sub">When you change the fund house, FindIt selects a new fixed group of funds (cohort) for this range. A fund house without a comparison for every month in the range shows as a gap.</p>
+        <dl class="evidence-metrics history-metrics">
+          <div><dt>Funds in the fixed cohort</dt><dd>{{ h.cohort_count }}</dd></div>
+          <div><dt>Original sources at every snapshot</dt><dd>{{ h.source_backed_count }}</dd></div>
+        </dl>
+        <p class="muted">{{ h.scope }}</p>
+      </div>
+    </section>
+
+    <div class="research-note">{{ icon('shield', 16) }}<p>{{ h.limitation }}</p></div>
+
+    <section class="panel" aria-labelledby="history-chart-title">
+      <div class="panel__head">
+        <h2 id="history-chart-title">Shares held by the fixed cohort</h2>
+        <p class="panel__meta">The scale starts at zero. Share splits and bonus issues can change the number of shares held. The table lists these adjustments.</p>
+      </div>
+      <figure class="history-chart" aria-hidden="true">
+        <figcaption class="visually-hidden">Shares held by the fixed cohort, on a scale that starts at zero. Share splits and bonus issues can change the number of shares held. The table lists these adjustments.</figcaption>
+          {% for p in h.points %}
+          <div class="history-chart__point{% if p.shares is none %} is-gap{% endif %}">
+            <div class="history-chart__track"><div class="history-chart__bar" style="height:{{ p.bar_percent }}%;min-height:{{ 2 if p.shares is not none else 0 }}px"></div>{% if p.shares is none %}<span class="history-chart__gap">—</span>{% endif %}</div>
+            <span class="history-chart__label">{{ p.month|month_label }}{% if p.shares is none %}<span class="sub">Gap</span>{% endif %}{% if p.adjustments %} *{% endif %}{% if p.source_revision %} †{% endif %}</span>
+          </div>
+          {% endfor %}
+      </figure>
+    </section>
+
+    <section class="panel" aria-labelledby="history-table-title">
+      <div class="panel__head"><h2 id="history-table-title">Monthly history</h2><p class="panel__meta">Select a month to see the sources and calculations for this group of funds.</p></div>
+      <div class="table-wrap" tabindex="0" role="region" aria-label="Monthly history">
+        <table class="data">
+          <caption class="visually-hidden">Accessible monthly history table; gaps are unavailable, never zero activity</caption>
+          <thead><tr><th scope="col">Month</th><th scope="col" class="n">Shares held</th><th scope="col" class="n">Adjusted share change</th><th scope="col" class="n">Fund houses net adding / reducing shares</th><th scope="col" class="n">Net trading ₹ Cr</th><th scope="col">Scope and adjustments</th></tr></thead>
+          <tbody>{% for p in h.points %}<tr>
+            <th scope="row">{% if p.evidence_url %}<a class="detail-link" href="{{ p.evidence_url }}">{{ p.month|month_label }} {{ icon('arrow-up-right', 14) }}</a>{% else %}{{ p.month|month_label }}<span class="sub">unavailable</span>{% endif %}</th>
+            <td class="n num">{{ p.shares|signed }}</td>
+            <td class="n num">{{ p.net_share_change|signed }}</td>
+            <td class="n num">{{ p.houses_buying if p.houses_buying is not none else '–' }} / {{ p.houses_selling if p.houses_selling is not none else '–' }}</td>
+            <td class="n num">{{ p.net_flow_lakhs|crore }}</td>
+            <td>{{ p.status|replace('_',' ') }} · {{ p.funds }} funds{% if p.adjustments %} · {{ p.adjustments|join(', ') }} split/bonus{% endif %}{% if p.source_revision %} · † retained source revision; see evidence{% endif %}</td>
+          </tr>{% endfor %}</tbody>
+        </table>
+      </div>
+      <div class="panel__body"><p class="muted">Each evidence link uses the same group of funds, period, filters and data release as this page. The first month is a holdings snapshot. It has no earlier month to compare with in this range.</p></div>
+    </section>
+    <details class="evidence-method"><summary>Data release and calculation rules</summary><p class="source-code">{{ h.release_id }} · {{ h.rule_version }}</p></details>
+  </main>
+  <script src="{{ asset_url('dashboard.js') }}" defer></script>
+</body>
+</html>

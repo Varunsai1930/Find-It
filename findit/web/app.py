@@ -512,7 +512,11 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                         report_comparisons.pop(next(iter(report_comparisons)))
                     report_comparisons[key] = comparison_for_rules(conn, month, active_only, effective_rules)
                 comparison = report_comparisons[key]
-        return monthly_report(conn, month, stocks, active_only, release_id=identity, comparison=comparison, rules_version=effective_rules)
+        report = monthly_report(conn, month, stocks, active_only, release_id=identity, comparison=comparison, rules_version=effective_rules)
+        # Name stocks as the dashboard does, in the JSON view and the Markdown download alike.
+        for stock in report["stocks"]:
+            stock["name"] = _stock_label(stock["name"])
+        return report
 
     def release_connection(release=None, rules=None):
         try:

@@ -199,7 +199,8 @@ def test_monthly_summary_roster_order_missing_data_and_fragment_refresh(tmp_path
         conn.execute("UPDATE schemes SET amc_name = 'SBI AMC' WHERE amc_name = 'A AMC'")
     client = TestClient(create_app(db))
     page = client.get("/").text
-    assert page.index('id="monthly-summary"') < page.index('id="monthly-activity"')
+    # Show the stock ranking first; selected-house summaries follow the activity.
+    assert page.index('id="monthly-activity"') < page.index('id="monthly-summary"')
     assert page.count('<article class="fund-card') == 8
     assert 'Biggest increase' in page
     assert '+70 shares' in page
@@ -1019,3 +1020,6 @@ def test_equity_disclosure_markers_do_not_hide_relevant_search_results(tmp_path)
     assert found[0]["name"] == "Reliance Industries"
     assert "EQ - Reliance" not in client.get("/").text
     assert client.get("/api/stock/INE002A01018").json()["name"] == "Reliance Industries"
+    watch = {"month": "2026-08", "stocks": ["INE002A01018"], "active_only": False}
+    assert client.post("/api/watchlist", json=watch).json()["stocks"][0]["name"] == "Reliance Industries"
+    assert "EQ - Reliance" not in client.post("/watchlist/report", json=watch).text
