@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
 
@@ -213,6 +214,15 @@ def main(argv=None) -> int:
     descriptor = load_descriptor(args.descriptor)
     if descriptor["month"] != "2026-08":
         raise ValueError("This staging gate covers the approved February–August 2026 period")
+    unpack_seconds = 0.0
+    if (args.release_dir / (descriptor["current_release"] + ".db.gz")).is_file():
+        # A prepared build directory is packed; serve it as the hosted
+        # entrypoint does, from a verified unpacked copy, and time that step.
+        from tools.prepare_vercel_release import materialize
+        scratch = tempfile.TemporaryDirectory(prefix="findit-verify-")
+        started = time.perf_counter()
+        args.release_dir = materialize(descriptor, args.release_dir, Path(scratch.name))
+        unpack_seconds = time.perf_counter() - started
     paths = protected_files(descriptor, args.release_dir, args.baseline)
     before = signatures(paths)
     before_journals = journals(paths)
@@ -227,7 +237,7 @@ def main(argv=None) -> int:
                      allowed_hosts=(args.host,))
     samples = []
     with TestClient(app, base_url="https://" + args.host, raise_server_exceptions=False) as client:
-        startup_seconds = time.perf_counter() - cold_started
+        startup_seconds = time.perf_counter() - cold_started + unpack_seconds
         cold_names = {"readiness", "dashboard_default", "consensus_equity0_active0", "evidence_api", "watchlist_100"}
         samples.extend(concurrent_samples(client, [case for case in cases if case.name in cold_names], "cold", args.host))
         print("Cold batch complete.", flush=True)
@@ -264,7 +274,8 @@ def main(argv=None) -> int:
               "month": descriptor["month"], "host": args.host, "house": house,
               "history_stock": history_stock, "watchlist_stocks": stocks, "concurrency": CONCURRENCY,
               "warm_rounds": args.rounds, "limits": LIMITS, "passed": all(gates.values()), "gates": gates,
-              "metrics": {"startup_seconds": startup_seconds, "warm_core_p95_seconds": percentile95(core),
+              "metrics": {"startup_seconds": startup_seconds, "unpack_seconds": unpack_seconds,
+                          "warm_core_p95_seconds": percentile95(core),
                           "core_endpoint_p95_seconds": endpoint_p95, "history_max_seconds": max(history),
                           "cold_max_seconds": max(cold), "max_response_bytes": max(item["bytes"] for item in samples)},
               "samples": samples, "protected_files": len(paths), "journals": after_journals,

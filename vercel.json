@@ -5,7 +5,7 @@
   "functions": {
     "app.py": {
       "maxDuration": 30,
-      "includeFiles": "{deployment/releases.json,deploy-data/*.db,deploy-data/*.json,tools/prepare_vercel_release.py,findit/web/templates/**,findit/web/static/**}",
+      "includeFiles": "{deployment/releases.json,deploy-data/*.db.gz,deploy-data/*.json,tools/prepare_vercel_release.py,findit/web/templates/**,findit/web/static/**}",
       "excludeFiles": "{real_data/**,outputs/**,docs/**,tests/**,.venv/**,.claude/**,.agents/**,.codex/**,.aws/**,.env,.env.*,build/**,dist/**,**/*.xlsx,**/*.xls,**/*.parsed.csv,.vercel-build-audit.json,tools/smoke_installed_wheel.py}"
     }
   },

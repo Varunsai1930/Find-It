@@ -2,8 +2,9 @@
 from pathlib import Path
 import os
 import re
+import tempfile
 
-from tools.prepare_vercel_release import load_descriptor, validate_artifacts
+from tools.prepare_vercel_release import load_descriptor, materialize
 from findit.web.app import create_app
 
 
@@ -21,8 +22,9 @@ def hosted_app(root: Path | None = None):
     if not hosts:
         raise ValueError("Vercel deployment hostnames are required")
     descriptor = load_descriptor(root / "deployment" / "releases.json")
-    directory = root / "deploy-data"
-    validate_artifacts(descriptor, directory)
+    # The bundle holds the releases gzip-packed. They are unpacked and verified
+    # against their pinned SHA-256 into writable temporary storage once.
+    directory = materialize(descriptor, root / "deploy-data", Path(tempfile.gettempdir()))
     return create_app(directory / (descriptor["current_release"] + ".db"), directory,
                       allowed_hosts=tuple(dict.fromkeys(hosts)), hosted=True,
                       expected_month=descriptor["month"])

@@ -2,10 +2,13 @@
 
 Downloads run at build time only. Tokens never become artifact contents or
 request parameters, and redirects are rejected before credentials can escape.
+The bundle carries the databases gzip-packed; the hosted entrypoint unpacks
+and byte-verifies them into the function's temporary storage at startup.
 """
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -18,9 +21,13 @@ import sysconfig
 import tempfile
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
+import zlib
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLE_BUDGET = 400_000_000
+# Unpacked releases live in the function's writable /tmp, which Vercel
+# limits to 500 MB; keep the same headroom as the bundle budget.
+UNPACKED_BUDGET = 400_000_000
 MANIFEST_BUDGET = 64_000
 _HEX = re.compile(r"[a-f0-9]{64}")
 _RULES = {"readiness-2026-10-01", "readiness-2026-10-06"}
@@ -55,6 +62,8 @@ def load_descriptor(path: Path) -> dict:
                 item.get("rule_version") not in _RULES):
             raise ValueError("Invalid release byte count or calculation rules")
         ids.append(item["release_id"])
+    if sum(item["database_bytes"] for item in data["releases"]) > UNPACKED_BUDGET:
+        raise ValueError("Unpacked releases exceed the 400 MB temporary-storage safety budget")
     if len(set(ids)) != 2 or data.get("current_release") not in ids:
         raise ValueError("Current release must be one of two distinct pinned releases")
     current = next(item for item in data["releases"]
@@ -66,27 +75,121 @@ def load_descriptor(path: Path) -> dict:
     return data
 
 
-def validate_artifacts(descriptor: dict, directory: Path) -> None:
+def _require_exact_files(descriptor: dict, directory: Path, database_suffix: str) -> None:
+    """Only the four pinned files, as ordinary files: databases plus manifests."""
     expected = {item["release_id"] + suffix for item in descriptor["releases"]
-                for suffix in (".db", ".json")}
+                for suffix in (database_suffix, ".json")}
     if directory.is_symlink() or not directory.is_dir():
         raise ValueError("Prepared private release directory is unavailable")
     if {path.name for path in directory.iterdir()} != expected:
         raise ValueError("Prepared directory must contain only the four pinned release files")
+    if any((directory / name).is_symlink() or not (directory / name).is_file()
+           for name in expected):
+        raise ValueError("Release artifacts must be ordinary files")
+
+
+def _require_pinned(item: dict, database_bytes: int, database_sha256: str,
+                    manifest: Path) -> None:
+    """One release's database bytes and manifest match the deployment descriptor."""
+    if (database_bytes != item["database_bytes"] or
+            manifest.stat().st_size > MANIFEST_BUDGET or
+            database_sha256 != item["database_sha256"] or
+            file_sha256(manifest) != item["manifest_sha256"]):
+        raise ValueError("Prepared release does not match its pinned bytes")
+    metadata = json.loads(manifest.read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict) or any(metadata.get(key) != item[key]
+           for key in ("release_id", "rule_version", "database_sha256")):
+        raise ValueError("Release manifest does not match the deployment descriptor")
+
+
+def validate_artifacts(descriptor: dict, directory: Path) -> None:
+    """A directory of the four pinned, unpacked release files."""
+    _require_exact_files(descriptor, directory, ".db")
     for item in descriptor["releases"]:
         database = directory / (item["release_id"] + ".db")
-        manifest = database.with_suffix(".json")
-        if any(path.is_symlink() or not path.is_file() for path in (database, manifest)):
-            raise ValueError("Release artifacts must be ordinary files")
-        if (database.stat().st_size != item["database_bytes"] or
-                manifest.stat().st_size > MANIFEST_BUDGET or
-                file_sha256(database) != item["database_sha256"] or
-                file_sha256(manifest) != item["manifest_sha256"]):
-            raise ValueError("Prepared release does not match its pinned bytes")
-        metadata = json.loads(manifest.read_text(encoding="utf-8"))
-        if not isinstance(metadata, dict) or any(metadata.get(key) != item[key]
-               for key in ("release_id", "rule_version", "database_sha256")):
-            raise ValueError("Release manifest does not match the deployment descriptor")
+        size = database.stat().st_size
+        # A wrong-sized file is rejected without reading it.
+        digest = file_sha256(database) if size == item["database_bytes"] else ""
+        _require_pinned(item, size, digest, directory / (item["release_id"] + ".json"))
+
+
+def pack(descriptor: dict, raw: Path, output: Path) -> None:
+    """Gzip each verified pinned database for the function bundle.
+
+    Each release compresses about fivefold, so a month of data adds about
+    3 MB to the bundle rather than 15 MB. Manifests are copied unchanged.
+    The header carries no name or time, so equal inputs give equal files.
+    """
+    for item in descriptor["releases"]:
+        name = item["release_id"]
+        with (raw / (name + ".db")).open("rb") as source, \
+                (output / (name + ".db.gz")).open("wb") as target, \
+                gzip.GzipFile(filename="", mode="wb", compresslevel=6,
+                              fileobj=target, mtime=0) as packed:
+            shutil.copyfileobj(source, packed, 1_048_576)
+        shutil.copyfile(raw / (name + ".json"), output / (name + ".json"))
+
+
+def unpack(descriptor: dict, bundle: Path, target: Path) -> Path:
+    """Decompress a packed bundle into target, verifying every pinned byte.
+
+    Decompression stops at the pinned size, so a damaged or substituted
+    archive can neither fill the disk nor be served. Returns target.
+    """
+    _require_exact_files(descriptor, bundle, ".db.gz")
+    for item in descriptor["releases"]:
+        name = item["release_id"]
+        digest, total = hashlib.sha256(), 0
+        try:
+            with gzip.open(bundle / (name + ".db.gz"), "rb") as packed, \
+                    (target / (name + ".db")).open("wb") as database:
+                while block := packed.read(1_048_576):
+                    total += len(block)
+                    if total > item["database_bytes"]:
+                        raise ValueError("Packed release exceeds its pinned byte count")
+                    digest.update(block)
+                    database.write(block)
+        except (OSError, EOFError, zlib.error) as exc:
+            # A damaged archive or full temporary storage; neither is served.
+            raise ValueError("Packed release could not be unpacked") from exc
+        manifest = target / (name + ".json")
+        shutil.copyfile(bundle / (name + ".json"), manifest)
+        _require_pinned(item, total, digest.hexdigest(), manifest)
+    for path in target.iterdir():
+        path.chmod(0o444)
+    return target
+
+
+def verify_bundle(descriptor: dict, bundle: Path) -> None:
+    """A packed bundle decompresses to exactly the pinned releases."""
+    with tempfile.TemporaryDirectory(prefix=".verify-release-") as scratch:
+        unpack(descriptor, bundle, Path(scratch))
+
+
+def materialize(descriptor: dict, bundle: Path, scratch: Path) -> Path:
+    """Verified, unpacked releases in scratch, decompressed once per sandbox.
+
+    A directory left by an earlier start is reused only if it still holds
+    exactly the pinned bytes; anything else is replaced from the bundle.
+    """
+    target = scratch / ("findit-releases-" + descriptor["current_release"])
+    try:
+        validate_artifacts(descriptor, target)
+        return target
+    except (OSError, ValueError):
+        pass
+    # An interrupted start can leave a half-written copy; two would fill /tmp.
+    for stale in scratch.glob(".findit-releases-*"):
+        shutil.rmtree(stale, ignore_errors=True)
+    staged = Path(tempfile.mkdtemp(prefix=".findit-releases-", dir=scratch))
+    try:
+        unpack(descriptor, bundle, staged)
+        shutil.rmtree(target, ignore_errors=True)
+        staged.replace(target)
+    except BaseException:
+        shutil.rmtree(staged, ignore_errors=True)
+        raise
+    return target
 
 
 def validate_release_contents(descriptor: dict, directory: Path) -> None:
@@ -137,7 +240,10 @@ def prepare(descriptor: dict, output: Path, *, local_releases: Path | None = Non
     if "public" in output.resolve().parts:
         raise ValueError("Release files must stay outside public asset directories")
     if output.exists():
-        validate_artifacts(descriptor, output)
+        if any(output.glob("*.db")):
+            raise ValueError(f"{output.name}/ holds unpacked releases from the earlier build "
+                             "format; remove it and rerun to repack")
+        verify_bundle(descriptor, output)
         return
     output.parent.mkdir(parents=True, exist_ok=True)
     if local_releases is None:
@@ -147,12 +253,12 @@ def prepare(descriptor: dict, output: Path, *, local_releases: Path | None = Non
         opener = opener or build_opener(_RejectRedirect(),
                                          HTTPSHandler(context=ssl.create_default_context()))
     with tempfile.TemporaryDirectory(prefix=".private-release-", dir=output.parent) as tmp:
-        staged = Path(tmp) / "deploy-data"
-        staged.mkdir()
+        raw = Path(tmp) / "raw"
+        raw.mkdir()
         for item in descriptor["releases"]:
             for suffix in (".db", ".json"):
                 name = item["release_id"] + suffix
-                target = staged / name
+                target = raw / name
                 if local_releases is not None:
                     source = local_releases / name
                     if source.is_symlink():
@@ -161,7 +267,12 @@ def prepare(descriptor: dict, output: Path, *, local_releases: Path | None = Non
                 else:
                     maximum = item["database_bytes"] if suffix == ".db" else MANIFEST_BUDGET
                     _download(opener, base_url + "/" + name, token, target, maximum)
-        validate_artifacts(descriptor, staged)
+        validate_artifacts(descriptor, raw)
+        # Only the packed form is bundled; unpacked databases never enter output.
+        staged = Path(tmp) / "deploy-data"
+        staged.mkdir()
+        pack(descriptor, raw, staged)
+        verify_bundle(descriptor, staged)
         for path in staged.iterdir():
             path.chmod(0o444)
         staged.replace(output)
@@ -204,7 +315,8 @@ def main(argv=None) -> int:
     # Direct script execution sets sys.path to tools/, while the Vercel build
     # must verify the application source being bundled, not another install.
     sys.path.insert(0, str(ROOT))
-    validate_release_contents(descriptor, args.output)
+    with tempfile.TemporaryDirectory(prefix=".verify-release-") as scratch:
+        validate_release_contents(descriptor, unpack(descriptor, args.output, Path(scratch)))
     inventory = bundle_inventory(ROOT, args.output)
     args.inventory_output.write_text(json.dumps(inventory, indent=2) + "\n")
     print("Verified two private releases; runtime bundle budget passed.")
