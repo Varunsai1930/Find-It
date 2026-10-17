@@ -36,7 +36,7 @@ import pandas as pd
 
 from findit.core import consensus_signals
 from findit.core import publication
-from findit.store import queries
+from findit.store import db, queries
 
 GROUPS = ("mf_and_fii", "mf_only", "mf_neutral", "mf_selling")
 ACTIVE_GROUPS = ("active_and_fii", "active_only", "active_neutral", "active_selling")
@@ -264,7 +264,7 @@ def db_track_record(db_path: str) -> str:
     theirs. Months without the needed closes are listed, not skipped
     silently; iterations=0 keeps it fast (no permutation p).
     """
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = db.connect_read_only(db_path)
     try:
         months = [r[0] for r in conn.execute(
             "SELECT DISTINCT report_month FROM mf_holding_deltas ORDER BY 1")]

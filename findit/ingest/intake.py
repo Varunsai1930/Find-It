@@ -183,7 +183,7 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
         result.problems.append("no workbooks (.xlsx, .xls or .zip) in the folder")
     frames, sheet_files = [], {}
     for book in books:
-        name = str(book.relative_to(folder))
+        name = book.relative_to(folder).as_posix()  # same report on Windows
         try:
             log = io.StringIO()
             # The parser logs every sheet; keep the log out of the report.
@@ -214,7 +214,7 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
             manifest = folder / ".findit-download.json"
             if parts[0] == UNZIPPED_DIR and manifest.is_file():
                 archive_name = parts[1] + ".zip"
-                source = next((r for r in json.loads(manifest.read_text()).get("files", [])
+                source = next((r for r in json.loads(manifest.read_text(encoding="utf-8")).get("files", [])
                                if r["name"] == archive_name), {})
                 if source and source.get("sha256") != hashlib.sha256((folder / archive_name).read_bytes()).hexdigest():
                     raise ValueError("archive checksum differs from the acquisition manifest")

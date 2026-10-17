@@ -67,15 +67,15 @@ def main(argv: list[str] | None = None) -> int:
     if not args.db.is_file():
         ap.error("database does not exist")
     conn = (db.get_connection(args.db) if args.import_inventory else
-            sqlite3.connect(f"file:{args.db.resolve().as_posix()}?mode=ro", uri=True))
+            db.connect_read_only(args.db))
     try:
         for path in args.import_inventory:
-            import_inventory(conn, json.loads(path.read_text()))
+            import_inventory(conn, json.loads(path.read_text(encoding="utf-8")))
         months = args.month or [str(r[0]) for r in conn.execute(
             "SELECT DISTINCT report_month FROM mf_holdings_monthly ORDER BY report_month")]
         text = json.dumps(audit(conn, months), indent=2) + "\n"
         if args.out:
-            args.out.write_text(text)
+            args.out.write_text(text, encoding="utf-8")
         else:
             print(text, end="")
     finally:

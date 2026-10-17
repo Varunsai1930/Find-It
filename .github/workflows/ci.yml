@@ -55,3 +55,27 @@ jobs:
         run: |
           uv export --locked --extra dev --no-dev --no-emit-project --quiet --output-file "$RUNNER_TEMP/findit-dev.txt"
           uv tool run --from pip-audit==2.10.1 pip-audit --disable-pip --require-hashes --strict --progress-spinner off -r "$RUNNER_TEMP/findit-dev.txt"
+
+  # The same suite on Windows: paths, file locking and console encoding differ.
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - name: Dashboard interaction tests
+        run: node --test tests/web.test.cjs
+      - name: Install locked development environment
+        run: |
+          python -m pip install uv==0.12.19
+          uv sync --locked --extra dev --python 3.12
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+      - name: Tests
+        run: uv run --no-sync python -m pytest -q

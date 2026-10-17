@@ -5,6 +5,7 @@ import argparse
 import sqlite3
 
 from findit.summary import get_summary
+from findit.store import db
 
 
 def _summary_text(conn: sqlite3.Connection, scheme_id: int, month: str) -> str:
@@ -66,7 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     # Read-only open: preview must never migrate or rewrite the DB.
-    conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+    conn = db.connect_read_only(args.db)
     try:
         explicit = parse_scheme_ids(args.schemes)
         ids = resolve_scheme_ids(conn, args.month, explicit)

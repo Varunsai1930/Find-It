@@ -20,13 +20,14 @@ import sys
 from pathlib import Path
 
 from findit.ingest import intake
+from findit.store import db
 
 
 def _tracked_amcs(db_path: Path) -> list[str]:
     """AMC names already in the database (read-only), or [] without one."""
     if not db_path.is_file():
         return []
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = db.connect_read_only(db_path)
     try:
         return [str(r[0]) for r in conn.execute("SELECT DISTINCT amc_name FROM schemes")]
     except sqlite3.Error:

@@ -362,7 +362,7 @@ def _sha256(path: Path) -> str:
 def _completed_files(folder: Path, files: list[SourceFile], amc: str) -> list[Path]:
     manifest_path = folder / MANIFEST
     if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text())
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         expected = {item["name"]: item for item in manifest.get("files", [])}
         requested = {item.name if item.name in expected else
                      Path(item.name).with_suffix(".xlsx").name for item in files}
@@ -415,7 +415,7 @@ def save_files(files: list[SourceFile], month_dir: Path, session: requests.Sessi
             {"name": path.name, "sha256": _sha256(path), "source_url": item.url,
              "retrieved_at": datetime.now(timezone.utc).isoformat(), "published_at": None}
             for item, path in zip(files, staged, strict=True)]}
-        (Path(temporary) / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n")
+        (Path(temporary) / MANIFEST).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         if folder.exists():
             folder.rmdir()  # only an empty pre-existing directory is safe to replace
         Path(temporary).replace(folder)

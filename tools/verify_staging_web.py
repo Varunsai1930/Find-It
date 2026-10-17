@@ -46,7 +46,7 @@ def protected_files(descriptor: dict, directory: Path, baseline: Path) -> list[P
     paths = {directory / (item["release_id"] + suffix)
              for item in descriptor["releases"] for suffix in (".db", ".json")}
     if baseline.exists():
-        data = json.loads(baseline.read_text())
+        data = json.loads(baseline.read_text(encoding="utf-8"))
         paths.update(ROOT / name for name in data["protected_files"])
     return sorted(paths)
 
@@ -283,7 +283,7 @@ def main(argv=None) -> int:
                               "Application caches begin empty; operating-system cache state is uncontrolled.",
                               "Concurrent traffic uses five request threads on this machine."]}
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"passed": report["passed"], "gates": gates, "metrics": report["metrics"]}, indent=2))
     return 0 if report["passed"] else 1
 

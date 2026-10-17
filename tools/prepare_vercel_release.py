@@ -318,7 +318,7 @@ def main(argv=None) -> int:
     with tempfile.TemporaryDirectory(prefix=".verify-release-") as scratch:
         validate_release_contents(descriptor, unpack(descriptor, args.output, Path(scratch)))
     inventory = bundle_inventory(ROOT, args.output)
-    args.inventory_output.write_text(json.dumps(inventory, indent=2) + "\n")
+    args.inventory_output.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
     print("Verified two private releases; runtime bundle budget passed.")
     return 0
 

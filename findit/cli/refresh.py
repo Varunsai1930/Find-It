@@ -39,7 +39,7 @@ def refresh(source: Path, staged: Path, previous: str, current: str,
               "support_minutes": None, "publication_delay_seconds": None}
     metrics_path = staged.with_suffix(".refresh.json")
     try:
-        src = sqlite3.connect(f"file:{source.resolve().as_posix()}?mode=ro", uri=True)
+        src = db.connect_read_only(source)
         dst = sqlite3.connect(staged)
         try:
             src.backup(dst)
@@ -55,7 +55,7 @@ def refresh(source: Path, staged: Path, previous: str, current: str,
         conn = db.get_connection(staged)
         try:
             for inventory in inventories:
-                import_inventory(conn, json.loads(inventory.read_text()))
+                import_inventory(conn, json.loads(inventory.read_text(encoding="utf-8")))
             report["coverage"] = audit(conn, [current])
             report["release_id"] = content_id(conn)
             latest = conn.execute("SELECT validation_report_json FROM ingest_runs ORDER BY started_at DESC LIMIT 1").fetchone()
@@ -85,7 +85,7 @@ def refresh(source: Path, staged: Path, previous: str, current: str,
         report["finished_at"] = datetime.now(timezone.utc).isoformat()
         report["processing_seconds"] = time.perf_counter() - clock
         report["database_bytes"] = staged.stat().st_size if staged.exists() else None
-        metrics_path.write_text(json.dumps(report, indent=2) + "\n")
+        metrics_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
 
 

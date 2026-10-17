@@ -258,13 +258,13 @@ def find_header_row(raw: pd.DataFrame):
 
 def read_scheme_titles(path: Path) -> dict:
     """{sheet name: full scheme title or None} for every holdings sheet."""
-    xls = pd.ExcelFile(path)
     titles = {}
-    for sheet_name in xls.sheet_names:
-        raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=12)
-        header_row_idx = find_header_row(raw)
-        if header_row_idx is not None:
-            titles[sheet_name.strip()] = extract_scheme_title(raw.iloc[:header_row_idx])
+    with pd.ExcelFile(path) as xls:
+        for sheet_name in xls.sheet_names:
+            raw = pd.read_excel(xls, sheet_name=sheet_name, header=None, nrows=12)
+            header_row_idx = find_header_row(raw)
+            if header_row_idx is not None:
+                titles[sheet_name.strip()] = extract_scheme_title(raw.iloc[:header_row_idx])
     return titles
 
 
@@ -311,17 +311,20 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
     unknown scale stays raw. A scheme with only omitted detail rows has one
     blank-ISIN metadata row, which consumers must never insert as a holding.
     """
-    xls = pd.ExcelFile(path)
+    # Read every sheet, then release the file: Windows cannot delete a folder
+    # (intake's unpacked archives) while a workbook inside it is still open.
+    with pd.ExcelFile(path) as xls:
+        sheets = list(_scheme_sheets(xls))
     source_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     source_metadata = {}
     manifest = path.parent / ".findit-download.json"
     if manifest.is_file():
-        source_metadata = next((r for r in json.loads(manifest.read_text()).get("files", [])
+        source_metadata = next((r for r in json.loads(manifest.read_text(encoding="utf-8")).get("files", [])
                                 if r.get("sha256") == source_hash), {})
     all_rows = []
     reported_totals = {}
 
-    for sheet_name, raw in _scheme_sheets(xls):
+    for sheet_name, raw in sheets:
         # Each workbook sheet is read once; UTI's stacked sections are sliced
         # from that read in memory.
 

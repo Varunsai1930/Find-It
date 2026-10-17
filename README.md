@@ -89,6 +89,23 @@ does not download or ingest disclosures. Follow the
 [refresh runbook](docs/refresh-runbook.md) for real data and the
 [mentor demo guide](docs/mentor-demo.md) for a retained local presentation.
 
+### Windows
+
+Install [uv](https://docs.astral.sh/uv/) and Python 3.12, then run the same
+commands through `uv run` in PowerShell; it finds `.venv\Scripts` for you:
+
+```powershell
+uv sync --locked --extra dev --python 3.12
+uv run --no-sync findit web --db C:\path\to\tracker.db
+uv run --no-sync python -m pytest -q
+```
+
+The `findit download` command also needs `uv sync --extra download` and
+`uv run --no-sync playwright install chromium`. Examples elsewhere use POSIX
+shells (`.venv/bin/python`, `mktemp`); on Windows use `uv run --no-sync python`
+and PowerShell equivalents, or run them in WSL. CI runs the test suite on
+Windows.
+
 ## Verification
 
 From the checkout:

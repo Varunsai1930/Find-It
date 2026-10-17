@@ -26,6 +26,7 @@ import pandas as pd
 from findit.core import consensus_signals, publication
 from findit.core.coverage import month_coverage
 from findit.research import backtest, backtest_quarterly
+from findit.store import db
 
 TOP_N = 15
 # Groups whose quarterly result the evidence section states.
@@ -121,7 +122,7 @@ def evidence(db_path: str) -> list[str]:
 
 
 def build(db_path: str, month: str) -> str:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = db.connect_read_only(db_path)
     try:
         prev = conn.execute("SELECT MAX(prev_month) FROM mf_holding_deltas WHERE report_month = ?",
                             (month,)).fetchone()[0]
@@ -171,7 +172,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     month = args.month
     if month is None:
-        conn = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
+        conn = db.connect_read_only(args.db)
         try:
             month = conn.execute("SELECT MAX(report_month) FROM mf_holding_deltas").fetchone()[0]
         finally:

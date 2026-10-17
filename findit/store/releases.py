@@ -28,7 +28,7 @@ def verify_release(output: Path, release_id: str) -> dict:
     if not target.is_file() or not manifest.is_file():
         raise ValueError("retained release is unavailable")
     try:
-        stored = json.loads(manifest.read_text())
+        stored = json.loads(manifest.read_text(encoding="utf-8"))
     except (ValueError, OSError) as exc:
         raise ValueError("retained release manifest could not be read") from exc
     if not isinstance(stored, dict) or stored.get("release_id") != release_id or hashlib.sha256(target.read_bytes()).hexdigest() != stored.get("database_sha256"):
@@ -143,11 +143,11 @@ def activate_release(output: Path, release_id: str, report_month: str | None = N
     receipt_name = f"{release_id}.activation-{uuid.uuid4().hex}.json"
     with tempfile.TemporaryDirectory(prefix=".activation-", dir=output) as folder:
         staged_receipt = Path(folder) / "receipt.json"
-        staged_receipt.write_text(json.dumps(receipt, indent=2, allow_nan=False) + "\n")
+        staged_receipt.write_text(json.dumps(receipt, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         staged_receipt.replace(output / receipt_name)
         pointer = Path(folder) / "current.json"
         pointer.write_text(json.dumps({"release_id": release_id, "report_month": report_month,
-                                       "activation_receipt": receipt_name}) + "\n")
+                                       "activation_receipt": receipt_name}) + "\n", encoding="utf-8")
         pointer.replace(output / "current.json")
     return receipt
 
@@ -201,7 +201,7 @@ def snapshot(source: Path, output: Path, label: str, parent: str | None = None,
                     "database_sha256": hashlib.sha256(staged.read_bytes()).hexdigest()}
         staged.replace(target)
         temporary_manifest = Path(folder) / "manifest.json"
-        temporary_manifest.write_text(json.dumps(manifest, indent=2) + "\n")
+        temporary_manifest.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
         temporary_manifest.replace(manifest_path)
         if activate:
             activate_release(output, release_id, report_month, notes)

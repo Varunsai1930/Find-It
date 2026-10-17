@@ -41,7 +41,7 @@ import pandas as pd
 
 from findit.core import publication
 from findit.research.backtest import pct, track_record
-from findit.store import queries
+from findit.store import db, queries
 
 GROUPS = ("mf_up_fii_up", "mf_up_only", "mf_flat", "mf_down", "mf_top_q", "mf_bottom_q")
 DEFAULT_LAG_DAYS = 30
@@ -178,7 +178,7 @@ def size_neutral(results: list[dict]) -> list[dict]:
 
 def run(db_path: str, quarters: list[str] | None = None, lag_days: int = DEFAULT_LAG_DAYS,
         threshold_pp: float = DEFAULT_THRESHOLD_PP, require_observed: bool = False) -> dict:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = db.connect_read_only(db_path)
     try:
         filings = load_filings(conn)
         on_file = sorted(set(filings["quarter_end"]))

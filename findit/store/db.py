@@ -492,6 +492,13 @@ def backfill_is_active_equity(conn: sqlite3.Connection) -> list:
     return flagged
 
 
+def connect_read_only(db_path: str | Path) -> sqlite3.Connection:
+    """Open an existing database read-only. Path.as_uri() percent-encodes the
+    path and writes Windows drive paths as file:///C:/..., which a hand-built
+    "file:{path}" URI does not."""
+    return sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
+
+
 def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
