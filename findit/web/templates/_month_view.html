@@ -6,7 +6,7 @@
 {%- set side_title = 'Stocks ranked by fund-house selling' if side == 'sell' else 'Stocks ranked by fund-house buying' -%}
 
 <div id="monthly-activity">
-<div class="section-heading"><h2 class="activity-heading">Monthly activity</h2><span class="month-stamp">{{ icon('clock', 14) }}{{ month|month_label }}</span></div>
+<h2 class="visually-hidden">Monthly activity</h2>
 <dl class="facts" aria-label="Coverage for {{ month|month_label }}">
   <div class="fact">
     <dt class="fact__label">Individual funds compared</dt>
@@ -24,16 +24,15 @@
     {% endif %}
   </div>
   <div class="fact">
-    <dt class="fact__label">Portfolios public</dt>
+    <dt class="fact__label">Assumed disclosure date</dt>
     <dd class="fact__value">{{ coverage.public_on|month_label(true) }}</dd>
-    <dd class="fact__sub">assumed from the filing deadline · actual dates can be unknown</dd>
+    <dd class="fact__sub">based on the filing deadline</dd>
   </div>
 </dl>
-<p class="coverage-note">{{ icon('shield', 14) }}<span><strong>Market-wide completeness: unknown.</strong> The ranking uses {{ coverage.compared }} compared funds. The number of eligible funds across all fund houses is not confirmed, so the ranking can miss some funds. The eight fund houses in the monthly summary are a separate, selected group.</span></p>
-
-<details class="coverage" id="coverage-details">
-  <summary>Data coverage <span class="muted">· freshness and method for {{ month|month_label }}</span></summary>
+<details class="coverage coverage-review" id="coverage-details">
+  <summary><span class="coverage-review__status">{{ icon('shield', 15) }}<span><strong>Market-wide completeness: unknown.</strong> <span class="coverage-review__hint">Some eligible funds may be missing.</span></span></span><span class="coverage-review__action">Data coverage {{ icon('chevron-right', 14) }}</span></summary>
   <div class="coverage__body">
+    <p class="coverage__explanation">The ranking uses {{ coverage.compared }} compared funds. The number of eligible funds across all fund houses is not confirmed, so the ranking can miss some funds. The eight fund houses in the monthly summary are a separate, selected group. The disclosure date is assumed from the filing deadline; actual publication dates can be unknown.</p>
     <dl class="coverage__list">
       <div>
         <dt>Comparison</dt>
@@ -57,6 +56,10 @@
         <dd>{{ coverage.last_ingest|month_label(true) if coverage.last_ingest else 'None recorded' }} · whole database, not specific to {{ month|month_label }}.</dd>
       </div>
     </dl>
+    <details class="fund-terms-disclosure"><summary>Fund houses or individual funds?</summary><div class="fund-terms" aria-label="Fund houses and individual funds explained">
+      <p><strong>Fund house <span>(AMC)</span></strong>HDFC Mutual Fund<br><span>runs many individual funds</span></p>
+      <p><strong>Individual fund <span>(scheme)</span></strong>HDFC Large Cap Fund<br><span>one portfolio that buys or sells stocks</span></p>
+    </div></details>
     <ul class="coverage__method">
       <li>FindIt compares an individual fund when it has holdings for both {{ month|month_label }} and the previous month. Funds without a previous month, and funds withheld by validation, are not counted.</li>
       <li>This view counts {{ scope(view) }}.{% if active_only %} It excludes index funds, exchange-traded funds (ETFs), arbitrage funds, funds of funds (FoFs) and debt funds.{% endif %}</li>
@@ -75,11 +78,7 @@
       {% endif %}
     </div>
     {% if rows %}
-    <p class="panel__meta">{{ rows|length }} of {{ total }} stocks with buying or selling activity{% if coverage.prev_month %} · {{ month|month_label }} vs {{ coverage.prev_month|month_label }}{% endif %}. Ranked by fund houses, not the number of individual funds.</p>
-    <details class="fund-terms-disclosure"><summary>Fund houses or individual funds?</summary><div class="fund-terms" aria-label="Fund houses and individual funds explained">
-      <p><strong>Fund house <span>(AMC)</span></strong>HDFC Mutual Fund<br><span>runs many individual funds</span></p>
-      <p><strong>Individual fund <span>(scheme)</span></strong>HDFC Large Cap Fund<br><span>one portfolio that buys or sells stocks</span></p>
-    </div></details>
+    <p class="panel__meta">{{ rows|length }} of {{ total }} stocks with monthly changes{% if coverage.prev_month %} · {{ month|month_label }} vs {{ coverage.prev_month|month_label }}{% endif %}.</p>
     {% endif %}
   </div>
   {% if rows %}

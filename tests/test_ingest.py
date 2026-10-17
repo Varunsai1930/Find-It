@@ -153,6 +153,42 @@ def test_kotak_underlying_isins_in_futures_and_exposure_tables_are_not_shares(
     conn.close()
 
 
+def test_isin_notes_after_grand_total_are_not_holdings(tmp_path):
+    """Real-layout regression: DSP's IL&FS recovery note quarantined whole schemes."""
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "AGGRESSIVE"
+    sheet.append(["DSP Aggressive Hybrid Fund"])
+    sheet.append(["Sr. No.", "Name of Instrument", "ISIN", "Rating/Industry", "Quantity",
+                  "Market value (Rs. In lakhs)", "% to Net Assets"])
+    sheet.append([1, "HDFC Bank Limited", INE_A, "Banks", 100, 60, 0.6])
+    sheet.append([None, "Net Receivables/Payables", None, None, None, 40, 0.4])
+    sheet.append(["GRAND TOTAL (AUM)", None, None, None, None, 100, 1])
+    sheet.append(["Security Name", "ISIN", "Value considered", "Amount due", "Interim Distribution"])
+    sheet.append(["0% IL&FS Transportation Networks NCD", "INE975G08140", 0, 0, 372.15])
+    sheet.append(["Issuer", "ISIN", "YTC"])
+    sheet.append(["Canara Bank Basel III Tier 1", INE_B, 0.08])
+    path = tmp_path / "DSP Equity FOF ISIN Portfolio as on 30 Sep 2026.xlsx"
+    book.save(path)
+    rows = amfi_mf_parser.parse_workbook(path, "DSP AMC", "2026-09")
+    assert list(rows["isin"]) == [INE_A]
+    assert rows["pct_nav"].iloc[0] == pytest.approx(60)
+
+
+def test_a_summary_grand_total_above_the_holdings_keeps_them(tmp_path):
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "FLEXI"
+    sheet.append(["Sr. No.", "Name of Instrument", "ISIN", "Rating/Industry", "Quantity",
+                  "Market value (Rs. In lakhs)", "% to Net Assets"])
+    sheet.append(["Grand Total", None, None, None, None, 100, 1])
+    sheet.append([1, "HDFC Bank Limited", INE_A, "Banks", 100, 100, 1])
+    path = tmp_path / "flexi.xlsx"
+    book.save(path)
+    rows = amfi_mf_parser.parse_workbook(path, "DSP AMC", "2026-09")
+    assert list(rows["isin"]) == [INE_A]
+
+
 def test_uti_stacked_scheme_sections_parse_as_distinct_schemes(tmp_path):
     workbook = openpyxl.Workbook()
     sheet = workbook.active

@@ -74,7 +74,7 @@ COLUMN_SYNONYMS = {
 }
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
-PARSER_VERSION = "portfolio-2026-10-02-scope-1"
+PARSER_VERSION = "portfolio-2026-10-16-grand-total-1"
 
 # Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
 # check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
@@ -368,28 +368,43 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             # section/subtotal labels in A/B. Preserve both kinds of labels.
             section_columns = df.iloc[:, :2].copy()
             df[col_map["instrument_name"]] = df.iloc[:, :3].ffill(axis=1).iloc[:, -1]
-            # This layout prints totals in the Industry column, and appends
-            # separate exposure tables below Grand Total. Stock ISINs in a
-            # Futures section identify the underlying, not shares held.
+            # This layout prints totals in the Industry column. Stock ISINs in
+            # a Futures section identify the underlying, not shares held.
             labels = df.iloc[:, 4].fillna("").astype(str).str.strip()
             totals = labels.str.fullmatch(r"(?:grand )?total", case=False)
             df.loc[totals, col_map["instrument_name"]] = labels.loc[totals]
-            derivative, finished, excluded = False, False, []
-            for idx, row in df.iterrows():
+            derivative, excluded = False, []
+            for idx in df.index:
                 sections = section_columns.loc[idx]
                 heading = next((str(v).strip() for v in sections
                                 if pd.notna(v) and str(v).strip()), "")
                 if heading:
                     derivative = heading.lower() in {"futures", "options", "derivatives"}
-                if finished or derivative:
+                if derivative:
                     excluded.append(idx)
-                if str(row[col_map["instrument_name"]]).strip().lower() == "grand total":
-                    finished = True
             if excluded:
-                print(f"  [scope] '{sheet_name}': excluded derivative/exposure rows "
+                print(f"  [scope] '{sheet_name}': excluded derivative rows "
                       f"at source rows {df.loc[excluded, 'source_row'].tolist()}; "
                       "original workbook retained", file=sys.stderr)
                 df = df.drop(index=excluded)
+
+        # ISIN rows below the portfolio's Grand Total describe holdings rather
+        # than list them: defaulted-bond recovery tables, yield-to-call lists,
+        # exposure tables. Other rows there stay for the printed-total checks.
+        grand_total = df.drop(columns="source_row").apply(
+            lambda col: col.astype(str).str.strip().str.fullmatch(
+                r"grand\s*total(?:\s*\(.*\))?", case=False)  # e.g. "GRAND TOTAL (AUM)"
+        ).any(axis=1)
+        has_isin = (df[col_map["isin"]].astype(str).str.strip().str.upper()
+                    .str.match(ISIN_GENERIC_RE, na=False))
+        notes = grand_total.cumsum().shift(fill_value=0).gt(0) & has_isin
+        # A Grand Total printed above the holdings (a summary block) does not
+        # end the portfolio: only rows after a total that follows holdings are notes.
+        if notes.any() and (has_isin & ~notes).any():
+            print(f"  [scope] '{sheet_name}': ignored ISIN notes after Grand Total at source "
+                  f"rows {df.loc[notes, 'source_row'].tolist()}; original workbook retained",
+                  file=sys.stderr)
+            df = df[~notes]
 
         # Log the resolved canonical -> raw mapping for auditability.
         print(f"  [columns] '{sheet_name}': {col_map}", file=sys.stderr)

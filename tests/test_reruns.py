@@ -173,8 +173,9 @@ def test_the_run_log_never_calls_an_unfinished_run_completed(tmp_path, monkeypat
 
 def test_an_isin_on_several_lines_is_one_holding(tmp_path):
     """Lots are summed, blank note lines never overwrite a real line, and
-    zero-quantity lines (a written-off bond) are not added up."""
+    zero-quantity or zero-value lines (a written-off security) are not added up."""
     lots = [(HDFC_BANK, 2857268, 21376.65, 5.63), (HDFC_BANK, 1164800, 8714.45, 2.29),
+            (HDFC_BANK, None, 0.0, 0.0),
             (RELIANCE, 50, 5401.89, 4.5), (RELIANCE, None, None, None),
             ("INE975G08140", 0, 5965.0, 37.2), ("INE975G08140", 0, None, 18.8),
             ("INE975G08140", 0, None, 34.3)]
@@ -199,3 +200,29 @@ def test_a_lot_with_an_unreadable_value_leaves_the_holding_value_unavailable(tmp
     # The share change is known; its rupee value is not.
     assert conn.execute("SELECT qty_change, flow_lakhs FROM mf_holding_deltas "
                         "WHERE report_month = '2026-08'").fetchone() == (50, None)
+
+
+@pytest.mark.parametrize("unreadable_lot", [(None, 10.0, 50.0), (None, None, 50.0),
+                                          (None, 10.0, None)])
+@pytest.mark.parametrize("unknown_first", [False, True])
+def test_a_lot_with_an_unreadable_quantity_withholds_the_comparison(
+        tmp_path, unreadable_lot, unknown_first):
+    """A valued lot with unknown shares must not disappear and invent a sale."""
+    july = _csv(tmp_path, "j.csv", "2026-07", [(HDFC_BANK, 200, 20.0, 100.0)])
+    lots = [(HDFC_BANK, 100, 10.0, 50.0), (HDFC_BANK, *unreadable_lot)]
+    if unknown_first:
+        lots.reverse()
+    august = _csv(tmp_path, "a.csv", "2026-08", lots)
+    conn = _run(tmp_path, july, august)
+    try:
+        assert conn.execute("SELECT quantity FROM mf_holdings_monthly "
+                            "WHERE report_month = '2026-08'").fetchone() == (None,)
+        status, report = conn.execute(
+            "SELECT status, validation_report_json FROM scheme_month_status "
+            "WHERE report_month = '2026-08'").fetchone()
+        assert status == "quarantined"
+        assert any(issue["code"] == "quantity_unavailable" for issue in json.loads(report)["issues"])
+        assert conn.execute("SELECT action, qty_change, flow_lakhs FROM mf_holding_deltas "
+                            "WHERE report_month = '2026-08'").fetchone() == ("unavailable", None, None)
+    finally:
+        conn.close()

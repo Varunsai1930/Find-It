@@ -73,6 +73,7 @@ class AmcResult:
     warnings: int = 0
     csv: Path | None = None
     problems: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)  # archive members with no portfolio
 
 
 @dataclass
@@ -172,18 +173,33 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
     result = AmcResult(amc)
     result.problems.extend(_expand_zips(folder))
     books = _workbooks(folder)
-    if amc == "UTI AMC" and any(
-        re.match(r"fw_+uti_mf_scheme_portfolios_", p.name, re.I)
-        for p in folder.glob("*.zip")
-    ):
-        # The official ZIP also contains riskometer, dividend, and futures
-        # tables. Only the SEBI exposure workbook contains scheme holdings.
-        books = [p for p in books if p.name.startswith("Sebi Exposure as on ")]
+    exposure = [p for p in books if re.match(r"sebi exposure", p.name, re.I)]
+    if amc == "UTI AMC" and exposure:
+        # UTI's archive also carries futures and dividend tables that can look
+        # like portfolios; only the SEBI exposure workbook holds scheme holdings.
+        # Its archive and workbook names change from month to month.
+        books = exposure
     if not books:
         result.problems.append("no workbooks (.xlsx, .xls or .zip) in the folder")
     frames, sheet_files = [], {}
     for book in books:
         name = str(book.relative_to(folder))
+        try:
+            log = io.StringIO()
+            # The parser logs every sheet; keep the log out of the report.
+            with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+                frame = amfi_mf_parser.parse_workbook(book, amc, month)
+        except Exception as exc:  # the parser fails loudly by design; report it
+            # Official archives bundle riskometers and derivative or dividend
+            # notes beside the portfolios. A member with no scheme sheet is
+            # one of those; a loose workbook without one is still refused.
+            if (book.relative_to(folder).parts[0] == UNZIPPED_DIR
+                    and str(exc).startswith("No parseable scheme sheets")):
+                result.skipped.append(name)
+                continue
+            result.files.append(name)
+            result.problems.append(f"{name}: {type(exc).__name__}: {exc}")
+            continue
         result.files.append(name)
         try:
             named = _months_named(book)
@@ -191,10 +207,6 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
                 result.problems.append(
                     f"{name}: dated {', '.join(sorted(named))}, not {month}")
                 continue
-            log = io.StringIO()
-            # The parser logs every sheet; keep the log out of the report.
-            with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
-                frame = amfi_mf_parser.parse_workbook(book, amc, month)
             # An extracted workbook is still linked to its original official
             # archive. Keep its own checksum and use the archive's observed
             # retrieval/publication metadata, without inventing either date.
@@ -209,7 +221,7 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
                 for key, column in (("source_url", "source_url"), ("retrieved_at", "source_retrieved_at"),
                                     ("published_at", "source_published_at")):
                     frame[column] = source.get(key)
-        except Exception as exc:  # the parser fails loudly by design; report it
+        except Exception as exc:  # e.g. an archive that no longer matches its manifest
             result.problems.append(f"{name}: {type(exc).__name__}: {exc}")
             continue
         result.warnings += log.getvalue().count("[warn]")
@@ -219,6 +231,9 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
             sheet_files.setdefault(db.normalize_scheme_name(sheet), []).append(
                 f"{name} [{sheet}]")
         frames.append(frame)
+
+    if books and not frames and not result.problems:
+        result.problems.append("no workbook in the folder holds a portfolio")
 
     for places in sheet_files.values():
         if len(places) > 1:
@@ -301,6 +316,9 @@ def render(report: IntakeReport, db_path: str = "tracker.db") -> str:
         lines.append(f"  {status:8} {r.amc}: {len(r.files)} file(s), {r.schemes} scheme(s), "
                      f"{r.rows} row(s)" + (f", {r.warnings} parser warning(s)" if r.warnings else ""))
         lines.extend(f"           - {p}" for p in r.problems)
+        if r.skipped:
+            lines.append(f"           (ignored {len(r.skipped)} archive workbook(s) without a "
+                         f"portfolio: {', '.join(r.skipped)})")
     for name, close in report.unknown_folders.items():
         hint = f" -- did you mean {', '.join(repr(c) for c in close)}?" if close else ""
         lines.append(f"  UNKNOWN  folder {name!r} is not an AMFI fund house{hint}")

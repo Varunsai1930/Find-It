@@ -1,3 +1,4 @@
+{% from "_macros.html" import icon %}
 <section class="fund-summary" id="monthly-summary" aria-labelledby="fund-summary-title">
   <div class="fund-summary__head">
     <div class="section-heading"><h2 id="fund-summary-title">Monthly summary</h2><span class="month-stamp">{{ month|month_label }}</span></div>
@@ -52,8 +53,8 @@
             </dl>
             {% if not fund.inventory_known %}<p>The official list of eligible funds is not confirmed for both months.{% if fund.expected_current is not none %} The current month's official list has {{ fund.expected_current }} funds.{% endif %}</p>{% endif %}
             <div class="fund-card__actions">
-              {% if fund.biggest %}<a href="/evidence/{{ fund.biggest.isin }}?{{ dict(month=month, amc=fund.amc, active_only=active_only)|urlencode }}">View evidence ↗</a>{% endif %}
-              <a href="/coverage?{{ dict(view, amc=fund.amc)|urlencode }}">Coverage breakdown <span aria-hidden="true">→</span></a>
+              {% if fund.biggest %}<a href="/evidence/{{ fund.biggest.isin }}?{{ dict(month=month, amc=fund.amc, active_only=active_only)|urlencode }}">View evidence {{ icon('arrow-up-right', 14) }}</a>{% endif %}
+              <a href="/coverage?{{ dict(view, amc=fund.amc)|urlencode }}">Coverage breakdown {{ icon('chevron-right', 14) }}</a>
             </div>
           </div>
         </details>

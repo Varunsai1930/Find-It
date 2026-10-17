@@ -649,16 +649,19 @@ def _combine(lines: list[tuple]) -> tuple:
 
     A fund can hold a stock in several lots -- a balanced-advantage fund lists
     its unhedged and its arbitrage-hedged shares apart -- so the holding is
-    the sum of the lines that hold a positive quantity. A value or NAV weight
-    unreadable on any of those lines leaves that total unavailable: the
-    readable lots alone would understate it as though complete. Lines holding
-    nothing are notes: a bond's ISIN repeated with no numbers, or a written-off
-    security's zero-quantity lines. With no line holding anything, the last
-    line that carries a number stands, as before; a blank note never
-    replaces a real value.
+    the sum of the lines that hold a positive quantity, plus lines whose
+    quantity is unreadable but whose nonzero value or NAV weight identifies a
+    holding. A quantity, value or NAV weight unreadable on any of those lines
+    leaves that total unavailable: readable lots alone would understate it as
+    though complete. Lines holding nothing are notes: a bond's ISIN repeated
+    with no numbers, or a written-off security's zero-quantity or zero-value
+    lines. With no line
+    holding anything, the last line that carries a number stands, as before;
+    a blank note never replaces a real value.
     """
     quantity = _HOLDING_COLUMNS.index("quantity")
-    held = [line for line in lines if (line[quantity] or 0) > 0]
+    held = [line for line in lines if (line[quantity] or 0) > 0
+            or (line[quantity] is None and any(v not in (None, 0) for v in line[2:5]))]
     if len(held) == 1:
         return held[0]
     if not held:

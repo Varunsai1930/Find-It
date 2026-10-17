@@ -79,25 +79,74 @@ def test_accepted_folders_give_csvs_and_the_load_command(tmp_path):
     assert missing["HDFC AMC"].startswith("https://www.hdfcfund.com/")
 
 
-@pytest.mark.parametrize("archive_name", [
-    "fw_uti_mf_scheme_portfolios_31.08.2026.zip",
-    "FW__UTI_MF_SCHEME_PORTFOLIOS_-_30.09.2026_.zip",
+@pytest.mark.parametrize("archive_name, exposure_name", [
+    ("fw_uti_mf_scheme_portfolios_31.08.2026.zip", "Sebi Exposure as on 31 Aug 2026.xlsx"),
+    ("FW__UTI_MF_SCHEME_PORTFOLIOS_-_30.09.2026_.zip", "Sebi Exposure as on 31 Aug 2026.xlsx"),
+    # UTI renames the archive and workbook from month to month.
+    ("fw_uti_mf_portfolios_31.08.2026.zip", "SEBI EXPOSURE-31082026_final.xlsx"),
+    ("uti_mf_scheme_portfolios_31.08.2026_0.zip", "SEBI EXPOSURE 31082026_FINAL.xlsx"),
 ])
-def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path, archive_name):
+def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path, archive_name,
+                                                             exposure_name):
     month = _month(tmp_path)
     exposure = _book(tmp_path / "exposure.xlsx", {"UTI Flexi Cap Fund": "UTI Flexi Cap Fund"})
     auxiliary = _book(tmp_path / "risk.xlsx", {"Notes": "Riskometer"})
     folder = month / "UTI AMC"
     folder.mkdir(parents=True)
     with zipfile.ZipFile(folder / archive_name, "w") as zf:
-        zf.write(exposure, "Sebi Exposure as on 31 Aug 2026.xlsx")
+        zf.write(exposure, exposure_name)
         zf.write(auxiliary, "Risk-o-meter_Funds and Benchmark_Aug 2026.xlsx")
     report = intake.prepare(month, "2026-08")
     assert report.ok, intake.render(report)
     assert not (folder / intake.UNZIPPED_DIR).exists()
     assert report.results[0].files == [
-        f"_unzipped/{Path(archive_name).stem}/"
-        "Sebi Exposure as on 31 Aug 2026.xlsx"]
+        f"_unzipped/{Path(archive_name).stem}/{exposure_name}"]
+
+
+def _notes_book(path: Path) -> Path:
+    """A derivatives-notes workbook: a table, but no portfolio header."""
+    wb = openpyxl.Workbook()
+    wb.active.append(["Disclosure in Derivatives", "Notional Value"])
+    wb.active.append(["Interest Rate Swaps", 250000000])
+    wb.save(path)
+    return path
+
+
+def test_archive_workbooks_without_a_portfolio_are_ignored(tmp_path):
+    month = _month(tmp_path)
+    folder = month / "DSP AMC"
+    folder.mkdir(parents=True)
+    portfolio = _book(tmp_path / "p.xlsx", {"FLEXI": "DSP Flexi Cap Fund"})
+    with zipfile.ZipFile(folder / "monthend-portfolios_31-august-2026.zip", "w") as zf:
+        zf.write(portfolio, "DSP Equity FOF ISIN Portfolio as on 31 Aug 2026.xlsx")
+        zf.write(_notes_book(tmp_path / "n.xlsx"), "Derivatives_Disclosure & Notes Table.xlsx")
+    report = intake.prepare(month, "2026-08")
+    assert report.ok, intake.render(report)
+    result = report.results[0]
+    assert result.schemes == 1
+    assert result.skipped == ["_unzipped/monthend-portfolios_31-august-2026/"
+                              "Derivatives_Disclosure & Notes Table.xlsx"]
+    assert "ignored 1 archive workbook(s) without a portfolio" in intake.render(report)
+
+
+def test_an_archive_without_any_portfolio_is_refused(tmp_path):
+    month = _month(tmp_path)
+    folder = month / "DSP AMC"
+    folder.mkdir(parents=True)
+    with zipfile.ZipFile(folder / "notes.zip", "w") as zf:
+        zf.write(_notes_book(tmp_path / "n.xlsx"), "Notes.xlsx")
+    report = intake.prepare(month, "2026-08")
+    assert not report.ok
+    assert report.results[0].problems == ["no workbook in the folder holds a portfolio"]
+
+
+def test_a_loose_workbook_without_a_portfolio_is_still_refused(tmp_path):
+    month = _month(tmp_path)
+    (month / "DSP AMC").mkdir(parents=True)
+    _notes_book(month / "DSP AMC" / "notes.xlsx")
+    report = intake.prepare(month, "2026-08")
+    assert not report.ok
+    assert "No parseable scheme sheets" in report.results[0].problems[0]
 
 
 def test_misspelt_folder_is_not_parsed_and_suggests_the_registry_name(tmp_path):

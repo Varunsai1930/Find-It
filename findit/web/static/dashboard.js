@@ -16,8 +16,7 @@
       return { link: link, target: document.getElementById(link.getAttribute("href").slice(1)) };
     }).filter(function (section) { return section.target; });
     if (!sections.length) return;
-    var workspaceBar = document.querySelector(".workspace-bar");
-    var topbar = workspaceBar && window.innerWidth >= 1100 ? workspaceBar : document.querySelector(".topbar");
+    var topbar = document.querySelector(".topbar");
     var readingLine = (topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0) + 24;
     var selected = sections[0].link;
     sections.forEach(function (section) {
@@ -223,14 +222,24 @@
       if (sequence !== watchlistSequence) return;
       if (!result.ok) throw new Error("HTTP " + result.status);
       var report = JSON.parse(result.body);
-      var note = document.createElement("p");
+      var note = document.createElement("div"), context = document.createElement("p");
       note.className = "watchlist-note";
-      note.textContent = report.scope + ". Market-wide completeness: " + report.market_completeness + ". Data release " +
-        report.release_id.slice(0, 12) + "." + (report.stocks.some(function (s) {
-          return s.review_status === "not_independently_reviewed"; }) ? " Independent review: pending." : "") +
-        " Here, a fund house counts as adding shares when its compared funds together hold more shares" +
+      context.className = "watchlist-note__facts";
+      [report.scope + ".", "Market-wide completeness: " + report.market_completeness + ".",
+        report.stocks.some(function (s) { return s.review_status === "not_independently_reviewed"; }) ?
+          "Independent review: pending." : "", "Data release " + report.release_id.slice(0, 12) + "."
+      ].filter(Boolean).forEach(function (text) {
+        var fact = document.createElement("span");
+        fact.textContent = text + " "; context.append(fact);
+      });
+      var method = document.createElement("details"), label = document.createElement("summary");
+      var explanation = document.createElement("p");
+      method.className = "watchlist-note__method";
+      label.textContent = "How fund houses are counted here";
+      explanation.textContent = "A fund house counts as adding shares when its compared funds together hold more shares" +
         " than in the previous month. The stock detail counts a fund house as buying if any one of its" +
         " funds bought, so one fund house can count as both buying and selling there.";
+      method.append(label, explanation); note.append(context, method);
       watchResults.replaceChildren(note);
       report.stocks.forEach(function (stock) { watchResults.append(watchItem(stock)); });
       body.release = report.release_id; body.rules = report.rule_version;
@@ -243,8 +252,9 @@
   if (watchResults) {
     document.getElementById("watchlist-report").addEventListener("click", async function (event) {
       event.preventDefault();
-      var payload = event.target.dataset.reportRequest;
+      var payload = event.currentTarget.dataset.reportRequest;
       if (!payload) return;
+      watchStatus.textContent = "Preparing your monthly report…";
       try {
         var result = await load("watchlist-download", "/watchlist/report", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
@@ -252,6 +262,7 @@
         var report = JSON.parse(payload);
         downloadText(result.body, "text/markdown",
           "findit-" + report.month + "-" + report.release.slice(0, 12) + ".md");
+        watchStatus.textContent = "Report ready. Check your browser’s downloads.";
       } catch (e) {
         if (e.name !== "AbortError") watchStatus.textContent = "Report download failed: " + e.message;
       }

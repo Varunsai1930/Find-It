@@ -21,7 +21,7 @@ class Element {
   }
   addEventListener(name, fn) { (this.listeners[name] ||= []).push(fn); }
   emit(name, extra = {}) {
-    const event = { type: name, target: this, defaultPrevented: false,
+    const event = { type: name, target: this, currentTarget: this, defaultPrevented: false,
       preventDefault() { this.defaultPrevented = true; }, ...extra };
     for (const fn of this.listeners[name] || []) fn(event);
     return event;
@@ -302,6 +302,7 @@ test('watchlist downloads pin the displayed release and clearing aborts stale wo
   assert.equal(pinned.release, report.release_id);
   assert.equal(pinned.rules, report.rule_version);
   ui.elements['watchlist-report'].emit('click');
+  assert.match(ui.elements['watchlist-status'].textContent, /Preparing/);
   const download = ui.requests.at(-1);
   assert.equal(download.url, '/watchlist/report');
   assert.equal(download.options.method, 'POST');
@@ -311,6 +312,7 @@ test('watchlist downloads pin the displayed release and clearing aborts stale wo
   assert.equal(generated.download, 'findit-2026-08-' + report.release_id.slice(0, 12) + '.md');
   assert.equal(generated.clicked, true);
   assert.equal(generated.removed, true);
+  assert.match(ui.elements['watchlist-status'].textContent, /Report ready/);
   const row = ui.elements['watchlist-results'].children[1];
   ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] }); await settle();
   assert.equal(ui.elements['watchlist-report'].hidden, true);
@@ -321,6 +323,30 @@ test('watchlist downloads pin the displayed release and clearing aborts stale wo
   pending.respond(JSON.stringify(report)); await settle();
   assert.match(ui.elements['watchlist-results'].textContent, /empty/);
   assert.equal(ui.elements['watchlist-report'].hidden, true);
+});
+
+test('monthly reports download when the icon or its SVG path is clicked', async () => {
+  for (const tagName of ['SVG', 'PATH']) {
+    const ui = boot({ watch: ['INE002A01018'], controls: true });
+    const report = { release_id: 'a'.repeat(64), rule_version: 'rules-a',
+      scope: 'Test', market_completeness: 'unknown', stocks: [] };
+    ui.requests[0].respond(JSON.stringify(report)); await settle();
+    const link = ui.elements['watchlist-report'], child = new Element();
+    child.tagName = tagName;
+    link.append(child);
+    const pinned = link.dataset.reportRequest;
+    const before = ui.requests.length;
+    link.emit('click', { target: child });
+    assert.equal(ui.requests.length, before + 1, tagName + ' click starts a report request');
+    const download = ui.requests.at(-1);
+    assert.equal(download.url, '/watchlist/report');
+    assert.equal(download.options.method, 'POST');
+    assert.equal(download.options.body, pinned);
+    download.respond('# matching release report'); await settle();
+    const generated = ui.created.at(-1);
+    assert.equal(generated.download, 'findit-2026-08-' + report.release_id.slice(0, 12) + '.md');
+    assert.equal(generated.clicked, true);
+  }
 });
 
 test('watchlist export keeps its file URL alive until the download has started', async () => {

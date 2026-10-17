@@ -20,28 +20,25 @@
       <span class="brand__mark" aria-hidden="true">f<span>.</span></span>
       <span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span>
     </a>
-    <p class="sidebar-label">Workspace</p>
     <nav class="nav" id="section-nav" aria-label="Main navigation">
       <a href="{{ '#monthly-activity' if month else '#month-view' }}" aria-current="location">{{ icon('chart', 16) }}Monthly activity</a>
       {% if month %}<a href="#monthly-summary">{{ icon('grid', 16) }}Monthly summary</a>{% endif %}
       {% if scheme_options %}<a href="#watchlist">{{ icon('bookmark', 16) }}My watchlist</a><a href="#scheme-summary">{{ icon('layers', 16) }}Fund summary</a>{% endif %}
       <a href="#notes-title">{{ icon('file', 16) }}Reading guide</a>
     </nav>
-    <div class="sidebar-note">{{ icon('shield', 20) }}<strong>Check every number</strong><p>Each change links to the published portfolio and the calculation behind it.</p>{% if month %}<a data-coverage-link href="/coverage?month={{ month }}&amp;active_only={{ active_only }}">See data coverage {{ icon('arrow-up-right', 14) }}</a>{% endif %}</div>
-    <span class="edition"><span class="edition__dot" aria-hidden="true"></span>India · Monthly disclosures</span>
+    <div class="topbar__actions">
+      {% if month %}<a class="topbar__link" data-coverage-link href="/coverage?month={{ month }}&amp;active_only={{ active_only }}">{{ icon('shield', 16) }}<span>Data coverage</span></a>{% endif %}
+      <button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
+    </div>
   </div>
 </header>
 
-<div class="workspace-bar">
-  <span class="workspace-bar__title">Research workspace <span aria-hidden="true">/</span> <strong>Mutual fund holdings</strong></span>
-  <button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
-</div>
 <main class="page">
   <section class="intro" aria-labelledby="page-title">
     <div>
       <p class="eyebrow">Monthly portfolio disclosures</p>
       <h1 id="page-title">Monthly fund activity</h1>
-      <p class="intro__description">This page shows which stocks Indian mutual funds bought and sold each month. Select a stock to see the funds that hold it and the source data behind each number.</p>
+      <p class="intro__description">See which stocks Indian mutual funds added or reduced. Open a stock to check the funds and source data.</p>
     </div>
     <a class="intro__link" href="#notes-title">How to read the data {{ icon('arrow-up-right', 14) }}</a>
   </section>
@@ -110,7 +107,7 @@
 
   {% if scheme_options %}
   <section class="panel" id="watchlist" aria-labelledby="watchlist-title">
-    <div class="panel__head"><div class="section-title">{{ icon('bookmark', 20) }}<h2 id="watchlist-title">Changes in my stocks</h2></div><p class="panel__meta">To add a stock, open it and select Follow stock. This list then shows its changes for the selected month.</p></div>
+    <div class="panel__head"><div class="section-title">{{ icon('bookmark', 20) }}<h2 id="watchlist-title">Changes in my stocks</h2></div><p class="panel__meta">Open a stock and select Follow stock to track its monthly changes here.</p></div>
     <div class="panel__body"><div class="watchlist-tools"><button class="btn btn--quiet" type="button" id="watchlist-export">{{ icon('download', 16) }}Export watchlist</button><a class="btn btn--quiet" id="watchlist-report" hidden>{{ icon('file', 16) }}Download monthly report</a><label class="btn btn--quiet file-button">Import watchlist <input type="file" id="watchlist-import" accept="application/json"></label></div>
     <p class="watchlist-status" id="watchlist-status" role="status" aria-live="polite"></p><div class="watchlist-results" id="watchlist-results">Your watchlist is empty.</div>
     <details class="coverage watchlist-privacy"><summary>How your watchlist is saved</summary><p>Your list is saved in this browser on this device. To move it to another device, export it here and import it there. To calculate changes and make reports, the page sends the selected stocks to the server. The server does not save your list.</p></details></div>

@@ -276,7 +276,8 @@ def discover_hdfc(month: str, page) -> list[SourceFile]:
         menu.locator('div[class*="greybg"]').click()
         menu.get_by_text(calendar.month_abbr[number], exact=True).click()
         page.get_by_role("link", name=re.compile(r"Monthly HDFC .*" + re.escape(date))).first.wait_for(timeout=30000)
-    links = page.locator('a[href$=".xlsx"]').evaluate_all(
+    # Links carry a ?VersionId= query, and a few files are .xls.
+    links = page.locator('a[href*=".xls"]').evaluate_all(
         "els => els.map(a => ({name: a.textContent.trim(), url: a.href}))")
     candidates = []
     for link in links:
