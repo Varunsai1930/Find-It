@@ -48,6 +48,7 @@ class Element {
   }
   contains() { return false; }
   focus() { this.focusCount++; }
+  select() { this.selected = true; }
   showModal() { this.open = true; }
   close() { this.open = false; if (!this.deferCloseEvent) this.emit('close'); }
   scrollIntoView() {}
@@ -57,7 +58,7 @@ class Element {
   }
 }
 
-function boot({ schemes = false, controls = false, hash = '', sections = false, watch = null,
+function boot({ schemes = false, controls = false, hash = '', watch = null, search = false,
   theme = false, savedTheme = null, storageBlocked = false, coverage = false } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
     'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
@@ -66,17 +67,19 @@ function boot({ schemes = false, controls = false, hash = '', sections = false, 
   if (controls) ids.push('view-controls', 'equity-only', 'active-only');
   if (watch) ids.push('watchlist-status', 'watchlist-results', 'watchlist-report', 'watchlist-export', 'watchlist-import', 'active-only');
   if (theme) ids.push('theme-toggle');
+  if (search) ids.push('search-dialog', 'search-open');
+  ids.push('page-title', 'page-description');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
-  const navLinks = ['#monthly-summary', '#monthly-activity', '#scheme-summary', '#notes-title'].map(href => {
-    const link = new Element(); link.setAttribute('href', href); return link;
+  const views = [['#monthly-activity', 'activity', 'Monthly fund activity'],
+    ['#monthly-summary', 'summary', 'Monthly summary'], ['#watchlist', 'watchlist', 'My watchlist'],
+    ['#scheme-summary', 'funds', 'Fund summary']];
+  const navLinks = views.map(([href, view, title]) => {
+    const link = new Element(); link.setAttribute('href', href);
+    Object.assign(link.dataset, { view, title, description: title + ' description' });
+    link.closest = selector => selector === "a[href^='#']" ? link : null;
+    return link;
   });
   elements['section-nav'].append(...navLinks);
-  const sectionPositions = { 'monthly-summary': 400, 'monthly-activity': 1200,
-    'scheme-summary': 3200, 'notes-title': 4600 };
-  if (sections) for (const [id, top] of Object.entries(sectionPositions)) {
-    elements[id] = new Element(id); elements[id].top = top;
-  }
-  const topbar = new Element(); topbar.height = 80;
   const coverageLink = coverage ? new Element() : null;
   if (coverageLink) coverageLink.href = 'http://localhost/coverage?month=2026-08&active_only=0';
   const documentRoot = new Element(); documentRoot.scrollHeight = 5000;
@@ -108,22 +111,26 @@ function boot({ schemes = false, controls = false, hash = '', sections = false, 
   if (watch) saved.set('findit-watchlist-v1', JSON.stringify({ version: 1, stocks: watch }));
   if (savedTheme) saved.set('findit-theme', savedTheme);
   let timerId = 0;
+  const pushes = [], scrolls = [];
+  window.scrollTo = (x, y) => scrolls.push([x, y]);
   runInNewContext(script, {
     document: {
       getElementById: id => elements[id] || null,
-      querySelector: selector => selector === '.topbar' ? topbar : selector === '[data-coverage-link]' ? coverageLink : null,
+      querySelector: selector => selector === '[data-coverage-link]' ? coverageLink : null,
       documentElement: documentRoot, activeElement: elements['stock-search'],
       body, head,
       createElement: tag => { const element = new Element(); element.tagName = tag.toUpperCase(); created.push(element); return element; },
       addEventListener: documentEvents.addEventListener.bind(documentEvents),
     },
-    location, window, history: { replaceState(_state, _title, url) { location.href = String(url); } },
+    location, window, history: {
+      replaceState(_state, _title, url) { location.href = String(url); },
+      pushState(_state, _title, url) { location.href = String(url); pushes.push(String(url)); },
+    },
     URL, URLSearchParams, AbortController, DOMException, Blob,
     localStorage: {
       getItem(key) { if (storageBlocked) throw new Error('Storage unavailable'); return saved.get(key) || null; },
       setItem(key, value) { if (storageBlocked) throw new Error('Storage unavailable'); saved.set(key, value); },
     },
-    getComputedStyle(element) { return { scrollMarginTop: (element.scrollMargin || 0) + 'px' }; },
     FormData: class { get() { return null; } },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
     clearTimeout(id) { timers.delete(id); },
@@ -136,14 +143,10 @@ function boot({ schemes = false, controls = false, hash = '', sections = false, 
     },
   });
   return { created, body, head, documentRoot, documentEvents, systemTheme, themeFlushes, saved,
-    elements, requests, navLinks, location, window, frames, timers, topbar, coverageLink,
+    elements, requests, navLinks, location, window, frames, timers, coverageLink, pushes, scrolls,
     frame() { for (const fn of frames.splice(0)) fn(); },
     runTimers() { for (const [id, fn] of timers) { timers.delete(id); fn(); } },
-    scrollTo(y) {
-      window.scrollY = y;
-      for (const [id, top] of Object.entries(sectionPositions)) if (elements[id]) elements[id].top = top - y;
-      window.emit('scroll');
-    }, async type(id, value) {
+     async type(id, value) {
     elements[id].value = value;
     elements[id].emit('input');
     for (const [id, fn] of timers) { timers.delete(id); fn(); }
@@ -151,51 +154,108 @@ function boot({ schemes = false, controls = false, hash = '', sections = false, 
   } };
 }
 
-test('selected navigation follows the loaded hash and later section changes', () => {
+const stockResponse = name => JSON.stringify({ results: [{ name, isin: 'INE002A01018' }] });
+const current = ui => ui.navLinks.filter(link => link.getAttribute('aria-current') === 'page');
+const kinds = ui => ui.elements['stock-options'].children
+  .filter(option => option.attributes.role === 'option' && !option.attributes['aria-disabled'])
+  .map(option => option.children.at(-1).textContent);
+
+test('the loaded hash and later hash changes choose one view and its heading', () => {
   const ui = boot({ hash: '#scheme-summary' });
-  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
-  assert.equal(ui.navLinks[0].getAttribute('aria-current'), null);
-  ui.location.href = 'http://localhost/#notes-title';
+  assert.equal(ui.body.dataset.currentView, 'funds');
+  assert.deepEqual(current(ui), [ui.navLinks[3]]);
+  assert.equal(ui.elements['page-title'].textContent, 'Fund summary');
+  assert.equal(ui.elements['page-description'].textContent, 'Fund summary description');
+  ui.location.href = 'http://localhost/#monthly-summary';
   ui.window.emit('hashchange');
-  assert.equal(ui.navLinks[3].getAttribute('aria-current'), 'location');
-  assert.equal(ui.navLinks[2].getAttribute('aria-current'), null);
+  assert.equal(ui.body.dataset.currentView, 'summary');
+  assert.deepEqual(current(ui), [ui.navLinks[1]]);
+  assert.deepEqual(ui.scrolls.at(-1), [0, 0]); // A view starts from the top.
 });
 
-test('manual scrolling tracks sections in both directions without changing the URL', () => {
-  const ui = boot({ sections: true, hash: '#monthly-summary' });
-  ui.frame();
-  for (const [y, active] of [[1300, 1], [3400, 2], [1300, 1], [350, 0]]) {
-    ui.scrollTo(y); ui.frame();
-    assert.equal(ui.navLinks[active].getAttribute('aria-current'), 'location');
-    assert.equal(ui.navLinks.filter(link => link.getAttribute('aria-current')).length, 1);
-    assert.equal(new URL(ui.location.href).hash, '#monthly-summary');
+test('a hash outside the views keeps the first view without scrolling', () => {
+  const ui = boot({ hash: '#consensus' });
+  assert.equal(ui.body.dataset.currentView, 'activity');
+  assert.deepEqual(current(ui), [ui.navLinks[0]]);
+  ui.location.href = 'http://localhost/#coverage-details';
+  ui.window.emit('hashchange');
+  assert.equal(ui.body.dataset.currentView, 'activity');
+  assert.equal(ui.scrolls.length, 0);
+});
+
+test('a view link switches in place and records one history entry', () => {
+  const ui = boot();
+  const click = ui.documentEvents.emit('click', { target: ui.navLinks[2] });
+  assert.equal(click.defaultPrevented, true);
+  assert.equal(ui.body.dataset.currentView, 'watchlist');
+  assert.deepEqual(ui.pushes, ['http://localhost/#watchlist']);
+  ui.documentEvents.emit('click', { target: ui.navLinks[2] });
+  assert.equal(ui.pushes.length, 1); // The current view adds no entry.
+  // Back and forward restore the view from the URL.
+  ui.location.href = 'http://localhost/#monthly-activity';
+  ui.window.emit('popstate');
+  assert.equal(ui.body.dataset.currentView, 'activity');
+});
+
+test('a modified click on a view link keeps the browser default', () => {
+  const ui = boot();
+  for (const modifier of ['metaKey', 'ctrlKey', 'shiftKey']) {
+    const click = ui.documentEvents.emit('click', { target: ui.navLinks[1], [modifier]: true });
+    assert.equal(click.defaultPrevented, false, modifier);
   }
+  assert.equal(ui.body.dataset.currentView, 'activity');
+  assert.deepEqual(ui.pushes, []);
 });
 
-test('navigation accounts for sticky headers, short final sections and changed targets', () => {
-  const ui = boot({ sections: true });
-  ui.frame();
-  ui.scrollTo(1100); ui.frame(); // Activity starts 100px down, just below the 80px header.
-  assert.equal(ui.navLinks[1].getAttribute('aria-current'), 'location');
-  ui.elements['monthly-activity'] = new Element('monthly-activity');
-  ui.elements['monthly-activity'].top = 500; // A refreshed/expanded summary moves the target down.
-  ui.window.emit('resize'); ui.frame();
-  assert.equal(ui.navLinks[0].getAttribute('aria-current'), 'location');
-  ui.elements['scheme-summary'].top = 180;
-  ui.elements['scheme-summary'].scrollMargin = 84; // Panel margin adds to the page's anchor padding.
-  ui.window.emit('hashchange'); ui.frame();
-  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
-  ui.scrollTo(4200); ui.frame(); // Reading-guide heading cannot reach the top at document end.
-  assert.equal(ui.navLinks[3].getAttribute('aria-current'), 'location');
+test('the search shortcut opens the palette, but / does not while typing', () => {
+  const ui = boot({ search: true });
+  const dialog = ui.elements['search-dialog'], input = new Element(); input.tagName = 'INPUT';
+  assert.equal(ui.elements['search-open'].hidden, false);
+  ui.documentEvents.emit('keydown', { key: '/', target: input });
+  assert.equal(dialog.open, undefined);
+  const shortcut = ui.documentEvents.emit('keydown', { key: 'k', ctrlKey: true, target: input });
+  assert.equal(shortcut.defaultPrevented, true);
+  assert.equal(dialog.open, true);
+  assert.equal(ui.elements['stock-search'].selected, true);
 });
 
-test('scroll events are coalesced into one animation-frame update', () => {
-  const ui = boot({ sections: true });
-  ui.frame();
-  ui.scrollTo(1300); ui.scrollTo(1400); ui.scrollTo(3400);
-  assert.equal(ui.frames.length, 1);
-  ui.frame();
-  assert.equal(ui.navLinks[2].getAttribute('aria-current'), 'location');
+test('search lists matching views and funds without a stock request for one character', async () => {
+  const ui = boot({ search: true, schemes: true });
+  ui.elements['search-open'].emit('click');
+  await ui.type('stock-search', 'm');
+  assert.equal(ui.requests.length, 0);
+  assert.deepEqual(kinds(ui), ['Fund', 'View', 'View', 'View', 'View']);
+  await ui.type('stock-search', 'monthly s');
+  ui.requests[0].respond(JSON.stringify({ results: [] })); await settle();
+  assert.deepEqual(kinds(ui), ['View']);
+  const options = ui.elements['stock-options'].children;
+  assert.equal(options[0].children[0].textContent, 'Monthly summary');
+  options[0].emit('click');
+  assert.equal(ui.elements['search-dialog'].open, false);
+  assert.equal(ui.body.dataset.currentView, 'summary');
+  // A picked fund opens the fund view with its summary.
+  ui.elements['search-open'].emit('click');
+  await ui.type('stock-search', 'test fund');
+  ui.requests.at(-1).respond(JSON.stringify({ results: [] })); await settle();
+  ui.elements['stock-options'].children[0].emit('click');
+  assert.equal(ui.body.dataset.currentView, 'funds');
+  assert.equal(ui.elements['scheme-search'].value, 'Test Fund');
+  assert.equal(ui.requests.at(-1).url, '/api/summary/1/2026-08');
+});
+
+test('stocks lead the search results and a stock pick closes the palette first', async () => {
+  const ui = boot({ search: true, schemes: true });
+  ui.elements['search-open'].emit('click');
+  await ui.type('stock-search', 'test');
+  ui.requests[0].respond(stockResponse('Test Industries'));
+  await settle();
+  const kinds = ui.elements['stock-options'].children.map(o => o.children.at(-1).textContent);
+  assert.equal(ui.elements['stock-options'].children[0].children[0].textContent, 'Test Industries');
+  assert.equal(kinds[1], 'Fund');
+  ui.elements['stock-options'].children[0].emit('click');
+  assert.equal(ui.elements['search-dialog'].open, false);
+  assert.equal(ui.elements['stock-dialog'].open, true);
+  assert.match(ui.requests.at(-1).url, /^\/fragments\/stock\?q=INE002A01018/);
 });
 
 test('refreshing the month preserves the selected section in the URL', async () => {
@@ -207,7 +267,7 @@ test('refreshing the month preserves the selected section in the URL', async () 
   assert.equal(new URL(ui.location.href).searchParams.get('month'), '2026-08');
 });
 
-test('sidebar coverage follows the successfully displayed month and filters', async () => {
+test('the coverage link follows the successfully displayed month and filters', async () => {
   const ui = boot({ controls: true, coverage: true, hash: '#monthly-activity' });
   const original = ui.coverageLink.href;
   ui.elements['month-select'].value = '2026-07';
@@ -226,7 +286,6 @@ test('sidebar coverage follows the successfully displayed month and filters', as
   assert.equal(dashboardUrl.searchParams.get('active_only'), coverageUrl.searchParams.get('active_only'));
   assert.equal(dashboardUrl.hash, '#monthly-activity');
 });
-const stockResponse = name => JSON.stringify({ results: [{ name, isin: 'INE002A01018' }] });
 
 for (const action of ['blur', 'input']) {
   test(`pending autocomplete cannot reopen after ${action}`, async () => {
@@ -523,4 +582,106 @@ test('follow toggle keeps its icons, shows the loaded state and unfollows from e
   ui.documentEvents.emit('click', { target: button });
   assert.equal(button.getAttribute('aria-pressed'), 'false');
   assert.deepEqual(JSON.parse(ui.saved.get('findit-watchlist-v1')).stocks, []);
+});
+
+// A ranking table with name, net and flow columns; rows start in rank order.
+function rankingTable(ui, rows) {
+  const headings = ['name', 'net', 'flow'].map((key, cellIndex) => {
+    const th = new Element();
+    Object.assign(th.dataset, { sortKey: key, sortLabel: key });
+    th.cellIndex = cellIndex; th.childNodes = [];
+    return th;
+  });
+  headings[1].setAttribute('aria-sort', 'descending');
+  const body = new Element();
+  body.rows = rows.map(([name, net, flow], i) => {
+    const row = new Element(); row.dataset.rank = String(i + 1);
+    row.cells = [name, net, flow].map(sort => ({ dataset: { sort } }));
+    return row;
+  });
+  body.append = (...nodes) => { body.rows = nodes; };
+  const table = new Element('consensus-table');
+  table.tBodies = [body];
+  table.querySelector = selector => selector === 'th[aria-sort]' ? headings.find(h => h.getAttribute('aria-sort')) :
+    headings.find(h => selector === `th[data-sort-key="${h.dataset.sortKey}"]`) || null;
+  table.querySelectorAll = selector => selector === 'th[data-sort-key]' ? headings : [];
+  const select = new Element('sort-select'), label = new Element();
+  select.closest = () => label;
+  Object.assign(ui.elements, { 'consensus-table': table, 'sort-select': select });
+  const order = () => body.rows.map(row => row.dataset.rank).join('');
+  const reset = () => {
+    body.rows.sort((a, b) => a.dataset.rank - b.dataset.rank);
+    headings.forEach(h => h.removeAttribute('aria-sort'));
+    headings[1].setAttribute('aria-sort', 'descending');
+  };
+  return { headings, select, label, order, reset };
+}
+
+async function refresh(ui, target = ui.elements['month-select']) {
+  ui.elements['view-controls'].emit('change', { target });
+  ui.requests.filter(r => r.url.startsWith('/fragments/month/')).at(-1).respond('ranking');
+  await settle();
+}
+
+test('sorting reorders shown rows, keeps rank order for ties and puts missing values last', async () => {
+  const ui = boot({ controls: true });
+  const { headings, select, label, order, reset } = rankingTable(ui,
+    [['Beta', '3', ''], ['alpha', '2', '5'], ['Gamma', '2', '5'], ['Delta', '1', '-2']]);
+  await refresh(ui);
+  assert.equal(label.hidden, false);
+  assert.equal(select.value, 'net:descending');
+  assert.equal(select.children.length, 6);
+  const sortButton = key => headings.find(h => h.dataset.sortKey === key).children[0];
+  sortButton('flow').emit('click');
+  assert.equal(order(), '2341');
+  assert.equal(headings[2].getAttribute('aria-sort'), 'descending');
+  assert.equal(headings[1].getAttribute('aria-sort'), null);
+  sortButton('flow').emit('click');
+  assert.equal(order(), '4231');
+  assert.equal(select.value, 'flow:ascending');
+  sortButton('name').emit('click'); // Text sorts A to Z first, ignoring case.
+  assert.equal(order(), '2143');
+  select.value = 'net:ascending';
+  select.emit('change');
+  assert.equal(order(), '4231');
+  // A month refresh keeps the reader's sort; switching buying and selling drops it.
+  reset();
+  await refresh(ui);
+  assert.equal(order(), '4231');
+  reset();
+  await refresh(ui, { name: 'side' });
+  assert.equal(order(), '1234');
+  assert.equal(select.value, 'net:descending');
+});
+
+test('a click elsewhere on a ranking row opens its stock, but its own controls keep their action', () => {
+  const ui = boot();
+  const link = new Element(), row = new Element(), cell = new Element(), follow = new Element();
+  link.dataset.isin = 'INE002A01018';
+  row.querySelector = selector => selector === '.stock-link' ? link : null;
+  cell.closest = selector => selector === '#consensus-table tbody tr' ? row : null;
+  follow.closest = selector => selector === '#consensus-table tbody tr' ? row :
+    selector.startsWith('a, button') ? follow : null;
+  ui.documentEvents.emit('click', { target: follow });
+  assert.equal(ui.requests.length, 0);
+  ui.documentEvents.emit('click', { target: cell });
+  assert.equal(link.focusCount, 1); // Focus returns to the row's link when the drawer closes.
+  assert.equal(ui.elements['stock-dialog'].open, true);
+  assert.match(ui.requests.at(-1).url, /^\/fragments\/stock\?q=INE002A01018/);
+});
+
+test('row bookmarks show state without text, and an empty watchlist links to the ranking', () => {
+  const ui = boot({ watch: [], controls: true });
+  const empty = ui.elements['watchlist-results'].children[0];
+  assert.match(empty.textContent, /Your watchlist is empty/);
+  assert.equal(empty.children[1].href, '#monthly-activity');
+  assert.equal(ui.requests.length, 0);
+  const bookmark = new Element(); bookmark.dataset.watchStock = 'INE002A01018';
+  bookmark.closest = selector => selector === '[data-watch-stock]' ? bookmark : null;
+  ui.elements['month-view'].append(bookmark);
+  ui.documentEvents.emit('click', { target: bookmark });
+  assert.equal(bookmark.getAttribute('aria-pressed'), 'true');
+  assert.equal(bookmark.hidden, false);
+  assert.equal(bookmark.textContent, '');
+  assert.deepEqual(JSON.parse(ui.saved.get('findit-watchlist-v1')).stocks, ['INE002A01018']);
 });

@@ -1,14 +1,17 @@
 {% from "_macros.html" import icon %}
-<section class="fund-summary" id="monthly-summary" aria-labelledby="fund-summary-title">
+<section class="fund-summary" id="monthly-summary" data-view="summary" aria-labelledby="fund-summary-title">
   <div class="fund-summary__head">
     <div class="section-heading"><h2 id="fund-summary-title">Monthly summary</h2><span class="month-stamp">{{ month|month_label }}</span></div>
     <p>How fund houses changed their stock holdings since {{ summary_prev_month|month_label }}.</p>
   </div>
   {% for group in fund_groups %}
+  {%- set compared = group.funds|selectattr('compared')|list -%}
+  {%- set unavailable = group.funds|rejectattr('compared')|list %}
   <div class="fund-summary__group">
     <h3>{{ group.title }}</h3>
-    <div class="fund-grid">
-      {% for fund in group.funds %}
+    {% for funds, kind in ((compared, 'grid'), (unavailable, 'list')) if funds %}
+    <div class="fund-{{ kind }}"{% if kind == 'list' %} aria-label="Fund houses without a comparison this month"{% endif %}>
+      {% for fund in funds %}
       <article class="fund-card{% if not fund.compared %} fund-card--unavailable{% endif %}" aria-label="{{ fund.name }} monthly summary">
         <div class="fund-card__identity"><span class="fund-card__mark" aria-hidden="true">{{ fund.name[0] }}</span><h4>{{ fund.name }}</h4></div>
         <p class="tag fund-card__badge tag--{{ 'ok' if fund.coverage_state == 'complete' else 'stale' }}">{{ fund.coverage_state|replace('_', ' ')|capitalize }}</p>
@@ -61,6 +64,7 @@
       </article>
       {% endfor %}
     </div>
+    {% endfor %}
   </div>
   {% endfor %}
   <p class="fund-summary__method">{{ 'Active stock-pickers only' if active_only else 'All fund types' }} · domestic equity. The biggest move is the change with the largest estimated net trading value, including new holdings and exits. Share counts are adjusted for splits and bonus issues.</p>

@@ -206,10 +206,15 @@ def test_monthly_summary_roster_order_missing_data_and_fragment_refresh(tmp_path
     assert '+70 shares' in page
     assert 'Jul 2026' in page
     assert 'Aug 2026 portfolios not loaded.' in page
+    # Compared houses get full cards; the rest follow as one compact list per group.
+    assert page.index('aria-label="SBI Mutual Fund monthly summary"') < page.index('<div class="fund-list"')
+    assert page.index('<div class="fund-grid">') < page.index('<div class="fund-list"')
+    assert page.index('<div class="fund-list"') < page.index('Aug 2026 portfolios not loaded.')
     fragment = client.get("/fragments/month/2026-07").text
     assert 'No usable comparison with Jun 2026.' in fragment
     assert 'Biggest increase' not in fragment
     assert fragment.count('<article class="fund-card') == 8
+    assert '<div class="fund-grid">' not in fragment  # No house compared: no empty grid.
 
 
 def test_card_details_and_separate_coverage_preserve_month_and_scope(tmp_path):
@@ -603,6 +608,46 @@ def test_default_table_is_the_scannable_columns(tmp_path):
     # Each view links to the other, keeping every other parameter.
     assert 'href="/?month=2026-08&amp;side=buy&amp;limit=25&amp;cols=all&amp;' in core
     assert "cols=core" in wide
+
+
+def test_ranking_head_holds_the_facts_and_rows_carry_sort_values(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    html = client.get("/fragments/month/2026-08", params={"cols": "all"}).text
+    # The three facts and the coverage note sit in the ranking's own header.
+    assert html.index('id="consensus"') < html.index('class="facts"') < html.index("<table")
+    assert html.index('id="coverage-details"') < html.index("<table")
+    head = html[html.index("<thead>"):html.index("</thead>")]
+    for key in ("name", "net", "discretionary", "funds", "flow", "new", "fii", "dii", "filing"):
+        assert f'data-sort-key="{key}"' in head
+    assert 'data-sort-key="net" data-sort-label="Net fund houses" aria-sort="descending"' in head
+    # A missing filing has no sort value, so it sorts after every filed stock.
+    infosys = _row(html, "INE009A01021")
+    for label in ("FII Δ pp", "DII Δ pp", "Filing"):
+        assert f'data-label="{label}" data-sort=""' in infosys
+    reliance = _row(html, "INE002A01018")
+    assert 'data-label="Filing" data-sort="' in reliance and 'data-label="Filing" data-sort=""' not in reliance
+    assert 'class="row-follow follow-toggle" data-watch-stock="INE002A01018" aria-pressed="false"' in reliance
+    selling = client.get("/fragments/month/2026-08", params={"side": "sell"}).text
+    assert 'data-sort-key="net" data-sort-label="Net fund houses" aria-sort="ascending"' in selling
+
+
+def test_dashboard_views_guide_and_search_markup(tmp_path):
+    db = _copy_db(tmp_path)
+    html = TestClient(create_app(str(db))).get("/").text
+    nav = html[html.index('id="section-nav"'):html.index("</nav>")]
+    views = (("#monthly-activity", "activity", 'id="monthly-activity"'),
+             ("#monthly-summary", "summary", 'id="monthly-summary"'),
+             ("#watchlist", "watchlist", 'id="watchlist"'),
+             ("#scheme-summary", "funds", 'id="scheme-summary"'))
+    for href, view, target in views:
+        assert f'href="{href}" data-view="{view}"' in nav
+        # Each link's target belongs to its view, so the link still works without scripts.
+        assert f'{target} data-view="{view}"' in html
+    assert "#notes-title" not in nav  # The reading guide opens as a drawer, not a view.
+    assert 'id="guide-dialog"' in html and 'id="guide-notes"' in html
+    assert 'id="search-dialog"' in html and 'id="stock-search"' in html
+    assert 'id="search-open"' in html
 
 
 def test_buying_bar_represents_fund_houses_not_individual_funds(tmp_path):

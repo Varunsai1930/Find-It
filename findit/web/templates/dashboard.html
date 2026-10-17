@@ -20,14 +20,20 @@
       <span class="brand__mark" aria-hidden="true">f<span>.</span></span>
       <span class="brand__name">FindIt<span class="brand__tag">Fund holdings research</span></span>
     </a>
+    {#- Each link names a view. Without scripts they are in-page anchors. -#}
     <nav class="nav" id="section-nav" aria-label="Main navigation">
-      <a href="{{ '#monthly-activity' if month else '#month-view' }}" aria-current="location">{{ icon('chart', 16) }}Monthly activity</a>
-      {% if month %}<a href="#monthly-summary">{{ icon('grid', 16) }}Monthly summary</a>{% endif %}
-      {% if scheme_options %}<a href="#watchlist">{{ icon('bookmark', 16) }}My watchlist</a><a href="#scheme-summary">{{ icon('layers', 16) }}Fund summary</a>{% endif %}
-      <a href="#notes-title">{{ icon('file', 16) }}Reading guide</a>
+      <a href="{{ '#monthly-activity' if month else '#month-view' }}" data-view="activity" aria-current="page"
+         data-title="Monthly fund activity" data-description="See which stocks Indian mutual funds added or reduced. Open a stock to check the funds and source data.">{{ icon('chart', 16) }}<span class="nav__full">Monthly activity</span><span class="nav__short" aria-hidden="true">Activity</span></a>
+      {% if month %}<a href="#monthly-summary" data-view="summary"
+         data-title="Monthly summary" data-description="How the largest fund houses changed their stock holdings, one card per fund house.">{{ icon('grid', 16) }}<span class="nav__full">Monthly summary</span><span class="nav__short" aria-hidden="true">Summary</span></a>{% endif %}
+      {% if scheme_options %}<a href="#watchlist" data-view="watchlist"
+         data-title="My watchlist" data-description="The stocks you follow on this device, and how funds changed them this month.">{{ icon('bookmark', 16) }}<span class="nav__full">My watchlist</span><span class="nav__short" aria-hidden="true">Watchlist</span></a><a href="#scheme-summary" data-view="funds"
+         data-title="Fund summary" data-description="Pick one individual fund to read what it bought and sold this month.">{{ icon('layers', 16) }}<span class="nav__full">Fund summary</span><span class="nav__short" aria-hidden="true">Funds</span></a>{% endif %}
     </nav>
     <div class="topbar__actions">
-      {% if month %}<a class="topbar__link" data-coverage-link href="/coverage?month={{ month }}&amp;active_only={{ active_only }}">{{ icon('shield', 16) }}<span>Data coverage</span></a>{% endif %}
+      {% if months %}<button class="search-trigger" id="search-open" type="button" aria-haspopup="dialog" aria-keyshortcuts="Control+K Meta+K /" hidden>{{ icon('search', 16) }}<span class="search-trigger__label">Search stocks and funds</span><kbd data-shortcut aria-hidden="true">Ctrl K</kbd></button>{% endif %}
+      {% if month %}<a class="topbar__link" data-coverage-link href="/coverage?month={{ month }}&amp;active_only={{ active_only }}" title="Data coverage">{{ icon('shield', 16) }}<span>Data coverage</span></a>{% endif %}
+      <a class="topbar__link" id="guide-open" href="#notes-title" title="Reading guide" aria-haspopup="dialog">{{ icon('help', 16) }}<span>Reading guide</span></a>
       <button class="btn btn--quiet theme-toggle btn--static" id="theme-toggle" type="button" hidden><span class="theme-icon icon-swap" aria-hidden="true">{{ icon('sun', 16) }}{{ icon('moon', 16) }}</span><span data-theme-label>Appearance</span></button>
     </div>
   </div>
@@ -38,58 +44,43 @@
     <div>
       <p class="eyebrow">Monthly portfolio disclosures</p>
       <h1 id="page-title">Monthly fund activity</h1>
-      <p class="intro__description">See which stocks Indian mutual funds added or reduced. Open a stock to check the funds and source data.</p>
+      <p class="intro__description" id="page-description">See which stocks Indian mutual funds added or reduced. Open a stock to check the funds and source data.</p>
     </div>
     <a class="intro__link" href="#notes-title">How to read the data {{ icon('arrow-up-right', 14) }}</a>
   </section>
 
   {% if months %}
-  <div class="filterbar" aria-label="Activity filters and stock search">
-    {% if months %}
-    <form class="controls" id="view-controls" method="get" action="/">
-      <label class="field field--month">
-        <span class="field__label">Month</span>
-        <select name="month" id="month-select">
-          {% for m in months %}<option value="{{ m }}"{% if m == month %} selected{% endif %}>{{ m|month_label }}</option>{% endfor %}
-        </select>
-      </label>
-      <fieldset class="segmented">
-        <legend class="field__label">Show</legend>
-        <div class="segmented__track">
-          <label><input type="radio" name="side" value="buy"{% if side != 'sell' %} checked{% endif %}><span>Buying</span></label>
-          <label><input type="radio" name="side" value="sell"{% if side == 'sell' %} checked{% endif %}><span>Selling</span></label>
-        </div>
-      </fieldset>
-      <label class="field field--rows">
-        <span class="field__label">Rows</span>
-        <select name="limit" id="limit-select">
-          {% for n in row_limits %}<option value="{{ n }}"{% if n == limit %} selected{% endif %}>{{ 'Top %d'|format(n) if n else 'All' }}</option>{% endfor %}
-        </select>
-      </label>
-      <div class="checks">
-        <input type="hidden" name="equity_only" value="0">
-        <label class="check"><input type="checkbox" name="equity_only" id="equity-only" value="1"{% if equity_only %} checked{% endif %}> Equity only</label>
-        <input type="hidden" name="active_only" value="0">
-        <label class="check" title="Exclude index funds, ETFs, arbitrage, FoFs and debt funds"><input type="checkbox" name="active_only" id="active-only" value="1"{% if active_only %} checked{% endif %}> Active stock-pickers only</label>
+  {#- data-view lists the views a control applies to; the month applies to all. -#}
+  <form class="filterbar controls" id="view-controls" method="get" action="/" aria-label="Filters">
+    <label class="field field--month">
+      <span class="field__label">Month</span>
+      <select name="month" id="month-select">
+        {% for m in months %}<option value="{{ m }}"{% if m == month %} selected{% endif %}>{{ m|month_label }}</option>{% endfor %}
+      </select>
+    </label>
+    <fieldset class="segmented" data-view="activity">
+      <legend class="field__label">Show</legend>
+      <div class="segmented__track">
+        <label><input type="radio" name="side" value="buy"{% if side != 'sell' %} checked{% endif %}><span>Buying</span></label>
+        <label><input type="radio" name="side" value="sell"{% if side == 'sell' %} checked{% endif %}><span>Selling</span></label>
       </div>
-      <input type="hidden" name="cols" id="cols-input" value="{{ cols }}">
-      <noscript><button type="submit" class="btn">Apply</button></noscript>
-      <span class="controls__status" id="view-status" role="status" aria-live="polite"></span>
-    </form>
-    <form class="lookup" id="stock-form" role="search" autocomplete="off">
-      <label class="field__label" for="stock-search">Find a stock</label>
-      <div class="combo combo--search">
-        {{ icon('search', 17) }}
-        <input id="stock-search" name="q" type="text" role="combobox" aria-autocomplete="list"
-               aria-expanded="false" aria-controls="stock-options" spellcheck="false"
-               placeholder="Company name or ISIN" aria-describedby="stock-search-hint">
-        <ul class="combo__list" id="stock-options" role="listbox" aria-label="Matching stocks" hidden></ul>
-      </div>
-      <span class="visually-hidden" id="stock-search-hint">Type two or more characters, then use the arrow keys to choose a suggestion.</span>
-      <span class="visually-hidden" id="stock-search-status" role="status" aria-live="polite"></span>
-    </form>
-    {% endif %}
-  </div>
+    </fieldset>
+    <label class="field field--rows" data-view="activity">
+      <span class="field__label">Rows</span>
+      <select name="limit" id="limit-select">
+        {% for n in row_limits %}<option value="{{ n }}"{% if n == limit %} selected{% endif %}>{{ 'Top %d'|format(n) if n else 'All' }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="checks">
+      <input type="hidden" name="equity_only" value="0">
+      <label class="check" data-view="activity"><input type="checkbox" name="equity_only" id="equity-only" value="1"{% if equity_only %} checked{% endif %}> Equity only</label>
+      <input type="hidden" name="active_only" value="0">
+      <label class="check" data-view="activity summary watchlist" title="Exclude index funds, ETFs, arbitrage, FoFs and debt funds"><input type="checkbox" name="active_only" id="active-only" value="1"{% if active_only %} checked{% endif %}> Active stock-pickers only</label>
+    </div>
+    <input type="hidden" name="cols" id="cols-input" value="{{ cols }}">
+    <noscript><button type="submit" class="btn">Apply</button></noscript>
+    <span class="controls__status" id="view-status" role="status" aria-live="polite"></span>
+  </form>
   {% endif %}
 
   <div id="month-view">
@@ -106,14 +97,14 @@
   </div>
 
   {% if scheme_options %}
-  <section class="panel" id="watchlist" aria-labelledby="watchlist-title">
-    <div class="panel__head"><div class="section-title">{{ icon('bookmark', 20) }}<h2 id="watchlist-title">Changes in my stocks</h2></div><p class="panel__meta">Open a stock and select Follow stock to track its monthly changes here.</p></div>
+  <section class="panel" id="watchlist" data-view="watchlist" aria-labelledby="watchlist-title">
+    <div class="panel__head"><div class="section-title">{{ icon('bookmark', 20) }}<h2 id="watchlist-title">Changes in my stocks</h2></div><p class="panel__meta">Select the bookmark next to any stock, or open a stock and select Follow stock, to track its monthly changes here.</p></div>
     <div class="panel__body"><div class="watchlist-tools"><button class="btn btn--quiet" type="button" id="watchlist-export">{{ icon('download', 16) }}Export watchlist</button><a class="btn btn--quiet" id="watchlist-report" hidden>{{ icon('file', 16) }}Download monthly report</a><label class="btn btn--quiet file-button">Import watchlist <input type="file" id="watchlist-import" accept="application/json"></label></div>
-    <p class="watchlist-status" id="watchlist-status" role="status" aria-live="polite"></p><div class="watchlist-results" id="watchlist-results">Your watchlist is empty.</div>
+    <p class="watchlist-status" id="watchlist-status" role="status" aria-live="polite"></p><div class="watchlist-results" id="watchlist-results"><p class="state state--empty">Your watchlist is empty.</p></div>
     <details class="coverage watchlist-privacy"><summary>How your watchlist is saved</summary><p>Your list is saved in this browser on this device. To move it to another device, export it here and import it there. To calculate changes and make reports, the page sends the selected stocks to the server. The server does not save your list.</p></details></div>
   </section>
 
-  <section class="panel" id="scheme-summary" aria-labelledby="summary-title">
+  <section class="panel" id="scheme-summary" data-view="funds" aria-labelledby="summary-title">
     <div class="panel__head">
       <div class="section-title">{{ icon('layers', 20) }}<h2 id="summary-title">Individual fund summary</h2></div>
       <p class="panel__meta">Choose one fund, such as HDFC Large Cap Fund, to see what it changed this month.</p>
@@ -138,7 +129,7 @@
   <script type="application/json" id="scheme-data">{{ scheme_options|tojson }}</script>
   {% endif %}
 
-  <section class="notes" aria-labelledby="notes-title">
+  <section class="notes" id="guide-notes" aria-labelledby="notes-title">
     <h2 id="notes-title">Reading this page</h2>
     <dl>
       <dt>Fund houses and individual funds</dt>
@@ -173,6 +164,34 @@
     <div class="drawer__body" id="stock-box"></div>
   </div>
 </dialog>
+
+<dialog class="drawer drawer--narrow" id="guide-dialog" aria-labelledby="guide-dialog-title">
+  <div class="drawer__inner">
+    <div class="drawer__head">
+      <h2 id="guide-dialog-title">Reading guide</h2>
+      <button type="button" class="drawer__close" id="guide-dialog-close" aria-label="Close reading guide">{{ icon('close', 20) }}</button>
+    </div>
+    {#- The script moves the reading notes in here; without it they stay on the page. -#}
+    <div class="drawer__body" id="guide-box"></div>
+  </div>
+</dialog>
+
+{% if months %}
+<dialog class="palette" id="search-dialog" aria-label="Search stocks, funds and pages">
+  <form id="stock-form" role="search" autocomplete="off">
+    <div class="palette__field">
+      {{ icon('search', 18) }}
+      <input id="stock-search" name="q" type="text" role="combobox" aria-autocomplete="list" autofocus
+             aria-expanded="false" aria-controls="stock-options" spellcheck="false" aria-label="Search"
+             placeholder="Search a company, ISIN or fund" aria-describedby="stock-search-hint">
+      <kbd aria-hidden="true">Esc</kbd>
+    </div>
+    <ul class="combo__list palette__list" id="stock-options" role="listbox" aria-label="Matching stocks, funds and pages" hidden></ul>
+    <p class="palette__hint" id="stock-search-hint">Stocks need two or more characters. Use the arrow keys to choose, then Enter.</p>
+    <span class="visually-hidden" id="stock-search-status" role="status" aria-live="polite"></span>
+  </form>
+</dialog>
+{% endif %}
 
 <script src="{{ asset_url('dashboard.js') }}" defer></script>
 </body>

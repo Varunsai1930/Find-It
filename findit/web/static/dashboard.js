@@ -1,57 +1,71 @@
 (function () {
   "use strict";
+  // -- views --------------------------------------------------------------------
+  // Each navigation link names one view. The page shows one view at a time:
+  // CSS hides every [data-view] element that does not list the current view.
+  // Without this script the links stay in-page anchors and every view shows.
   var sectionNav = document.getElementById("section-nav");
-  var navigationQueued = false;
-  function selectNavigation(selected) {
+  var navLinks = sectionNav ? Array.from(sectionNav.querySelectorAll("a")) : [];
+  var pageTitle = document.getElementById("page-title");
+  var pageDescription = document.getElementById("page-description");
+  function navLinkFor(hash) {
+    return navLinks.find(function (link) { return link.getAttribute("href") === hash; }) || null;
+  }
+  function showView(link) {
+    document.body.dataset.currentView = link.dataset.view;
+    navLinks.forEach(function (other) {
+      if (other === link) other.setAttribute("aria-current", "page");
+      else other.removeAttribute("aria-current");
+    });
+    if (pageTitle && link.dataset.title) {
+      pageTitle.textContent = link.dataset.title;
+      document.title = "FindIt · " + link.dataset.title;
+    }
+    if (pageDescription && link.dataset.description) pageDescription.textContent = link.dataset.description;
+    link.scrollIntoView({ block: "nearest", inline: "nearest" });
+    updateNavOverflow();
+  }
+  // A view hash shows that view from the top; any other hash keeps the current view.
+  function followHash() {
+    var link = navLinkFor(new URL(location.href).hash);
+    if (!link) return false;
+    showView(link);
+    window.scrollTo(0, 0);
+    return true;
+  }
+  function goToView(link) {
+    var url = new URL(location.href);
+    if (url.hash !== link.getAttribute("href")) {
+      url.hash = link.getAttribute("href");
+      history.pushState(null, "", url);
+    }
+    showView(link);
+    window.scrollTo(0, 0);
+  }
+  // On narrow screens the links scroll sideways; fade the edge that hides more.
+  function updateNavOverflow() {
     if (!sectionNav) return;
-    var links = sectionNav.querySelectorAll("a");
-    links.forEach(function (link) {
-      if (link === selected) link.setAttribute("aria-current", "location");
-      else link.removeAttribute("aria-current");
+    var start = sectionNav.scrollLeft > 1;
+    var end = sectionNav.scrollLeft + sectionNav.clientWidth < sectionNav.scrollWidth - 1;
+    sectionNav.dataset.overflow = (start ? "start " : "") + (end ? "end" : "");
+  }
+  if (navLinks.length) {
+    showView(navLinkFor(new URL(location.href).hash) || navLinks[0]);
+    window.addEventListener("hashchange", followHash);
+    window.addEventListener("popstate", followHash);
+    // The browser scrolls to a view's anchor on load; a view starts at the top.
+    window.addEventListener("load", followHash);
+    window.addEventListener("resize", updateNavOverflow);
+    sectionNav.addEventListener("scroll", updateNavOverflow, { passive: true });
+    // Any in-page link to a view switches to it; modified clicks keep their default.
+    document.addEventListener("click", function (event) {
+      var anchor = event.target.closest && event.target.closest("a[href^='#']");
+      var link = anchor && navLinkFor(anchor.getAttribute("href"));
+      if (!link || event.defaultPrevented || event.button > 0 ||
+          event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      goToView(link);
     });
-  }
-  function updateNavigation() {
-    if (!sectionNav) return;
-    var sections = Array.from(sectionNav.querySelectorAll("a")).map(function (link) {
-      return { link: link, target: document.getElementById(link.getAttribute("href").slice(1)) };
-    }).filter(function (section) { return section.target; });
-    if (!sections.length) return;
-    var topbar = document.querySelector(".topbar");
-    var readingLine = (topbar ? Math.max(0, topbar.getBoundingClientRect().bottom) : 0) + 24;
-    var selected = sections[0].link;
-    sections.forEach(function (section) {
-      var anchorMargin = parseFloat(getComputedStyle(section.target).scrollMarginTop) || 0;
-      if (section.target.getBoundingClientRect().top <= readingLine + anchorMargin) selected = section.link;
-    });
-    // The short reading guide cannot always reach the top of the viewport.
-    if (window.scrollY > 0 && Math.ceil(window.scrollY + window.innerHeight) >=
-        document.documentElement.scrollHeight - 1) selected = sections[sections.length - 1].link;
-    selectNavigation(selected);
-  }
-  function scheduleNavigation() {
-    if (!sectionNav || navigationQueued) return;
-    navigationQueued = true;
-    requestAnimationFrame(function () {
-      navigationQueued = false;
-      updateNavigation();
-    });
-  }
-  function hashNavigation() {
-    var links = sectionNav.querySelectorAll("a");
-    var hash = new URL(location.href).hash;
-    selectNavigation(Array.from(links).find(function (link) {
-      return link.getAttribute("href") === hash;
-    }) || links[0]);
-    scheduleNavigation();
-  }
-  if (sectionNav) {
-    window.addEventListener("hashchange", hashNavigation);
-    window.addEventListener("scroll", scheduleNavigation, { passive: true });
-    window.addEventListener("resize", scheduleNavigation);
-    window.addEventListener("load", scheduleNavigation);
-    window.addEventListener("pageshow", scheduleNavigation);
-    document.addEventListener("toggle", scheduleNavigation, true);
-    hashNavigation();
   }
   var themeToggle = document.getElementById("theme-toggle");
   if (themeToggle) {
@@ -100,11 +114,9 @@
   var summaryBox = document.getElementById("summary-box");
   var dialog = document.getElementById("stock-dialog");
   var stockBox = document.getElementById("stock-box");
+  var searchDialog = document.getElementById("search-dialog");
   var inflight = {};
-  var stockOpener = null;
   var keyboardAction = false;
-  var dialogSequence = 0;
-  var dialogCloseTimer = null;
   document.addEventListener("keydown", function () { keyboardAction = true; }, true);
   document.addEventListener("pointerdown", function () { keyboardAction = false; }, true);
   function isKeyboardAction(event) {
@@ -134,13 +146,17 @@
       if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
     }
   }
+  // Follow buttons live in the stock detail and on each table row. A row's
+  // bookmark has no text: its pressed state carries the change.
   function updateFollowButtons() {
-    if (!stockBox) return;
-    stockBox.querySelectorAll("[data-watch-stock]").forEach(function (button) {
-      var followed = watchlist.includes(button.dataset.watchStock);
-      var label = button.querySelector("[data-follow-label]") || button;
-      label.textContent = followed ? "Following on this device" : "Follow stock on this device";
-      button.setAttribute("aria-pressed", followed ? "true" : "false");
+    [stockBox, view].forEach(function (root) {
+      root.querySelectorAll("[data-watch-stock]").forEach(function (button) {
+        var followed = watchlist.includes(button.dataset.watchStock);
+        var label = button.querySelector("[data-follow-label]");
+        if (label) label.textContent = followed ? "Following on this device" : "Follow stock on this device";
+        button.setAttribute("aria-pressed", followed ? "true" : "false");
+        button.hidden = false;
+      });
     });
   }
   function setFollowed(isin, followed) {
@@ -201,6 +217,15 @@
     item.append(head, facts, remove);
     return item;
   }
+  function emptyWatchlist() {
+    var box = document.createElement("div"), text = document.createElement("p"), browse = document.createElement("a");
+    box.className = "watch-empty";
+    text.textContent = "Your watchlist is empty. Select the bookmark next to any stock in Monthly activity," +
+      " or open a stock and select Follow stock.";
+    browse.className = "btn"; browse.href = "#monthly-activity"; browse.textContent = "Browse this month’s stocks";
+    box.append(text, browse);
+    return box;
+  }
   var watchlistSequence = 0;
   async function refreshWatchlist() {
     if (!watchResults || !currentMonth()) return;
@@ -210,7 +235,7 @@
     download.hidden = true;
     delete download.dataset.reportRequest;
     if (!watchlist.length) {
-      watchResults.textContent = "Your watchlist is empty. To add a stock, open it and select Follow stock.";
+      watchResults.replaceChildren(emptyWatchlist());
       return;
     }
     var body = { month: currentMonth(), stocks: watchlist.slice(),
@@ -346,6 +371,80 @@
     history.replaceState(null, "", url);
   }
 
+  // -- ranking table sort ---------------------------------------------------
+  // Sorting reorders the rows on show. A row keeps its ranking number, ties keep
+  // ranking order, and a cell without a value sorts last in either direction.
+  var sorting = null;
+  var textOrder = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+  var firstDirection = { name: "ascending", filing: "ascending" };
+  var directionWords = { name: ["A to Z", "Z to A"], filing: ["newest first", "oldest first"] };
+  function sortRows(key, direction) {
+    var table = document.getElementById("consensus-table");
+    var heading = table && table.querySelector('th[data-sort-key="' + key + '"]');
+    if (!heading) return false;
+    var index = heading.cellIndex, body = table.tBodies[0], text = key === "name";
+    var rows = Array.from(body.rows).map(function (row) {
+      var raw = row.cells[index].dataset.sort || "", number = parseFloat(raw);
+      return { row: row, rank: Number(row.dataset.rank),
+               value: text ? raw : Number.isFinite(number) ? number : null };
+    });
+    rows.sort(function (a, b) {
+      if ((a.value === null) !== (b.value === null)) return a.value === null ? 1 : -1;
+      var order = a.value === null ? 0 : text ? textOrder.compare(a.value, b.value) : a.value - b.value;
+      return (direction === "ascending" ? order : -order) || a.rank - b.rank;
+    });
+    body.append.apply(body, rows.map(function (entry) { return entry.row; }));
+    table.querySelectorAll("th[data-sort-key]").forEach(function (th) {
+      if (th === heading) th.setAttribute("aria-sort", direction);
+      else th.removeAttribute("aria-sort");
+    });
+    var select = document.getElementById("sort-select");
+    if (select) select.value = key + ":" + direction;
+    return true;
+  }
+  function sortBy(key, direction) {
+    sorting = { key: key, direction: direction };
+    sortRows(key, direction);
+  }
+  // Headings become sort buttons, and the narrow-screen select lists the same
+  // choices, because the card layout there hides the headings.
+  function enhanceTable() {
+    updateFollowButtons();
+    var table = document.getElementById("consensus-table");
+    if (!table) return;
+    var select = document.getElementById("sort-select");
+    table.querySelectorAll("th[data-sort-key]").forEach(function (th) {
+      var key = th.dataset.sortKey, first = firstDirection[key] || "descending";
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "sort";
+      button.append.apply(button, Array.from(th.childNodes));
+      th.append(button);
+      button.addEventListener("click", function () {
+        var current = th.getAttribute("aria-sort");
+        sortBy(key, current ? (current === "ascending" ? "descending" : "ascending") : first);
+      });
+      var words = directionWords[key] || ["low to high", "high to low"];
+      [first, first === "ascending" ? "descending" : "ascending"].forEach(function (direction) {
+        var option = document.createElement("option");
+        option.value = key + ":" + direction;
+        option.textContent = th.dataset.sortLabel + ", " + words[direction === "ascending" ? 0 : 1];
+        select.append(option);
+      });
+    });
+    select.addEventListener("change", function () {
+      var choice = select.value.split(":");
+      sortBy(choice[0], choice[1]);
+    });
+    select.closest(".sort-select").hidden = false;
+    // A refresh keeps the reader's sort when its column is still shown.
+    if (!(sorting && sortRows(sorting.key, sorting.direction))) {
+      sorting = null;
+      var ranked = table.querySelector("th[aria-sort]");
+      select.value = ranked.dataset.sortKey + ":" + ranked.getAttribute("aria-sort");
+    }
+  }
+
   async function refreshView() {
     var month = currentMonth();
     if (!month) return;
@@ -386,7 +485,7 @@
         "Could not load " + monthLabel() + " (" + e.message + ").", refreshView));
     } finally {
       if (!inflight.view) view.removeAttribute("aria-busy");
-      scheduleNavigation();
+      enhanceTable();
     }
   }
 
@@ -433,6 +532,12 @@
           sub.className = "combo__detail";
           sub.textContent = item.detail;
           li.append(sub);
+        }
+        if (item.kind) {
+          var kind = document.createElement("span");
+          kind.className = "combo__kind";
+          kind.textContent = item.kind;
+          li.append(kind);
         }
         // mousedown would blur the input and close the list before the click lands.
         li.addEventListener("mousedown", function (e) { e.preventDefault(); });
@@ -528,76 +633,108 @@
     }
   }
 
+  // A side drawer: a native modal dialog that slides in, except when opened from
+  // the keyboard, and keeps focus containment through its short exit.
+  // hooks.onClose runs when a close starts; hooks.onClosed once it has finished.
+  function drawer(element, hooks) {
+    hooks = hooks || {};
+    var sequence = 0, closeTimer = null, opener = null;
+    function open(instant) {
+      var mine = ++sequence;
+      clearTimeout(closeTimer);
+      closeTimer = null;
+      delete element.dataset.endingStyle;
+      if (instant) element.dataset.instant = "";
+      else delete element.dataset.instant;
+      if (element.open) { delete element.dataset.startingStyle; return; }
+      opener = document.activeElement;
+      if (!instant) element.dataset.startingStyle = "";
+      element.showModal();
+      if (!instant) {
+        // Start in the closed pose, then let the transition retarget normally.
+        void element.offsetWidth;
+        requestAnimationFrame(function () {
+          if (mine === sequence && element.open) delete element.dataset.startingStyle;
+        });
+      }
+    }
+    function close(instant) {
+      if (!element.open) return;
+      var mine = ++sequence;
+      clearTimeout(closeTimer);
+      if (hooks.onClose) hooks.onClose();
+      delete element.dataset.startingStyle;
+      if (instant) {
+        element.dataset.instant = "";
+        element.close();
+        return;
+      }
+      delete element.dataset.instant;
+      element.dataset.endingStyle = "";
+      // Keep native focus containment until the short exit has finished.
+      closeTimer = setTimeout(function () {
+        if (mine === sequence && element.open) element.close();
+      }, 150);
+    }
+    element.addEventListener("transitionend", function (event) {
+      if (event.target === element && event.propertyName === "opacity" &&
+          element.dataset.endingStyle !== undefined) element.close();
+    });
+    element.addEventListener("cancel", function (event) {
+      event.preventDefault();
+      close(true);
+    });
+    element.addEventListener("close", function () {
+      // A native close event can arrive after the drawer has already reopened.
+      if (element.open) return;
+      ++sequence;
+      clearTimeout(closeTimer);
+      closeTimer = null;
+      delete element.dataset.startingStyle;
+      delete element.dataset.endingStyle;
+      delete element.dataset.instant;
+      if (hooks.onClosed) hooks.onClosed();
+      if (opener && opener.isConnected) opener.focus();
+      opener = null;
+    });
+    // A click on the backdrop lands on the dialog element itself.
+    element.addEventListener("click", function (e) { if (e.target === element) close(isKeyboardAction(e)); });
+    return { open: open, close: close };
+  }
+
+  function abortStock() { if (inflight.stock) inflight.stock.abort(); }
+  var stockDrawer = drawer(dialog, { onClose: abortStock, onClosed: function () {
+    abortStock();
+    setUrlParam("stock", "");
+  } });
+  document.getElementById("stock-dialog-close").addEventListener("click", function (event) {
+    stockDrawer.close(isKeyboardAction(event));
+  });
   function openStock(query, instant) {
     query = (query || "").trim();
     if (!query) return;
-    var sequence = ++dialogSequence;
-    clearTimeout(dialogCloseTimer);
-    dialogCloseTimer = null;
-    delete dialog.dataset.endingStyle;
-    if (instant) dialog.dataset.instant = "";
-    else delete dialog.dataset.instant;
-    if (!dialog.open) {
-      stockOpener = document.activeElement;
-      if (!instant) dialog.dataset.startingStyle = "";
-      dialog.showModal();
-      if (!instant) {
-        // Start in the closed pose, then let the transition retarget normally.
-        void dialog.offsetWidth;
-        requestAnimationFrame(function () {
-          if (sequence === dialogSequence && dialog.open) delete dialog.dataset.startingStyle;
-        });
-      }
-    } else {
-      delete dialog.dataset.startingStyle;
-    }
+    if (searchDialog && searchDialog.open) searchDialog.close();
+    stockDrawer.open(instant);
     loadStock(query);
   }
 
-  function closeStock(instant) {
-    if (!dialog.open) return;
-    var sequence = ++dialogSequence;
-    clearTimeout(dialogCloseTimer);
-    if (inflight.stock) inflight.stock.abort();
-    delete dialog.dataset.startingStyle;
-    if (instant) {
-      dialog.dataset.instant = "";
-      dialog.close();
-      return;
-    }
-    delete dialog.dataset.instant;
-    dialog.dataset.endingStyle = "";
-    // Keep native focus containment until the short exit has finished.
-    dialogCloseTimer = setTimeout(function () {
-      if (sequence === dialogSequence && dialog.open) dialog.close();
-    }, 150);
+  // -- reading guide --------------------------------------------------------
+  // The notes move into a drawer, so every view can open them in place.
+  var guideDialog = document.getElementById("guide-dialog");
+  var guideNotes = document.getElementById("guide-notes");
+  if (guideDialog && guideNotes) {
+    document.getElementById("guide-box").append(guideNotes);
+    var guideDrawer = drawer(guideDialog);
+    document.getElementById("guide-dialog-close").addEventListener("click", function (event) {
+      guideDrawer.close(isKeyboardAction(event));
+    });
+    document.addEventListener("click", function (event) {
+      var link = event.target.closest && event.target.closest("a[href='#notes-title']");
+      if (!link) return;
+      event.preventDefault();
+      guideDrawer.open(isKeyboardAction(event));
+    });
   }
-
-  dialog.addEventListener("transitionend", function (event) {
-    if (event.target === dialog && event.propertyName === "opacity" &&
-        dialog.dataset.endingStyle !== undefined) dialog.close();
-  });
-  dialog.addEventListener("cancel", function (event) {
-    event.preventDefault();
-    closeStock(true);
-  });
-  dialog.addEventListener("close", function () {
-    // A native close event can arrive after another stock has already reopened.
-    if (dialog.open) return;
-    ++dialogSequence;
-    clearTimeout(dialogCloseTimer);
-    dialogCloseTimer = null;
-    delete dialog.dataset.startingStyle;
-    delete dialog.dataset.endingStyle;
-    delete dialog.dataset.instant;
-    if (inflight.stock) inflight.stock.abort();
-    setUrlParam("stock", "");
-    if (stockOpener && stockOpener.isConnected) stockOpener.focus();
-    stockOpener = null;
-  });
-  document.getElementById("stock-dialog-close").addEventListener("click", function (event) { closeStock(isKeyboardAction(event)); });
-  // A click on the backdrop lands on the dialog element itself.
-  dialog.addEventListener("click", function (e) { if (e.target === dialog) closeStock(isKeyboardAction(e)); });
 
   // -- scheme summary -------------------------------------------------------
   var pickedScheme = null;
@@ -632,41 +769,63 @@
   }
 
   var schemeData = document.getElementById("scheme-data");
+  var schemeInput = document.getElementById("scheme-search");
+  var schemes = [];
+  function matchWords(query, text) {
+    var words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    return words.every(function (w) { return text.indexOf(w) !== -1; });
+  }
+  function showScheme(item) {
+    schemeInput.value = item.label;
+    pickedScheme = item.value;
+    showSummary();
+  }
   if (schemeData) {
-    var schemes = JSON.parse(schemeData.textContent).map(function (s) {
+    schemes = JSON.parse(schemeData.textContent).map(function (s) {
       return { value: String(s.id), label: s.label,
                detail: s.amc + (s.votes ? "" : " · index/debt, does not vote"),
                haystack: (s.label + " " + s.amc).toLowerCase() };
     });
     combobox({
-      input: document.getElementById("scheme-search"),
+      input: schemeInput,
       list: document.getElementById("scheme-options"),
       status: document.getElementById("scheme-search-status"),
       minChars: 0,
       source: function (query) {
-        var words = query.toLowerCase().split(/\s+/).filter(Boolean);
-        return Promise.resolve(schemes.filter(function (s) {
-          return words.every(function (w) { return s.haystack.indexOf(w) !== -1; });
-        }));
+        return Promise.resolve(schemes.filter(function (s) { return matchWords(query, s.haystack); }));
       },
       emptyText: function (query) { return "No fund matches “" + query + "”."; },
       onType: clearSummary,
-      onPick: function (item) { pickedScheme = item.value; showSummary(); }
+      onPick: showScheme
     });
     document.getElementById("summary-form").addEventListener("submit", function (e) { e.preventDefault(); });
   }
 
-  // -- stock search -----------------------------------------------------------
+  // -- search -----------------------------------------------------------------
+  // One search for stocks, individual funds and views, in a dialog opened from
+  // the top bar, with Ctrl+K or Command+K, or with / outside a text field.
   var stockForm = document.getElementById("stock-form");
+  var searchOpen = document.getElementById("search-open");
+  function openSearch() {
+    if (!searchDialog || searchDialog.open) return;
+    searchDialog.showModal();
+    stockInput.select();
+  }
   if (stockForm) {
     var stockInput = document.getElementById("stock-search");
     var stockPicker = combobox({
       input: stockInput,
       list: document.getElementById("stock-options"),
       status: document.getElementById("stock-search-status"),
-      minChars: 2,
+      minChars: 1,
       delay: 150,
       source: async function (query) {
+        var views = navLinks.filter(function (link) {
+          return matchWords(query, (link.dataset.title || "").toLowerCase());
+        }).map(function (link) { return { kind: "View", value: link.getAttribute("href"), label: link.dataset.title, link: link }; });
+        var funds = schemes.filter(function (s) { return matchWords(query, s.haystack); }).slice(0, 6)
+          .map(function (s) { return Object.assign({ kind: "Fund" }, s); });
+        if (query.length < 2) return funds.concat(views);
         var q = new URLSearchParams({ q: query });
         if (currentMonth()) q.set("month", currentMonth());
         var r = await load("suggest", "/api/stocks/search?" + q);
@@ -676,18 +835,43 @@
                                        : "not held";
           return { value: s.isin, label: s.name,
                    detail: s.isin + (s.industry ? " · " + s.industry : "") + " · " + held + " in " + monthLabel() };
-        });
+        }).concat(funds, views);
       },
-      emptyText: function (query) { return "No stock matches “" + query + "”."; },
-      onPick: function (item, event) { openStock(item.value, isKeyboardAction(event)); }
+      emptyText: function (query) { return "No stock, fund or view matches “" + query + "”."; },
+      onPick: function (item, event) {
+        if (!item.kind) { openStock(item.value, isKeyboardAction(event)); return; }
+        searchDialog.close();
+        if (item.kind === "View") { goToView(item.link); return; }
+        var funds = navLinkFor("#scheme-summary");
+        if (funds) goToView(funds);
+        showScheme(item);
+      }
     });
-    // Enter without choosing a suggestion looks the text up as typed.
+    // Enter without choosing a suggestion looks the text up as a stock.
     stockForm.addEventListener("submit", function (e) { e.preventDefault(); openStock(stockInput.value, keyboardAction); });
+  }
+  if (searchDialog && searchOpen) {
+    searchOpen.hidden = false;
+    if (/Mac|iPhone|iPad/.test(typeof navigator === "undefined" ? "" : navigator.platform || "")) {
+      searchOpen.querySelector("[data-shortcut]").textContent = "⌘K";
+    }
+    searchOpen.addEventListener("click", openSearch);
+    document.addEventListener("keydown", function (e) {
+      var typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName || "") || e.target.isContentEditable;
+      if (((e.key === "k" || e.key === "K") && (e.metaKey || e.ctrlKey)) || (e.key === "/" && !typing)) {
+        e.preventDefault();
+        openSearch();
+      }
+    });
+    // A click on the backdrop lands on the dialog element itself.
+    searchDialog.addEventListener("click", function (e) { if (e.target === searchDialog) searchDialog.close(); });
   }
 
   // -- view controls ----------------------------------------------------------
   if (form) {
     form.addEventListener("change", function (e) {
+      // Buying and selling rank in opposite directions; each starts from its ranking.
+      if (e.target.name === "side") sorting = null;
       refreshView();
       refreshWatchlist();
       // The summary follows the month once the reader has opened one.
@@ -707,6 +891,15 @@
     }
     var link = e.target.closest(".stock-link");
     if (link) { openStock(link.dataset.isin, isKeyboardAction(e)); return; }
+    // A click anywhere else on a ranking row opens its stock, unless it selects text.
+    var row = e.target.closest("#consensus-table tbody tr");
+    if (row && !e.target.closest("a, button, summary, input, select, label") &&
+        !(window.getSelection && String(window.getSelection()))) {
+      var rowLink = row.querySelector(".stock-link");
+      rowLink.focus();
+      openStock(rowLink.dataset.isin, false);
+      return;
+    }
     // "Show all" and the column toggle carry their view in the href; apply it
     // to the form so the URL and later filter changes keep it.
     var viewLink = e.target.closest("[data-view-link]");
@@ -719,6 +912,7 @@
     }
   });
 
+  enhanceTable();
   var initialStock = new URL(location.href).searchParams.get("stock");
   if (initialStock) openStock(initialStock, true);
 })();

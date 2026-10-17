@@ -1,12 +1,27 @@
-{#- One month: three coverage facts, the expandable data coverage, and the
-    consensus table. Rendered into the page on first load and re-rendered by
-    /fragments/month when a filter changes. -#}
+{#- One month: the consensus table, headed by three coverage facts and the
+    expandable data coverage, then the fund-house summary. Rendered into the page
+    on first load and re-rendered by /fragments/month when a filter changes. -#}
 {%- from "_macros.html" import holder_change, filing_status, scope, fund_counts, icon -%}
 {%- set all_cols = cols == 'all' -%}
 {%- set side_title = 'Stocks ranked by fund-house selling' if side == 'sell' else 'Stocks ranked by fund-house buying' -%}
 
-<div id="monthly-activity">
-<h2 class="visually-hidden">Monthly activity</h2>
+<div id="monthly-activity" data-view="activity">
+<section class="panel" id="consensus" aria-labelledby="consensus-title">
+  <div class="panel__head">
+    <div class="panel__bar">
+      <div class="panel__titles">
+        <h2 id="consensus-title" tabindex="-1">{{ side_title }} <span class="muted">· {{ month|month_label }}</span></h2>
+        {% if rows %}
+        <p class="panel__meta">{{ rows|length }} of {{ total }} stocks with monthly changes{% if coverage.prev_month %} · {{ month|month_label }} vs {{ coverage.prev_month|month_label }}{% endif %}.</p>
+        {% endif %}
+      </div>
+      {% if rows %}
+      <div class="panel__actions">
+        <label class="sort-select" hidden><span class="visually-hidden">Sort rows by</span><select id="sort-select"></select></label>
+        <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, cols='core' if all_cols else 'all')|urlencode }}">{{ 'Fewer columns' if all_cols else 'More columns' }}</a>
+      </div>
+      {% endif %}
+    </div>
 <dl class="facts" aria-label="Coverage for {{ month|month_label }}">
   <div class="fact">
     <dt class="fact__label">Individual funds compared</dt>
@@ -68,18 +83,6 @@
     </ul>
   </div>
 </details>
-
-<section class="panel" id="consensus" aria-labelledby="consensus-title">
-  <div class="panel__head">
-    <div class="panel__bar">
-      <h2 id="consensus-title" tabindex="-1">{{ side_title }} <span class="muted">· {{ month|month_label }}</span></h2>
-      {% if rows %}
-      <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, cols='core' if all_cols else 'all')|urlencode }}">{{ 'Fewer columns' if all_cols else 'More columns' }}</a>
-      {% endif %}
-    </div>
-    {% if rows %}
-    <p class="panel__meta">{{ rows|length }} of {{ total }} stocks with monthly changes{% if coverage.prev_month %} · {{ month|month_label }} vs {{ coverage.prev_month|month_label }}{% endif %}.</p>
-    {% endif %}
   </div>
   {% if rows %}
   <div class="table-wrap" tabindex="0" role="region" aria-labelledby="consensus-title">
@@ -87,43 +90,45 @@
     <caption class="visually-hidden">{{ side_title }} for {{ month|month_label }}: monthly change in mutual fund holdings{% if not all_cols %}. More columns adds discretionary net, new positions and FII/DII changes{% endif %}</caption>
     <thead>
       <tr>
-        <th scope="col" class="col-stock">Stock</th>
-        <th scope="col" class="n" title="Fund houses buying minus those selling. This is the ranking key; the bar shows their buying share.">Net fund houses<span class="sub">buying − selling</span></th>
-        {% if all_cols %}<th scope="col" class="n" title="Net fund houses whose change beats the drift from price moves alone">Discretionary<br>net</th>{% endif %}
-        <th scope="col" class="col-breadth" title="Number of individual funds (schemes) buying and selling this stock">Individual funds</th>
-        <th scope="col" class="n" title="Estimated purchases minus sales in stocks already held, in rupees crore; a negative value means net selling">Net buying ₹ Cr<span class="sub">existing holdings</span></th>
+        <th scope="col" class="col-stock" data-sort-key="name" data-sort-label="Company name">Stock</th>
+        <th scope="col" class="n" data-sort-key="net" data-sort-label="Net fund houses" aria-sort="{{ 'ascending' if side == 'sell' else 'descending' }}" title="Fund houses buying minus those selling. This is the ranking key; the bar shows their buying share.">Net fund houses<span class="sub">buying − selling</span></th>
+        {% if all_cols %}<th scope="col" class="n" data-sort-key="discretionary" data-sort-label="Discretionary net" title="Net fund houses whose change beats the drift from price moves alone">Discretionary<br>net</th>{% endif %}
+        <th scope="col" class="col-breadth" data-sort-key="funds" data-sort-label="Individual funds, net" title="Number of individual funds (schemes) buying and selling this stock">Individual funds</th>
+        <th scope="col" class="n" data-sort-key="flow" data-sort-label="Net buying ₹ Cr" title="Estimated purchases minus sales in stocks already held, in rupees crore; a negative value means net selling">Net buying ₹ Cr<span class="sub">existing holdings</span></th>
         {% if all_cols %}
-        <th scope="col" class="n" title="Value of positions opened this month, Rs crore">New positions<br>₹ Cr</th>
-        <th scope="col" class="n" title="Change in FII holding over the latest filed quarter, percentage points">FII Δ pp</th>
-        <th scope="col" class="n" title="Change in DII (MF+banks+insurance) holding over the latest filed quarter, percentage points">DII Δ pp</th>
+        <th scope="col" class="n" data-sort-key="new" data-sort-label="New positions ₹ Cr" title="Value of positions opened this month, Rs crore">New positions<br>₹ Cr</th>
+        <th scope="col" class="n" data-sort-key="fii" data-sort-label="FII change" title="Change in FII holding over the latest filed quarter, percentage points">FII Δ pp</th>
+        <th scope="col" class="n" data-sort-key="dii" data-sort-label="DII change" title="Change in DII (MF+banks+insurance) holding over the latest filed quarter, percentage points">DII Δ pp</th>
         {% endif %}
-        <th scope="col" title="Quarterly shareholding filing available when the portfolios became public">Filing</th>
+        <th scope="col" data-sort-key="filing" data-sort-label="Filing age, days" title="Quarterly shareholding filing available when the portfolios became public">Filing</th>
       </tr>
     </thead>
     <tbody>
+      {#- data-sort holds each cell's raw value; an empty one sorts last. -#}
       {% for row in rows %}
-      <tr>
-        <th scope="row" class="col-stock">
+      <tr data-rank="{{ loop.index }}">
+        <th scope="row" class="col-stock" data-sort="{{ row.stock_name|stock_label }}">
           <div class="stock-cell">
             <span class="rank">{{ loop.index }}</span>
             <div>
               <button type="button" class="stock-link" data-isin="{{ row.isin }}" aria-haspopup="dialog">{{ row.stock_name|stock_label }}</button>
               <span class="sub">{{ row.isin }}{% if row.industry %} · {{ row.industry }}{% endif %}{% if row.universe_status == 'new_listing' %} · <span class="tag tag--info" title="Absent from loaded prior-month holdings; exchange listing date is unknown.">new in loaded portfolios</span>{% endif %}</span>
             </div>
+            {% if row.instrument_type == 'equity' %}<button type="button" class="row-follow follow-toggle" data-watch-stock="{{ row.isin }}" aria-pressed="false" aria-label="Follow {{ row.stock_name|stock_label }}" title="Follow on this device" hidden><span class="icon-swap" aria-hidden="true">{{ icon('bookmark', 16) }}{{ icon('bookmark', 16, filled=true) }}</span></button>{% endif %}
           </div>
         </th>
-        <td class="n" data-label="Net fund houses"><span class="num strong {{ 'pos' if row.net_amc_count > 0 else 'neg' if row.net_amc_count < 0 else 'flat' }}">{{ row.net_amc_count|signed }}</span><span class="sub">{{ row.amcs_buying }} buying · {{ row.amcs_selling }} selling</span>
+        <td class="n" data-label="Net fund houses" data-sort="{{ row.net_amc_count }}"><span class="num strong {{ 'pos' if row.net_amc_count > 0 else 'neg' if row.net_amc_count < 0 else 'flat' }}">{{ row.net_amc_count|signed }}</span><span class="sub">{{ row.amcs_buying }} buying · {{ row.amcs_selling }} selling</span>
           <span class="bar" aria-hidden="true"><span style="width: {{ '%.0f'|format((row.buying_ratio or 0) * 100) }}%"></span></span>
         </td>
-        {% if all_cols %}<td class="n" data-label="Discretionary net"><span class="num">{{ row.net_active_amc_count|signed }}</span></td>{% endif %}
-        <td class="col-breadth" data-label="Individual funds">{{ fund_counts(row.schemes_buying, row.schemes_selling) }}</td>
-        <td class="n" data-label="Net buying ₹ Cr (existing)"><span class="num">{{ row.accumulation_flow_lakhs|crore }}</span></td>
+        {% if all_cols %}<td class="n" data-label="Discretionary net" data-sort="{{ row.net_active_amc_count if row.net_active_amc_count is not none }}"><span class="num">{{ row.net_active_amc_count|signed }}</span></td>{% endif %}
+        <td class="col-breadth" data-label="Individual funds" data-sort="{{ row.schemes_buying - row.schemes_selling }}">{{ fund_counts(row.schemes_buying, row.schemes_selling) }}</td>
+        <td class="n" data-label="Net buying ₹ Cr (existing)" data-sort="{{ row.accumulation_flow_lakhs if row.accumulation_flow_lakhs is not none }}"><span class="num">{{ row.accumulation_flow_lakhs|crore }}</span></td>
         {% if all_cols %}
-        <td class="n" data-label="New positions ₹ Cr"><span class="num muted">{{ row.new_position_flow_lakhs|crore }}</span></td>
-        <td class="n" data-label="FII Δ pp">{{ holder_change(row, 'fii') }}</td>
-        <td class="n" data-label="DII Δ pp">{{ holder_change(row, 'dii') }}</td>
+        <td class="n" data-label="New positions ₹ Cr" data-sort="{{ row.new_position_flow_lakhs if row.new_position_flow_lakhs is not none }}"><span class="num muted">{{ row.new_position_flow_lakhs|crore }}</span></td>
+        <td class="n" data-label="FII Δ pp" data-sort="{{ row.fii_pct_change if row.shareholding_status != 'missing' and row.fii_pct_change is not none }}">{{ holder_change(row, 'fii') }}</td>
+        <td class="n" data-label="DII Δ pp" data-sort="{{ row.dii_pct_change if row.shareholding_status != 'missing' and row.dii_pct_change is not none }}">{{ holder_change(row, 'dii') }}</td>
         {% endif %}
-        <td data-label="Filing">{{ filing_status(row, coverage.public_on) }}</td>
+        <td data-label="Filing" data-sort="{{ row.staleness_days if row.shareholding_status != 'missing' and row.staleness_days is not none }}">{{ filing_status(row, coverage.public_on) }}</td>
       </tr>
       {% endfor %}
     </tbody>
