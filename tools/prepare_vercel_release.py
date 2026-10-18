@@ -255,6 +255,9 @@ def prepare(descriptor: dict, output: Path, *, local_releases: Path | None = Non
             base_url: str | None = None, token: str | None = None, opener=None) -> None:
     if "public" in output.resolve().parts:
         raise ValueError("Release files must stay outside public asset directories")
+    # The Vercel CLI uploads git-ignored folders as empty directories.
+    if output.is_dir() and not output.is_symlink() and not any(output.iterdir()):
+        output.rmdir()
     if output.exists():
         if any(output.glob("*.db")):
             raise ValueError(f"{output.name}/ holds unpacked releases from the earlier build "

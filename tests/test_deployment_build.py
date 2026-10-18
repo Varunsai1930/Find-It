@@ -53,6 +53,14 @@ def test_an_unpacked_deploy_directory_from_the_earlier_format_asks_to_repack(tmp
         build.prepare(descriptor, source, local_releases=source)
 
 
+def test_an_empty_deploy_directory_left_by_the_cli_upload_is_prepared(tmp_path):
+    source, descriptor = _fixture(tmp_path)
+    output = tmp_path / "deploy-data"
+    output.mkdir()
+    build.prepare(descriptor, output, local_releases=source)
+    build.verify_bundle(descriptor, output)
+
+
 def test_packed_releases_are_deterministic_and_unpack_to_the_pinned_bytes(tmp_path):
     source, descriptor = _fixture(tmp_path)
     first, second, unpacked = (tmp_path / name for name in ("first", "second", "unpacked"))
