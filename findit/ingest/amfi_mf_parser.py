@@ -74,7 +74,7 @@ COLUMN_SYNONYMS = {
 }
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
-PARSER_VERSION = "portfolio-2026-10-16-grand-total-1"
+PARSER_VERSION = "portfolio-2026-10-17-grand-total-2"
 
 # Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
 # check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
@@ -85,6 +85,9 @@ PARSER_VERSION = "portfolio-2026-10-16-grand-total-1"
 # letters ("CONSTRUCTION"), and AMC placeholders for securities without an
 # ISIN ("EQ600401XXXX").
 ISIN_GENERIC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
+
+# The label that ends a portfolio, e.g. "Grand Total" or "GRAND TOTAL (AUM)".
+GRAND_TOTAL_RE = r"grand\s*total(?:\s*\(.*\))?"
 
 # Per scheme-month NAV scale bands. Fraction sheets sum ~1.0, percent sheets
 # sum ~100. Anything else warns and keeps raw — never forced to 100.
@@ -374,7 +377,8 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             # This layout prints totals in the Industry column. Stock ISINs in
             # a Futures section identify the underlying, not shares held.
             labels = df.iloc[:, 4].fillna("").astype(str).str.strip()
-            totals = labels.str.fullmatch(r"(?:grand )?total", case=False)
+            portfolio_end = labels.str.fullmatch(GRAND_TOTAL_RE, case=False)
+            totals = portfolio_end | labels.str.fullmatch("total", case=False)
             df.loc[totals, col_map["instrument_name"]] = labels.loc[totals]
             derivative, excluded = False, []
             for idx in df.index:
@@ -383,7 +387,9 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
                                 if pd.notna(v) and str(v).strip()), "")
                 if heading:
                     derivative = heading.lower() in {"futures", "options", "derivatives"}
-                if derivative:
+                # Keep the portfolio boundary for the notes filter and NAV
+                # scale checks, even when derivatives are the final section.
+                if derivative and not portfolio_end.loc[idx]:
                     excluded.append(idx)
             if excluded:
                 print(f"  [scope] '{sheet_name}': excluded derivative rows "
@@ -395,8 +401,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         # than list them: defaulted-bond recovery tables, yield-to-call lists,
         # exposure tables. Other rows there stay for the printed-total checks.
         grand_total = df.drop(columns="source_row").apply(
-            lambda col: col.astype(str).str.strip().str.fullmatch(
-                r"grand\s*total(?:\s*\(.*\))?", case=False)  # e.g. "GRAND TOTAL (AUM)"
+            lambda col: col.astype(str).str.strip().str.fullmatch(GRAND_TOTAL_RE, case=False)
         ).any(axis=1)
         has_isin = (df[col_map["isin"]].astype(str).str.strip().str.upper()
                     .str.match(ISIN_GENERIC_RE, na=False))

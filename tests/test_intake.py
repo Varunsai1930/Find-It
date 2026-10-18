@@ -103,6 +103,38 @@ def test_uti_official_archive_ignores_non_holdings_workbooks(tmp_path, archive_n
         f"_unzipped/{Path(archive_name).stem}/{exposure_name}"]
 
 
+def test_uti_archive_missing_holdings_is_refused_and_removes_previous_csv(tmp_path):
+    month = _month(tmp_path)
+    folder = month / "UTI AMC"
+    folder.mkdir(parents=True)
+    archive = folder / "uti_mf_scheme_portfolios_31.08.2026.zip"
+    exposure = _book(tmp_path / "exposure.xlsx", {"UTI Flexi Cap Fund": "UTI Flexi Cap Fund"})
+    auxiliary = _book(tmp_path / "risk.xlsx", {"Notes": "Riskometer"})
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.write(exposure, "SEBI EXPOSURE-31082026_final.xlsx")
+    first = intake.prepare(month, "2026-08")
+    assert first.ok and first.results[0].csv.exists()
+
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.write(auxiliary, "Risk-o-meter_Funds and Benchmark_Aug 2026.xlsx")
+    report = intake.prepare(month, "2026-08")
+
+    assert not report.ok
+    assert report.results[0].csv is None
+    assert "no SEBI exposure holdings workbook" in intake.render(report)
+    assert not first.results[0].csv.exists()
+    assert not (folder / intake.UNZIPPED_DIR).exists()
+    assert intake.pipeline_command(report) is None
+
+
+def test_uti_loose_portfolio_workbook_is_still_accepted(tmp_path):
+    month = _month(tmp_path)
+    _book(month / "UTI AMC" / "portfolio.xlsx", {"UTI Flexi Cap Fund": "UTI Flexi Cap Fund"})
+    report = intake.prepare(month, "2026-08")
+    assert report.ok, intake.render(report)
+    assert report.results[0].schemes == 1
+
+
 def _notes_book(path: Path) -> Path:
     """A derivatives-notes workbook: a table, but no portfolio header."""
     wb = openpyxl.Workbook()

@@ -153,6 +153,30 @@ def test_kotak_underlying_isins_in_futures_and_exposure_tables_are_not_shares(
     conn.close()
 
 
+@pytest.mark.parametrize("section", ["Futures", "Options", "Derivatives"])
+def test_kotak_grand_total_ends_portfolio_even_after_derivatives(tmp_path, section):
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "MAF"
+    sheet.append([None, None, "Portfolio of Kotak Multi Asset Allocation Fund as on 31-Aug-2026"])
+    sheet.append(["Name of Instrument", None, None, "ISIN Code", "Industry", "Yield",
+                  "Quantity", "Market Value (Rs.in Lacs)", "% to Net Assets"])
+    sheet.append([None, None, "Swiggy Ltd", "INE00H001014", "Retail", None, 100, 100, 100])
+    sheet.append([None, section])
+    sheet.append([None, None, "Swiggy Ltd-SEP2026", "INE00H001014", None, None, 200, 20, 20])
+    sheet.append([None, None, None, None, "Grand Total", None, None, 100, 100])
+    sheet.append(["Exposure details"])
+    sheet.append([None, None, "Swiggy Ltd", "INE00H001014", None, None, 900, 90, 90])
+    path = tmp_path / "kotak.xlsx"
+    book.save(path)
+
+    rows = amfi_mf_parser.parse_workbook(path, "Kotak Mahindra AMC", "2026-08")
+
+    assert list(rows["source_row"]) == [3]
+    assert list(rows["quantity"]) == [100]
+    assert rows["pct_nav_scale"].eq("percent").all()
+
+
 def test_isin_notes_after_grand_total_are_not_holdings(tmp_path):
     """Real-layout regression: DSP's IL&FS recovery note quarantined whole schemes."""
     book = openpyxl.Workbook()

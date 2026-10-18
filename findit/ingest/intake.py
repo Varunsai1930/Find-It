@@ -174,12 +174,14 @@ def _prepare_amc(folder: Path, amc: str, month: str, registry: list[Amc],
     result.problems.extend(_expand_zips(folder))
     books = _workbooks(folder)
     exposure = [p for p in books if re.match(r"sebi exposure", p.name, re.I)]
-    if amc == "UTI AMC" and exposure:
+    if amc == "UTI AMC" and (exposure or any(folder.glob("*.zip"))):
         # UTI's archive also carries futures and dividend tables that can look
         # like portfolios; only the SEBI exposure workbook holds scheme holdings.
         # Its archive and workbook names change from month to month.
         books = exposure
-    if not books:
+        if not books:
+            result.problems.append("UTI archive has no SEBI exposure holdings workbook")
+    if not books and not result.problems:
         result.problems.append("no workbooks (.xlsx, .xls or .zip) in the folder")
     frames, sheet_files = [], {}
     for book in books:
