@@ -443,10 +443,13 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
    The row is positioned so it also clips its visually hidden labels. */
 .notable > .notable__summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 18px 22px 10px; }
 .notable > .notable__summary::before { display: none; }
+.notable__lead { display: grid; gap: 8px; min-width: 0; }
 .notable__heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.notable__counts { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-2); font-size: 12px; }
 .notable__toggle { display: grid; place-items: center; color: var(--ink-3); }
 .notable[open] .notable__toggle .icon { rotate: 90deg; }
 .notable__note { margin: 0 22px 16px; max-width: 110ch; color: var(--ink-3); font-size: 12px; }
+.notable__needs { margin-top: -8px; }
 .notable__grid { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 1fr); gap: 1px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; background: var(--line); border-top: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius); }
 .notable__rule { min-width: 0; padding: 16px 18px 18px; background: var(--surface); scroll-snap-align: start; }
 .notable__rule h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; }
@@ -460,6 +463,11 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
 .notable__stock .sub { margin-top: 2px; }
 .notable__more { margin-top: 4px; font-size: 11.5px; }
 .notable__more > summary { padding: 4px 0; color: var(--accent); font-weight: 600; }
+
+/* A faded edge shows that a sideways-scrolling row hides more in that direction. */
+[data-overflow~="end"] { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
+[data-overflow~="start"] { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
+[data-overflow~="start"][data-overflow~="end"] { mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); }
 
 /* Secondary research pages share the same vocabulary and surfaces. */
 .research-page .topbar__inner, .coverage-page, .evidence-page, .history-page { max-width: 1180px; }
@@ -598,10 +606,6 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
   .dashboard-page .nav::-webkit-scrollbar { display: none; }
   .dashboard-page .nav a { padding: 0 10px; }
   .dashboard-page .nav a::after { left: 10px; right: 10px; }
-  /* A faded edge shows that more sections are off-screen in that direction. */
-  .dashboard-page .nav[data-overflow~="end"] { mask-image: linear-gradient(to right, #000 calc(100% - 48px), transparent); }
-  .dashboard-page .nav[data-overflow~="start"] { mask-image: linear-gradient(to left, #000 calc(100% - 48px), transparent); }
-  .dashboard-page .nav[data-overflow~="start"][data-overflow~="end"] { mask-image: linear-gradient(to right, transparent, #000 48px, #000 calc(100% - 48px), transparent); }
   .search-trigger { width: 250px; }
   .topbar__inner { flex-wrap: wrap; }
   .watch-item__facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -650,7 +654,9 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
   .fact + .fact { border-left: 0; border-top: 1px solid var(--surface); }
   .fact__value { font-size: 20px; }
   .panel__bar { flex-direction: column; align-items: stretch; }
-  .sort-select { display: block; flex: 1; }
+  /* The sort menu takes the whole row so its longest option stays readable. */
+  .panel__actions { flex-wrap: wrap; }
+  .sort-select { display: block; flex: 1 1 100%; }
   .sort-select select { width: 100%; }
   .coverage-review > summary { align-items: flex-start; flex-direction: column; gap: 8px; }
   .coverage-review__hint { display: block; margin-top: 2px; }

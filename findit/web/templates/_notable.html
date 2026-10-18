@@ -1,5 +1,7 @@
 {#- Notable lists above the ranking: stocks that met one stated rule this month,
-    in the view's direction. Observations only; findit/core/notable.py has the rules. -#}
+    in the view's direction. Observations only; findit/core/notable.py has the rules.
+    Closed by default, so the ranking stays on the first screen; the summary
+    carries each list's count, and dashboard.js remembers whether it was open. -#}
 {%- from "_macros.html" import icon -%}
 {%- macro notable_stock(stock) -%}
 <li class="notable__stock">
@@ -10,23 +12,32 @@
   {% if stock.followable %}<button type="button" class="row-follow follow-toggle" data-watch-stock="{{ stock.isin }}" aria-pressed="false" aria-label="Follow {{ stock.stock_name|stock_label }}" title="Follow on this device" hidden><span class="icon-swap" aria-hidden="true">{{ icon('bookmark', 16) }}{{ icon('bookmark', 16, filled=true) }}</span></button>{% endif %}
 </li>
 {%- endmacro -%}
-<details class="panel notable" id="notable" open>
+{%- set ready = notable|rejectattr('needs')|list -%}
+{%- set waiting = notable|selectattr('needs')|list -%}
+<details class="panel notable" id="notable">
   <summary class="notable__summary">
-    <span class="notable__heading">
-      <h2 id="notable-title">Notable {{ 'selling' if side == 'sell' else 'buying' }} <span class="muted">· {{ month|month_label }}</span></h2>
-      <span class="tag tag--info">Observations, not recommendations</span>
+    <span class="notable__lead">
+      <span class="notable__heading">
+        <h2 id="notable-title">Notable {{ 'selling' if side == 'sell' else 'buying' }} <span class="muted">· {{ month|month_label }}</span></h2>
+        <span class="tag tag--info">Observations, not recommendations</span>
+      </span>
+      <span class="notable__counts">
+        {%- for list in ready %}<span>{{ list.title }} <span class="notable__count">{{ list.stocks|length }}</span></span>{% endfor -%}
+        {%- if waiting %}<span class="muted">{{ waiting|length }} {{ 'rule needs' if waiting|length == 1 else 'rules need' }} an earlier month</span>{% endif -%}
+      </span>
     </span>
     <span class="notable__toggle" aria-hidden="true">{{ icon('chevron-right', 14) }}</span>
   </summary>
   <p class="notable__note">Each stock met the rule shown, under the filters above. FindIt's ten-year test found that no group like these beat comparable stocks reliably once company size was accounted for, so these lists say what funds did, not what a stock will do. Open a stock to check the funds and filings behind it.</p>
+  {% for group in waiting|groupby('needs') %}
+  <p class="notable__note notable__needs">{% for list in group.list %}“{{ list.title }}”{{ ' and ' if not loop.last }}{% endfor %} {{ 'needs' if group.list|length == 1 else 'need' }} {{ group.grouper|month_label }} compared with the month before it, which is not loaded.</p>
+  {% endfor %}
   <div class="notable__grid">
-    {% for list in notable %}
+    {% for list in ready %}
     <section class="notable__rule" aria-labelledby="notable-{{ list.key }}">
-      <h3 id="notable-{{ list.key }}">{{ list.title }}{% if not list.needs %} <span class="notable__count">{{ list.stocks|length }}</span>{% endif %}</h3>
+      <h3 id="notable-{{ list.key }}">{{ list.title }} <span class="notable__count">{{ list.stocks|length }}</span></h3>
       <p class="notable__rule-text">{{ list.rule }}</p>
-      {% if list.needs %}
-      <p class="notable__empty">Needs {{ list.needs|month_label }} compared with the month before it, which is not loaded.</p>
-      {% elif not list.stocks %}
+      {% if not list.stocks %}
       <p class="notable__empty">No stock met this rule.</p>
       {% else %}
       <ol class="notable__stocks">{% for stock in list.stocks[:notable_shown] %}{{ notable_stock(stock) }}{% endfor %}</ol>

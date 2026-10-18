@@ -642,10 +642,17 @@ def test_notable_lists_sit_above_the_ranking_and_name_missing_months(tmp_path):
     html = client.get("/fragments/month/2026-08").text
     panel = html[html.index('id="notable"'):html.index('id="consensus"')]
     assert "Observations, not recommendations" in panel
-    for key in ("turnaround", "opened", "active", "streak", "fii"):
+    # Closed by default, so the ranking starts on the first screen; the summary counts each list.
+    assert panel.startswith('id="notable">')
+    summary = panel[:panel.index("</summary>")]
+    assert 'Fresh positions <span class="notable__count">' in summary
+    assert "2 rules need an earlier month" in summary
+    for key in ("opened", "active", "fii"):
         assert f'id="notable-{key}"' in panel
-    # Only August is compared, so the rules that read July say which month they need.
-    assert panel.count("Needs Jul 2026 compared with the month before it") == 2
+    # Only August is compared: the rules that read July share one line instead of empty cards.
+    assert 'id="notable-turnaround"' not in panel and 'id="notable-streak"' not in panel
+    assert ("“Turned to buying” and “Buying streaks” need Jul 2026 compared with the month "
+            "before it, which is not loaded.") in panel
     # Each listed stock opens the stock detail and can be followed.
     agree = panel[panel.index('id="notable-fii"'):]
     assert 'class="stock-link" data-isin="INE002A01018"' in agree
@@ -665,8 +672,9 @@ def test_notable_lists_sit_above_the_ranking_and_name_missing_months(tmp_path):
         delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-06", "2026-07"))
     html = client.get("/fragments/month/2026-08").text
     panel = html[html.index('id="notable"'):html.index('id="consensus"')]
-    assert "Needs Jul 2026" not in panel
-    assert panel.count("Needs Jun 2026 compared with the month before it") == 1
+    assert "Jul 2026 compared" not in panel
+    assert "“Buying streaks” needs Jun 2026 compared with the month before it" in panel
+    assert "1 rule needs an earlier month" in panel
     turned = panel[panel.index('id="notable-turnaround"'):panel.index('id="notable-opened"')]
     assert "net fund houses, from −" in turned
 

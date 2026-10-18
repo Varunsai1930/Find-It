@@ -23,7 +23,7 @@
     }
     if (pageDescription && link.dataset.description) pageDescription.textContent = link.dataset.description;
     link.scrollIntoView({ block: "nearest", inline: "nearest" });
-    updateNavOverflow();
+    updateOverflow(sectionNav);
   }
   // No hash means the default view; other non-view anchors keep the current view.
   function followHash() {
@@ -43,12 +43,13 @@
     showView(link);
     window.scrollTo(0, 0);
   }
-  // On narrow screens the links scroll sideways; fade the edge that hides more.
-  function updateNavOverflow() {
-    if (!sectionNav) return;
-    var start = sectionNav.scrollLeft > 1;
-    var end = sectionNav.scrollLeft + sectionNav.clientWidth < sectionNav.scrollWidth - 1;
-    sectionNav.dataset.overflow = (start ? "start " : "") + (end ? "end" : "");
+  // The nav links (on narrow screens) and the notable lists scroll sideways;
+  // fade the edge that hides more.
+  function updateOverflow(row) {
+    if (!row) return;
+    var start = row.scrollLeft > 1;
+    var end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1;
+    row.dataset.overflow = (start ? "start " : "") + (end ? "end" : "");
   }
   if (navLinks.length) {
     showView(navLinkFor(new URL(location.href).hash) || navLinks[0]);
@@ -56,8 +57,11 @@
     window.addEventListener("popstate", restoreHistory);
     // The browser scrolls to a view's anchor on load; a view starts at the top.
     window.addEventListener("load", followHash);
-    window.addEventListener("resize", updateNavOverflow);
-    sectionNav.addEventListener("scroll", updateNavOverflow, { passive: true });
+    window.addEventListener("resize", function () {
+      updateOverflow(sectionNav);
+      updateOverflow(notableGrid);
+    });
+    sectionNav.addEventListener("scroll", function () { updateOverflow(sectionNav); }, { passive: true });
     // Any in-page link to a view switches to it; modified clicks keep their default.
     document.addEventListener("click", function (event) {
       var anchor = event.target.closest && event.target.closest("a[href^='#']");
@@ -447,6 +451,32 @@
     sorting = { key: key, direction: direction };
     sortRows(key, direction);
   }
+
+  // -- notable lists ----------------------------------------------------------
+  // The panel starts closed so the ranking stays on the first screen; a reader
+  // who opens it finds it open again on this device.
+  var notableGrid = null;
+  function enhanceNotable() {
+    var panel = document.getElementById("notable");
+    var grid = notableGrid = panel ? panel.querySelector(".notable__grid") : null;
+    if (!panel) return;
+    try {
+      if (localStorage.getItem("findit-notable-open") === "1") panel.open = true;
+    } catch (e) { /* Optional storage. */ }
+    panel.addEventListener("toggle", function () {
+      try { localStorage.setItem("findit-notable-open", panel.open ? "1" : "0"); } catch (e) { /* Optional storage. */ }
+      updateOverflow(grid);
+    });
+    if (grid) grid.addEventListener("scroll", function () { updateOverflow(grid); }, { passive: true });
+    updateOverflow(grid);
+  }
+
+  // A rendered month view: the notable lists, then the ranking table.
+  function enhanceView() {
+    enhanceNotable();
+    enhanceTable();
+  }
+
   // Headings become sort buttons, and the narrow-screen select lists the same
   // choices, because the card layout there hides the headings.
   function enhanceTable() {
@@ -526,7 +556,7 @@
         "Could not load " + monthLabel() + " (" + e.message + ").", refreshView));
     } finally {
       if (!inflight.view) view.removeAttribute("aria-busy");
-      enhanceTable();
+      enhanceView();
     }
   }
 
@@ -947,7 +977,7 @@
     }
   });
 
-  enhanceTable();
+  enhanceView();
   var initialStock = new URL(location.href).searchParams.get("stock");
   if (initialStock) openStock(initialStock, true);
 })();

@@ -59,7 +59,8 @@ class Element {
 }
 
 function boot({ schemes = false, controls = false, hash = '', watch = null, search = false, guide = false,
-  theme = false, savedTheme = null, storageBlocked = false, coverage = false } = {}) {
+  theme = false, savedTheme = null, storageBlocked = false, coverage = false, notable = false,
+  savedNotable = null } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
     'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
   if (schemes) ids.push('scheme-data', 'scheme-search', 'scheme-options', 'scheme-search-status',
@@ -69,6 +70,7 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
   if (theme) ids.push('theme-toggle');
   if (search) ids.push('search-dialog', 'search-open');
   if (guide) ids.push('guide-dialog', 'guide-box', 'guide-notes', 'guide-dialog-close');
+  if (notable) ids.push('notable');
   ids.push('page-title', 'page-description');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
   const views = [['#monthly-activity', 'activity', 'Monthly fund activity'],
@@ -81,6 +83,12 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
     return link;
   });
   elements['section-nav'].append(...navLinks);
+  if (notable) {
+    // Five cards in a row narrower than they are: the last one is cut off.
+    const grid = Object.assign(new Element(), { scrollLeft: 0, clientWidth: 958, scrollWidth: 1204 });
+    elements.notable.grid = grid;
+    elements.notable.querySelector = selector => selector === '.notable__grid' ? grid : null;
+  }
   const coverageLink = coverage ? new Element() : null;
   if (coverageLink) coverageLink.href = 'http://localhost/coverage?month=2026-08&active_only=0';
   const documentRoot = new Element(); documentRoot.scrollHeight = 5000;
@@ -128,6 +136,7 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
   const saved = new Map();
   if (watch) saved.set('findit-watchlist-v1', JSON.stringify({ version: 1, stocks: watch }));
   if (savedTheme) saved.set('findit-theme', savedTheme);
+  if (savedNotable) saved.set('findit-notable-open', savedNotable);
   let timerId = 0;
   const pushes = [], scrolls = [];
   window.scrollTo = (x, y) => scrolls.push([x, y]);
@@ -226,6 +235,27 @@ test('a modified click on a view link keeps the browser default', () => {
   }
   assert.equal(ui.body.dataset.currentView, 'activity');
   assert.deepEqual(ui.pushes, []);
+});
+
+test('the notable lists start closed, stay open once opened and fade a cut-off edge', () => {
+  const ui = boot({ notable: true });
+  const panel = ui.elements.notable, grid = panel.grid;
+  assert.notEqual(panel.open, true);
+  assert.equal(grid.dataset.overflow.trim(), 'end');
+  panel.open = true;
+  panel.emit('toggle');
+  assert.equal(ui.saved.get('findit-notable-open'), '1');
+  grid.scrollLeft = 400;
+  grid.emit('scroll');
+  assert.equal(grid.dataset.overflow.trim(), 'start');
+  // The next visit, or the next month rendered, opens it again.
+  assert.equal(boot({ notable: true, savedNotable: '1' }).elements.notable.open, true);
+  assert.notEqual(boot({ notable: true, savedNotable: '0' }).elements.notable.open, true);
+  // Without device storage the panel still opens and closes; it just starts closed.
+  const blocked = boot({ notable: true, storageBlocked: true });
+  assert.notEqual(blocked.elements.notable.open, true);
+  blocked.elements.notable.open = true;
+  assert.doesNotThrow(() => blocked.elements.notable.emit('toggle'));
 });
 
 test('Back to an entry without a hash restores the default view', () => {
