@@ -16,6 +16,7 @@ from pathlib import Path
 import re
 import shutil
 import ssl
+import stat
 import sys
 import sysconfig
 import tempfile
@@ -166,6 +167,17 @@ def verify_bundle(descriptor: dict, bundle: Path) -> None:
         unpack(descriptor, bundle, Path(scratch))
 
 
+def _remove_tree(path: Path) -> None:
+    """shutil.rmtree that also deletes the read-only release files.
+
+    Windows refuses to delete a read-only file, so clear the flag and retry.
+    """
+    def writable_retry(function, name, _exc):
+        os.chmod(name, stat.S_IWRITE)
+        function(name)
+    shutil.rmtree(path, onexc=writable_retry)
+
+
 def materialize(descriptor: dict, bundle: Path, scratch: Path) -> Path:
     """Verified, unpacked releases in scratch, decompressed once per sandbox.
 
@@ -180,11 +192,15 @@ def materialize(descriptor: dict, bundle: Path, scratch: Path) -> Path:
         pass
     # An interrupted start can leave a half-written copy; two would fill /tmp.
     for stale in scratch.glob(".findit-releases-*"):
-        shutil.rmtree(stale, ignore_errors=True)
+        try:
+            _remove_tree(stale)
+        except OSError:
+            pass  # best effort; a fresh copy is staged regardless
     staged = Path(tempfile.mkdtemp(prefix=".findit-releases-", dir=scratch))
     try:
         unpack(descriptor, bundle, staged)
-        shutil.rmtree(target, ignore_errors=True)
+        if target.exists():
+            _remove_tree(target)
         staged.replace(target)
     except BaseException:
         shutil.rmtree(staged, ignore_errors=True)

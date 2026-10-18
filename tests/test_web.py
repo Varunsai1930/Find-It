@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import os
 import sqlite3
 from pathlib import Path
 
@@ -1065,7 +1066,8 @@ def test_database_configuration_uses_cwd_env_and_explicit_path(tmp_path, monkeyp
 
 def test_database_uri_handles_reserved_filename_characters(tmp_path):
     source = _copy_db(tmp_path)
-    dest = tmp_path / "mentor #1? data.db"
+    # "#" and "%" are reserved in URIs; Windows also forbids "?" in file names.
+    dest = tmp_path / ("mentor #1 %3F data.db" if os.name == "nt" else "mentor #1? data.db")
     source.rename(dest)
     before = _hash(dest)
     client = TestClient(create_app(dest))
