@@ -25,9 +25,10 @@
     link.scrollIntoView({ block: "nearest", inline: "nearest" });
     updateNavOverflow();
   }
-  // A view hash shows that view from the top; any other hash keeps the current view.
+  // No hash means the default view; other non-view anchors keep the current view.
   function followHash() {
-    var link = navLinkFor(new URL(location.href).hash);
+    var hash = new URL(location.href).hash;
+    var link = hash ? navLinkFor(hash) : navLinks[0];
     if (!link) return false;
     showView(link);
     window.scrollTo(0, 0);
@@ -52,7 +53,7 @@
   if (navLinks.length) {
     showView(navLinkFor(new URL(location.href).hash) || navLinks[0]);
     window.addEventListener("hashchange", followHash);
-    window.addEventListener("popstate", followHash);
+    window.addEventListener("popstate", restoreHistory);
     // The browser scrolls to a view's anchor on load; a view starts at the top.
     window.addEventListener("load", followHash);
     window.addEventListener("resize", updateNavOverflow);
@@ -146,8 +147,8 @@
       if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
     }
   }
-  // Follow buttons live in the stock detail and on each table row. A row's
-  // bookmark has no text: its pressed state carries the change.
+  // Follow buttons live in the stock detail, on each table row and in the
+  // notable lists. A bookmark has no text: its pressed state carries the change.
   function updateFollowButtons() {
     [stockBox, view].forEach(function (root) {
       root.querySelectorAll("[data-watch-stock]").forEach(function (button) {
@@ -363,6 +364,46 @@
     q.set("equity_only", document.getElementById("equity-only").checked ? "1" : "0");
     q.set("active_only", document.getElementById("active-only").checked ? "1" : "0");
     return q;
+  }
+
+  // Re-render after the reader changed the view, from the controls or history.
+  function viewChanged(sideChanged, monthChanged) {
+    // Buying and selling rank in opposite directions; each starts from its ranking.
+    if (sideChanged) sorting = null;
+    refreshView();
+    refreshWatchlist();
+    // The summary follows the month once the reader has opened one.
+    if (monthChanged) {
+      if (stockPicker) stockPicker.close();
+      if (pickedScheme) showSummary();
+    }
+  }
+
+  // The select's option for value, else its first option, as the server defaults.
+  function optionValue(select, value) {
+    var values = Array.from(select.options).map(function (option) { return option.value; });
+    return values.includes(value) ? value : values[0] || "";
+  }
+
+  function restoreHistory() {
+    followHash();
+    if (!form) return;
+    var previousMonth = currentMonth(), previousQuery = viewQuery().toString();
+    var fields = form.elements, previousSide = fields.side.value;
+    var q = new URL(location.href).searchParams;
+    fields.month.value = optionValue(fields.month, q.get("month"));
+    fields.side.value = q.get("side") === "sell" ? "sell" : "buy";
+    fields.limit.value = optionValue(fields.limit, q.get("limit"));
+    fields.cols.value = q.get("cols") === "all" ? "all" : "core";
+    document.getElementById("equity-only").checked = !q.has("equity_only") || q.get("equity_only") === "1";
+    document.getElementById("active-only").checked = !q.has("active_only") || q.get("active_only") === "1";
+    var monthChanged = previousMonth !== currentMonth();
+    if (monthChanged || previousQuery !== viewQuery().toString()) {
+      viewChanged(previousSide !== fields.side.value, monthChanged);
+    } else if (inflight.view) {
+      // Supersede a pending request too, so it cannot rewrite this history entry.
+      refreshView();
+    }
   }
 
   function setUrlParam(key, value) {
@@ -841,6 +882,8 @@
       onPick: function (item, event) {
         if (!item.kind) { openStock(item.value, isKeyboardAction(event)); return; }
         searchDialog.close();
+        stockDrawer.close(true);
+        if (guideDrawer) guideDrawer.close(true);
         if (item.kind === "View") { goToView(item.link); return; }
         var funds = navLinkFor("#scheme-summary");
         if (funds) goToView(funds);
@@ -870,15 +913,7 @@
   // -- view controls ----------------------------------------------------------
   if (form) {
     form.addEventListener("change", function (e) {
-      // Buying and selling rank in opposite directions; each starts from its ranking.
-      if (e.target.name === "side") sorting = null;
-      refreshView();
-      refreshWatchlist();
-      // The summary follows the month once the reader has opened one.
-      if (e.target.id === "month-select") {
-        if (stockPicker) stockPicker.close();
-        if (pickedScheme) showSummary();
-      }
+      viewChanged(e.target.name === "side", e.target.id === "month-select");
     });
     form.addEventListener("submit", function (e) { e.preventDefault(); refreshView(); });
   }

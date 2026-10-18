@@ -58,7 +58,7 @@ class Element {
   }
 }
 
-function boot({ schemes = false, controls = false, hash = '', watch = null, search = false,
+function boot({ schemes = false, controls = false, hash = '', watch = null, search = false, guide = false,
   theme = false, savedTheme = null, storageBlocked = false, coverage = false } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
     'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
@@ -68,6 +68,7 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
   if (watch) ids.push('watchlist-status', 'watchlist-results', 'watchlist-report', 'watchlist-export', 'watchlist-import', 'active-only');
   if (theme) ids.push('theme-toggle');
   if (search) ids.push('search-dialog', 'search-open');
+  if (guide) ids.push('guide-dialog', 'guide-box', 'guide-notes', 'guide-dialog-close');
   ids.push('page-title', 'page-description');
   const elements = Object.fromEntries(ids.map(id => [id, new Element(id)]));
   const views = [['#monthly-activity', 'activity', 'Monthly fund activity'],
@@ -88,8 +89,25 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
   const window = new Element();
   window.scrollY = 0; window.innerHeight = 800;
   elements['month-select'].value = '2026-08';
-  elements['month-select'].options = [{ text: 'Aug 2026' }];
-  elements['month-select'].selectedIndex = 0;
+  elements['month-select'].options = [
+    { value: '2026-08', text: 'Aug 2026' }, { value: '2026-07', text: 'Jul 2026' }
+  ];
+  Object.defineProperty(elements['month-select'], 'selectedIndex', { get() {
+    return this.options.findIndex(option => option.value === this.value);
+  } });
+  if (controls) {
+    const fields = { month: elements['month-select'] };
+    const params = new URL(location.href).searchParams;
+    for (const [name, fallback] of Object.entries({ side: 'buy', limit: '25', cols: 'core' })) {
+      fields[name] = new Element(); fields[name].name = name;
+      fields[name].value = params.get(name) || fallback;
+    }
+    fields.limit.options = ['25', '50', '0'].map(value => ({ value }));
+    fields.month.value = params.get('month') || '2026-08';
+    elements['view-controls'].elements = fields;
+    elements['equity-only'].checked = params.get('equity_only') !== '0';
+    elements['active-only'].checked = params.get('active_only') !== '0';
+  }
   if (schemes) elements['scheme-data'].textContent = JSON.stringify([
     { id: 1, label: 'Test Fund', amc: 'Test AMC', votes: true }
   ]);
@@ -131,7 +149,10 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
       getItem(key) { if (storageBlocked) throw new Error('Storage unavailable'); return saved.get(key) || null; },
       setItem(key, value) { if (storageBlocked) throw new Error('Storage unavailable'); saved.set(key, value); },
     },
-    FormData: class { get() { return null; } },
+    FormData: class {
+      constructor(form) { this.form = form; }
+      get(name) { return this.form?.elements[name]?.value ?? null; }
+    },
     setTimeout(fn) { timers.set(++timerId, fn); return timerId; },
     clearTimeout(id) { timers.delete(id); },
     requestAnimationFrame(fn) { frames.push(fn); },
@@ -207,6 +228,75 @@ test('a modified click on a view link keeps the browser default', () => {
   assert.deepEqual(ui.pushes, []);
 });
 
+test('Back to an entry without a hash restores the default view', () => {
+  const ui = boot();
+  ui.documentEvents.emit('click', { target: ui.navLinks[1] });
+  const forwardUrl = ui.location.href;
+  ui.location.href = 'http://localhost/';
+  ui.window.emit('popstate');
+  assert.equal(ui.body.dataset.currentView, 'activity');
+  assert.deepEqual(current(ui), [ui.navLinks[0]]);
+  assert.equal(ui.elements['page-title'].textContent, 'Monthly fund activity');
+  ui.location.href = forwardUrl;
+  ui.window.emit('popstate');
+  assert.equal(ui.body.dataset.currentView, 'summary');
+  assert.equal(ui.pushes.length, 1);
+});
+
+test('Back and Forward restore the month, every filter and the displayed data', async () => {
+  const ui = boot({ controls: true, hash: '?month=2026-08#monthly-activity', coverage: true });
+  const backUrl = ui.location.href, form = ui.elements['view-controls'];
+  ui.documentEvents.emit('click', { target: ui.navLinks[1] });
+  Object.entries({ month: '2026-07', side: 'sell', limit: '50', cols: 'all' })
+    .forEach(([name, value]) => { form.elements[name].value = value; });
+  ui.elements['equity-only'].checked = false;
+  ui.elements['active-only'].checked = false;
+  form.emit('change', { target: ui.elements['month-select'] });
+  ui.requests.at(-1).respond('July selling, all funds'); await settle();
+  const forwardUrl = ui.location.href;
+
+  for (const [url, expected, view, result] of [
+    [backUrl, { month: '2026-08', side: 'buy', limit: '25', cols: 'core', equity_only: '1', active_only: '1' }, 'activity', 'August buying, active equity'],
+    [forwardUrl, { month: '2026-07', side: 'sell', limit: '50', cols: 'all', equity_only: '0', active_only: '0' }, 'summary', 'July selling, all funds'],
+  ]) {
+    const before = ui.requests.length;
+    ui.location.href = url;
+    ui.window.emit('popstate');
+    for (const name of ['month', 'side', 'limit', 'cols']) assert.equal(form.elements[name].value, expected[name]);
+    assert.equal(ui.elements['equity-only'].checked, expected.equity_only === '1');
+    assert.equal(ui.elements['active-only'].checked, expected.active_only === '1');
+    assert.equal(ui.body.dataset.currentView, view);
+    assert.equal(ui.requests.length, before + 1);
+    const request = new URL(ui.requests.at(-1).url, ui.location.href);
+    assert.equal(request.pathname, '/fragments/month/' + expected.month);
+    for (const name of ['side', 'limit', 'cols', 'equity_only', 'active_only']) {
+      assert.equal(request.searchParams.get(name), expected[name]);
+    }
+    ui.requests.at(-1).respond(result); await settle();
+    assert.equal(ui.elements['month-view'].innerHTML, result);
+    assert.equal(new URL(ui.location.href).hash, new URL(url).hash);
+    assert.equal(new URL(ui.coverageLink.href).searchParams.get('month'), expected.month);
+  }
+  assert.equal(ui.pushes.length, 1);
+});
+
+test('Back restores default controls and prevents an older response from replacing them', async () => {
+  const ui = boot({ controls: true });
+  ui.documentEvents.emit('click', { target: ui.navLinks[1] });
+  ui.elements['month-select'].value = '2026-07';
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  const stale = ui.requests.at(-1);
+  ui.location.href = 'http://localhost/';
+  ui.window.emit('popstate');
+  assert.equal(ui.elements['month-select'].value, '2026-08');
+  assert.equal(stale.signal.aborted, true);
+  ui.requests.at(-1).respond('August'); await settle();
+  stale.respond('July'); await settle();
+  assert.equal(ui.elements['month-view'].innerHTML, 'August');
+  assert.equal(new URL(ui.location.href).searchParams.get('month'), '2026-08');
+  assert.equal(ui.body.dataset.currentView, 'activity');
+});
+
 test('the search shortcut opens the palette, but / does not while typing', () => {
   const ui = boot({ search: true });
   const dialog = ui.elements['search-dialog'], input = new Element(); input.tagName = 'INPUT';
@@ -257,6 +347,36 @@ test('stocks lead the search results and a stock pick closes the palette first',
   assert.equal(ui.elements['stock-dialog'].open, true);
   assert.match(ui.requests.at(-1).url, /^\/fragments\/stock\?q=INE002A01018/);
 });
+
+for (const underlying of ['stock', 'guide']) {
+  for (const destination of ['view', 'fund']) {
+    test(`search opens a ${destination} without leaving the ${underlying} drawer on top`, async () => {
+      const ui = boot({ search: true, schemes: true, guide: true });
+      const drawer = ui.elements[underlying + '-dialog'];
+      if (underlying === 'stock') {
+        ui.elements['stock-search'].value = 'INE002A01018';
+        ui.elements['stock-form'].emit('submit');
+      } else {
+        const link = new Element(); link.setAttribute('href', '#notes-title');
+        link.closest = selector => selector === "a[href='#notes-title']" ? link : null;
+        ui.documentEvents.emit('click', { target: link });
+      }
+      assert.equal(drawer.open, true);
+      drawer.deferCloseEvent = true; // Native close events can arrive after navigation.
+      ui.documentEvents.emit('keydown', { key: 'k', ctrlKey: true });
+      assert.equal(ui.elements['search-dialog'].open, true);
+      await ui.type('stock-search', destination === 'view' ? 'monthly s' : 'test fund');
+      ui.requests.at(-1).respond(JSON.stringify({ results: [] })); await settle();
+      ui.elements['stock-options'].children[0].emit('click');
+      assert.equal(ui.elements['search-dialog'].open, false);
+      assert.equal(drawer.open, false);
+      assert.equal(ui.body.dataset.currentView, destination === 'view' ? 'summary' : 'funds');
+      if (underlying === 'stock') assert.equal(ui.requests[0].signal.aborted, true);
+      drawer.emit('close');
+      if (destination === 'fund') assert.equal(ui.requests.at(-1).url, '/api/summary/1/2026-08');
+    });
+  }
+}
 
 test('refreshing the month preserves the selected section in the URL', async () => {
   const ui = boot({ controls: true, hash: '#scheme-summary' });
@@ -343,6 +463,31 @@ test('changing month refreshes a selected scheme while its summary is still load
   summaries[0].respond(JSON.stringify({ has_data: true, summary: 'August summary' }));
   await settle();
   assert.equal(ui.elements['summary-box'].children[0].textContent, 'No comparison in July');
+});
+
+test('history restores the selected fund summary and watchlist to the restored month', async () => {
+  const ui = boot({ controls: true, schemes: true, watch: ['INE002A01018'], hash: '?month=2026-08#scheme-summary' });
+  const backUrl = ui.location.href;
+  await pickScheme(ui);
+  ui.documentEvents.emit('click', { target: ui.navLinks[2] });
+  ui.elements['month-select'].value = '2026-07';
+  ui.elements['active-only'].checked = false;
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  ui.requests.find(r => r.url.startsWith('/fragments/month/')).respond('July'); await settle();
+  const oldSummary = ui.requests.at(-1);
+  const oldWatchlist = ui.requests.filter(r => r.url === '/api/watchlist').at(-1);
+  ui.location.href = backUrl;
+  ui.window.emit('popstate');
+  assert.equal(oldSummary.signal.aborted, true);
+  assert.equal(oldWatchlist.signal.aborted, true);
+  const summary = ui.requests.filter(r => r.url.startsWith('/api/summary/')).at(-1);
+  const watchlist = ui.requests.filter(r => r.url === '/api/watchlist').at(-1);
+  assert.equal(summary.url, '/api/summary/1/2026-08');
+  assert.equal(JSON.parse(watchlist.options.body).month, '2026-08');
+  assert.equal(JSON.parse(watchlist.options.body).active_only, true);
+  summary.respond(JSON.stringify({ has_data: true, summary: 'August summary' })); await settle();
+  oldSummary.respond(JSON.stringify({ has_data: true, summary: 'July summary' })); await settle();
+  assert.equal(ui.elements['summary-box'].children[0].textContent, 'August summary');
 });
 
 
