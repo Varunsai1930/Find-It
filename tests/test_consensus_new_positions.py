@@ -105,7 +105,7 @@ def test_empty_consensus_still_exposes_the_new_columns():
     conn = _conn()
     out = consensus_signals.compute_consensus(conn, "2026-08")
     assert out.empty
-    for column in ("amcs_opening", "new_position_flow_lakhs",
+    for column in ("amcs_opening", "amcs_exiting", "new_position_flow_lakhs",
                    "accumulation_flow_lakhs", "universe_status", "is_new_to_universe"):
         assert column in out.columns
 
@@ -145,3 +145,15 @@ def test_recomputing_a_month_replaces_it_instead_of_leaving_stale_rows(tmp_path)
     delta_calculator.persist_deltas(conn, empty, report_month="2026-08")
     assert conn.execute("SELECT COUNT(*) FROM mf_holding_deltas").fetchone()[0] == 0
     conn.close()
+
+
+def test_exits_count_fund_houses_that_sold_their_whole_position():
+    conn = _conn()
+    _delta(conn, 1, "AMC1", ESTABLISHED, "Held Co Ltd.", "exited", -100.0, held_prev=True)
+    _delta(conn, 2, "AMC1", ESTABLISHED, "Held Co Ltd.", "exited", -100.0, held_prev=True)
+    _delta(conn, 3, "AMC2", ESTABLISHED, "Held Co Ltd.", "exited", -100.0, held_prev=True)
+    _delta(conn, 4, "AMC3", ESTABLISHED, "Held Co Ltd.", "trimmed", -10.0, held_prev=True)
+    row = consensus_signals.compute_consensus(conn, "2026-08").iloc[0]
+    # Two schemes of one house count once; a trim is selling, not an exit.
+    assert row["amcs_exiting"] == 2
+    assert row["amcs_selling"] == 3

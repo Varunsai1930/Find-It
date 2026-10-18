@@ -570,13 +570,16 @@ def test_month_fragment_is_one_table_in_ranking_order(tmp_path):
         html = res.text
         # The fragment replaces the table; it must never carry a second one.
         assert html.count("<table") == 1
-        positions = [html.index(f'data-isin="{isin}"') for isin in expected["isin"]]
+        table = html[html.index('id="consensus-table"'):]
+        positions = [table.index(f'data-isin="{isin}"') for isin in expected["isin"]]
         assert positions == sorted(positions), side
     assert client.get("/fragments/month/1900-01").status_code == 404
 
 
 def _row(html: str, isin: str) -> str:
-    row = html[html.index(f'data-isin="{isin}"'):]
+    # The notable lists name stocks too; a row is the stock's mention in the table.
+    table = html[html.index('id="consensus-table"'):]
+    row = table[table.index(f'data-isin="{isin}"'):]
     return row[:row.index("</tr>")]
 
 
@@ -630,6 +633,41 @@ def test_ranking_head_holds_the_facts_and_rows_carry_sort_values(tmp_path):
     assert 'class="row-follow follow-toggle" data-watch-stock="INE002A01018" aria-pressed="false"' in reliance
     selling = client.get("/fragments/month/2026-08", params={"side": "sell"}).text
     assert 'data-sort-key="net" data-sort-label="Net fund houses" aria-sort="ascending"' in selling
+
+
+def test_notable_lists_sit_above_the_ranking_and_name_missing_months(tmp_path):
+    db = _copy_db(tmp_path)
+    client = TestClient(create_app(str(db)))
+    html = client.get("/fragments/month/2026-08").text
+    panel = html[html.index('id="notable"'):html.index('id="consensus"')]
+    assert "Observations, not recommendations" in panel
+    for key in ("turnaround", "opened", "active", "streak", "fii"):
+        assert f'id="notable-{key}"' in panel
+    # Only August is compared, so the rules that read July say which month they need.
+    assert panel.count("Needs Jul 2026 compared with the month before it") == 2
+    # Each listed stock opens the stock detail and can be followed.
+    agree = panel[panel.index('id="notable-fii"'):]
+    assert 'class="stock-link" data-isin="INE002A01018"' in agree
+    assert "+2 net fund houses; FII +1.00 pp in the latest filing" in agree
+    assert 'data-watch-stock="INE002A01018"' in agree
+    selling = client.get("/fragments/month/2026-08", params={"side": "sell"}).text
+    assert "Turned to selling" in selling and "Full exits" in selling
+    # A month nothing was compared in has no ranking, so no notable lists either.
+    assert 'id="notable"' not in client.get("/fragments/month/2026-07").text
+    # Give July a comparison in which every fund halved every holding: August's
+    # buying then turns around, and only the streak still waits, now for June.
+    with sqlite3.connect(db) as conn:
+        conn.execute("INSERT INTO mf_holdings_monthly (scheme_id, isin, report_month, quantity, "
+                     "market_value_lakhs, pct_nav) SELECT scheme_id, isin, '2026-06', quantity * 2, "
+                     "market_value_lakhs * 2, pct_nav FROM mf_holdings_monthly "
+                     "WHERE report_month = '2026-07'")
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn, "2026-06", "2026-07"))
+    html = client.get("/fragments/month/2026-08").text
+    panel = html[html.index('id="notable"'):html.index('id="consensus"')]
+    assert "Needs Jul 2026" not in panel
+    assert panel.count("Needs Jun 2026 compared with the month before it") == 1
+    turned = panel[panel.index('id="notable-turnaround"'):panel.index('id="notable-opened"')]
+    assert "net fund houses, from −" in turned
 
 
 def test_dashboard_views_guide_and_search_markup(tmp_path):

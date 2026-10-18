@@ -324,7 +324,7 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
             "isin", "stock_name", "industry", "instrument_type",
             "schemes_buying", "schemes_selling", "net_scheme_count",
             "amcs_buying", "amcs_selling",
-            "amcs_opening", "total_flow_lakhs", "new_position_flow_lakhs",
+            "amcs_opening", "amcs_exiting", "total_flow_lakhs", "new_position_flow_lakhs",
             "accumulation_flow_lakhs", "total_price_effect_lakhs",
             "net_amc_count", "buying_ratio", "universe_status",
             "is_new_to_universe", *ACTIVE_COLUMNS,
@@ -339,16 +339,18 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
     buying = deltas[deltas["action"].isin(["new", "added"])]
     selling = deltas[deltas["action"].isin(["trimmed", "exited"])]
     opening = deltas[deltas["action"] == "new"]
+    exiting = deltas[deltas["action"] == "exited"]
 
     buy_counts = buying.groupby("isin")["amc_name"].nunique().rename("amcs_buying")
     sell_counts = selling.groupby("isin")["amc_name"].nunique().rename("amcs_selling")
     open_counts = opening.groupby("isin")["amc_name"].nunique().rename("amcs_opening")
+    exit_counts = exiting.groupby("isin")["amc_name"].nunique().rename("amcs_exiting")
     scheme_buys = buying.groupby("isin")["scheme_id"].nunique().rename("schemes_buying")
     scheme_sells = selling.groupby("isin")["scheme_id"].nunique().rename("schemes_selling")
     stock_info = deltas.drop_duplicates("isin").set_index("isin")[
         ["stock_name", "industry", "instrument_type"]]
 
-    series_to_concat = [stock_info, buy_counts, sell_counts, open_counts,
+    series_to_concat = [stock_info, buy_counts, sell_counts, open_counts, exit_counts,
                         scheme_buys, scheme_sells]
     if "flow_lakhs" in deltas.columns:
         flow_totals = deltas.groupby("isin")["flow_lakhs"].agg(
@@ -376,8 +378,8 @@ def rank_consensus(deltas: pd.DataFrame, prev_universe: set[str] | None,
         if col not in out.columns:
             out[col] = float("nan")
     out.loc[~out.index.isin(opening["isin"]), "new_position_flow_lakhs"] = 0.0
-    for col in ("amcs_buying", "amcs_selling", "amcs_opening", "schemes_buying",
-                "schemes_selling"):
+    for col in ("amcs_buying", "amcs_selling", "amcs_opening", "amcs_exiting",
+                "schemes_buying", "schemes_selling"):
         out[col] = out[col].fillna(0).astype(int)
     out["stock_name"] = out["stock_name"].fillna("")
     out["net_scheme_count"] = out["schemes_buying"] - out["schemes_selling"]

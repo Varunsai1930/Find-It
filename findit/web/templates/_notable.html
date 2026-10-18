@@ -1,0 +1,43 @@
+{#- Notable lists above the ranking: stocks that met one stated rule this month,
+    in the view's direction. Observations only; findit/core/notable.py has the rules. -#}
+{%- from "_macros.html" import icon -%}
+{%- macro notable_stock(stock) -%}
+<li class="notable__stock">
+  <div>
+    <button type="button" class="stock-link" data-isin="{{ stock.isin }}" aria-haspopup="dialog">{{ stock.stock_name|stock_label }}</button>
+    <span class="sub">{{ stock.reason }}</span>
+  </div>
+  {% if stock.followable %}<button type="button" class="row-follow follow-toggle" data-watch-stock="{{ stock.isin }}" aria-pressed="false" aria-label="Follow {{ stock.stock_name|stock_label }}" title="Follow on this device" hidden><span class="icon-swap" aria-hidden="true">{{ icon('bookmark', 16) }}{{ icon('bookmark', 16, filled=true) }}</span></button>{% endif %}
+</li>
+{%- endmacro -%}
+<details class="panel notable" id="notable" open>
+  <summary class="notable__summary">
+    <span class="notable__heading">
+      <h2 id="notable-title">Notable {{ 'selling' if side == 'sell' else 'buying' }} <span class="muted">· {{ month|month_label }}</span></h2>
+      <span class="tag tag--info">Observations, not recommendations</span>
+    </span>
+    <span class="notable__toggle" aria-hidden="true">{{ icon('chevron-right', 14) }}</span>
+  </summary>
+  <p class="notable__note">Each stock met the rule shown, under the filters above. FindIt's ten-year test found that no group like these beat comparable stocks reliably once company size was accounted for, so these lists say what funds did, not what a stock will do. Open a stock to check the funds and filings behind it.</p>
+  <div class="notable__grid">
+    {% for list in notable %}
+    <section class="notable__rule" aria-labelledby="notable-{{ list.key }}">
+      <h3 id="notable-{{ list.key }}">{{ list.title }}{% if not list.needs %} <span class="notable__count">{{ list.stocks|length }}</span>{% endif %}</h3>
+      <p class="notable__rule-text">{{ list.rule }}</p>
+      {% if list.needs %}
+      <p class="notable__empty">Needs {{ list.needs|month_label }} compared with the month before it, which is not loaded.</p>
+      {% elif not list.stocks %}
+      <p class="notable__empty">No stock met this rule.</p>
+      {% else %}
+      <ol class="notable__stocks">{% for stock in list.stocks[:notable_shown] %}{{ notable_stock(stock) }}{% endfor %}</ol>
+      {% if list.stocks|length > notable_shown %}
+      <details class="notable__more">
+        <summary>{{ list.stocks|length - notable_shown }} more<span class="visually-hidden"> in {{ list.title }}</span></summary>
+        <ol class="notable__stocks" start="{{ notable_shown + 1 }}">{% for stock in list.stocks[notable_shown:] %}{{ notable_stock(stock) }}{% endfor %}</ol>
+      </details>
+      {% endif %}
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+</details>

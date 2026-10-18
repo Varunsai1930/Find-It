@@ -1,11 +1,12 @@
-{#- One month: the consensus table, headed by three coverage facts and the
-    expandable data coverage, then the fund-house summary. Rendered into the page
+{#- One month: the notable lists, the consensus table headed by three coverage
+    facts and the expandable data coverage, then the fund-house summary. Rendered into the page
     on first load and re-rendered by /fragments/month when a filter changes. -#}
 {%- from "_macros.html" import holder_change, filing_status, scope, fund_counts, icon -%}
 {%- set all_cols = cols == 'all' -%}
 {%- set side_title = 'Stocks ranked by fund-house selling' if side == 'sell' else 'Stocks ranked by fund-house buying' -%}
 
 <div id="monthly-activity" data-view="activity">
+{% if notable %}{% include "_notable.html" %}{% endif %}
 <section class="panel" id="consensus" aria-labelledby="consensus-title">
   <div class="panel__head">
     <div class="panel__bar">

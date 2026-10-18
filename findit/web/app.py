@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import pandas as pd
 
-from findit.core import consensus_signals, publication
+from findit.core import consensus_signals, notable, publication
 from findit.core.coverage import house_coverage, month_coverage
 from findit.core.evidence import stock_evidence
 from findit.core.history import stock_history, history_evidence
@@ -180,16 +180,35 @@ def _ranked(conn: sqlite3.Connection, month: str, equity_only: bool,
     return ranked
 
 
+def _has_deltas(conn: sqlite3.Connection, month: str) -> bool:
+    """Whether the month was compared with the month before it."""
+    return conn.execute("SELECT 1 FROM mf_holding_deltas WHERE report_month = ? LIMIT 1",
+                        (month,)).fetchone() is not None
+
+
+def _notable(conn: sqlite3.Connection, view: dict[str, Any], ordered: pd.DataFrame) -> list[dict]:
+    """The notable lists for the view's month, filters and direction.
+
+    ``ordered`` is the month's ranking in the view's direction. Earlier months
+    use the same filters; a month without compared changes is passed as
+    missing, so a rule that needs it says so instead of finding nothing.
+    """
+    earlier, month = [], view["month"]
+    for _ in range(notable.STREAK_MONTHS - 1):
+        month = previous_month(month)
+        earlier.append((month, _ranked(conn, month, bool(view["equity_only"]),
+                                       bool(view["active_only"]))
+                        if _has_deltas(conn, month) else None))
+    return notable.notable_lists(ordered, earlier, view["side"])
+
+
 def _records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return json.loads(frame.to_json(orient="records")) if not frame.empty else []
 
 
 def _no_signal_message(conn: sqlite3.Connection, month: str) -> str:
     """Why a month has no ranked rows: nothing moved, or nothing was compared."""
-    has_deltas = conn.execute(
-        "SELECT 1 FROM mf_holding_deltas WHERE report_month = ? LIMIT 1",
-        (month,)).fetchone() is not None
-    if has_deltas:
+    if _has_deltas(conn, month):
         return (f"No MF buying or selling signals for {month} under the current filter; "
                 "stocks with no monthly change are not ranked as buys.")
     return (f"No holding-change data available for {month} yet (data may not have been "
@@ -231,6 +250,8 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any], *,
         "total": len(ranked),
         "rows": rows,
         "message": "" if rows else _no_signal_message(conn, month),
+        "notable": _notable(conn, view, ordered) if rows else [],
+        "notable_shown": notable.SHOWN,
         "coverage": coverage if coverage is not None else month_coverage(
             conn, month, bool(view["equity_only"]), bool(view["active_only"])),
         "filings": filings,
