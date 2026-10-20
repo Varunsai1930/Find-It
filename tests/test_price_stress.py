@@ -47,6 +47,18 @@ def test_direct_load_rejects_invalid_close_without_changing_database(tmp_path, d
         conn.close()
 
 
+@pytest.mark.parametrize("dtype", ["Float64", "string"])
+def test_nullable_optional_liquidity_is_stored_as_sql_null(tmp_path, dtype):
+    conn = db.get_connection(str(tmp_path / "prices.db"))
+    frame = P.parse_bhavcopy(_zip([ROW]), None, date(2026, 8, 31))
+    frame["traded_value"] = pd.Series([None], dtype=dtype)
+    try:
+        assert P.load_daily_prices(conn, frame) == 1
+        assert conn.execute("SELECT traded_value FROM security_prices_daily").fetchone()[0] is None
+    finally:
+        conn.close()
+
+
 @pytest.mark.parametrize("month", ["2026-10", "2027-01", "9999-12"])
 def test_future_month_never_relabels_todays_prices(tmp_path, monkeypatch, month):
     class FrozenDate(date):
@@ -154,3 +166,18 @@ def test_simultaneous_cache_repairs_leave_a_complete_archive(tmp_path):
     assert P.parse_bhavcopy(cache.read_bytes(), None, date(2026, 8, 31))[
         "close_price"].tolist() == [1500.0]
     assert sorted(p.name for p in tmp_path.iterdir()) == [cache.name]
+
+
+@pytest.mark.parametrize("dtype", ["Float64", "string"])
+@pytest.mark.parametrize("daily", [False, True])
+def test_nullable_missing_close_is_rejected_before_database_write(tmp_path, dtype, daily):
+    conn = db.get_connection(str(tmp_path / "prices.db"))
+    loader = P.load_daily_prices if daily else P.load_prices
+    frame = P.parse_bhavcopy(_zip([ROW]), "2026-08", date(2026, 8, 31))
+    frame["close_price"] = pd.Series([None], dtype=dtype)
+    try:
+        with pytest.raises(ValueError, match="finite positive"):
+            loader(conn, frame)
+        assert not conn.in_transaction
+    finally:
+        conn.close()

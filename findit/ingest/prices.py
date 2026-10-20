@@ -235,13 +235,14 @@ def _upsert_prices(conn, prices: pd.DataFrame, table: str, columns: list[str]) -
         raise ValueError(f"price rows are missing expected columns: {sorted(missing)}")
     prices = prices.copy()
     closes = pd.to_numeric(prices["close_price"], errors="coerce")
-    if not (np.isfinite(closes) & (closes > 0)).all():
+    if not (closes.notna() & np.isfinite(closes) & (closes > 0)).all():
         raise ValueError("price rows require finite positive closing prices")
     prices["close_price"] = closes
     if "traded_value" in columns:
         value = pd.to_numeric(prices["traded_value"], errors="coerce")
         prices["traded_value"] = value.where(np.isfinite(value) & (value >= 0))
-    rows = prices.loc[:, columns].where(pd.notna(prices[columns]), None)
+    # Nullable pandas dtypes retain pd.NA unless converted to object first.
+    rows = prices.loc[:, columns].astype(object).where(pd.notna(prices[columns]), None)
     with conn:
         conn.executemany(
             f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
