@@ -242,11 +242,11 @@ def _upsert_prices(conn, prices: pd.DataFrame, table: str, columns: list[str]) -
         value = pd.to_numeric(prices["traded_value"], errors="coerce")
         prices["traded_value"] = value.where(np.isfinite(value) & (value >= 0))
     rows = prices.loc[:, columns].where(pd.notna(prices[columns]), None)
-    conn.executemany(
-        f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
-        f"VALUES ({', '.join('?' for _ in columns)})",
-        rows.itertuples(index=False, name=None))
-    conn.commit()
+    with conn:
+        conn.executemany(
+            f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
+            f"VALUES ({', '.join('?' for _ in columns)})",
+            rows.itertuples(index=False, name=None))
     return len(rows)
 
 

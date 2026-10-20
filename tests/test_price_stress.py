@@ -1,6 +1,8 @@
 """Adversarial price inputs and fault injection; synthetic data only."""
 from datetime import date
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import sqlite3
 
 import pandas as pd
 import pytest
@@ -107,4 +109,48 @@ def test_cache_publish_failure_preserves_existing_bytes(tmp_path, monkeypatch):
     with pytest.raises(OSError, match="injected cache"):
         P.fetch_bhavcopy("2026-08", tmp_path, _Session({"20260831"}))
     assert cache.read_bytes() == b"damaged original"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [cache.name]
+
+
+@pytest.mark.parametrize("daily", [False, True])
+def test_late_batch_failure_rolls_back_all_5000_rows(tmp_path, daily):
+    path = tmp_path / "prices.db"
+    conn = db.get_connection(str(path))
+    loader = P.load_daily_prices if daily else P.load_prices
+    table = "security_prices_daily" if daily else "security_prices_monthly"
+    original = P.parse_bhavcopy(_zip([ROW]), "2026-08", date(2026, 8, 31))
+    try:
+        loader(conn, original)
+        frame = pd.concat([original] * 5000, ignore_index=True)
+        frame["isin"] = [f"IN{i:010d}" for i in range(5000)]
+        frame.loc[0, "isin"] = ROW["ISIN"]
+        frame["close_price"] = 9000.0
+        frame.loc[4999, "isin"] = None
+        with pytest.raises(sqlite3.IntegrityError):
+            loader(conn, frame)
+        # A later successful operation must not accidentally commit the partial batch.
+        conn.commit()
+        with sqlite3.connect(path) as observer:
+            assert observer.execute(f"SELECT isin,close_price FROM {table}").fetchall() == [
+                (ROW["ISIN"], 1500.0)]
+        frame.loc[4999, "isin"] = "IN0000004999"
+        assert loader(conn, frame) == 5000
+        assert loader(conn, frame) == 5000
+        assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 5000
+    finally:
+        conn.close()
+
+
+def test_simultaneous_cache_repairs_leave_a_complete_archive(tmp_path):
+    cache = tmp_path / "bhavcopy_20260831.zip"
+    cache.write_bytes(b"damaged")
+
+    def fetch(_):
+        return P.fetch_bhavcopy("2026-08", tmp_path, _Session({"20260831"}))
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(fetch, range(24)))
+    assert all(frame["close_price"].tolist() == [1500.0] for frame in results)
+    assert P.parse_bhavcopy(cache.read_bytes(), None, date(2026, 8, 31))[
+        "close_price"].tolist() == [1500.0]
     assert sorted(p.name for p in tmp_path.iterdir()) == [cache.name]
