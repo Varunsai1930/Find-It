@@ -197,6 +197,8 @@ def fetch_bhavcopy(report_month: str, cache_dir: Path | str = CACHE_DIR,
     """
     end = month_end(report_month)
     today = date.today()
+    if (end.year, end.month) > (today.year, today.month):
+        raise PriceFetchError(f"cannot fetch closing prices for future month {report_month}")
     if end > today:
         end = today
     cache = Path(cache_dir)
