@@ -544,6 +544,9 @@
         coverageUrl.searchParams.set("active_only", q.get("active_only"));
         coverageLink.href = coverageUrl.toString();
       }
+      // Only wire the fragment this request rendered; cancelled requests must
+      // not wrap the current table's sort buttons or register listeners again.
+      enhanceView();
       if (hadFocus) {
         var title = document.getElementById("consensus-title");
         if (title) title.focus();
@@ -556,7 +559,6 @@
         "Could not load " + monthLabel() + " (" + e.message + ").", refreshView));
     } finally {
       if (!inflight.view) view.removeAttribute("aria-busy");
-      enhanceView();
     }
   }
 

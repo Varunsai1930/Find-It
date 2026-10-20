@@ -602,6 +602,11 @@ def load_parsed_csv(conn: sqlite3.Connection, csv_path: Path) -> int:
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"{csv_path} is missing expected columns: {missing}")
+    # groupby drops missing identity keys. Accepting the remaining rows as a
+    # replacement snapshot would silently delete the ungrouped holdings.
+    for column in ("amc_name", "scheme_name"):
+        if (df[column].isna() | df[column].astype(str).str.strip().eq("")).any():
+            raise ValueError(f"{csv_path}: {column} must be present and nonblank on every row")
     # Refuse the file before writing: one malformed month key would break
     # every page that lists or compares months.
     for month in df["report_month"].unique():

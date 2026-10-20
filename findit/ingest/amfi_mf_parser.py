@@ -74,7 +74,7 @@ COLUMN_SYNONYMS = {
 }
 
 REQUIRED = ["isin", "instrument_name", "quantity", "market_value_lakhs", "pct_nav"]
-PARSER_VERSION = "portfolio-2026-10-17-grand-total-2"
+PARSER_VERSION = "portfolio-2026-10-20-nav-boundary-finite-1"
 
 # Generic ISIN shape (ISO 6166: 2-letter country + 9 alphanumerics + a numeric
 # check digit). Indian holdings match ^IN..., foreign holdings (e.g. US...)
@@ -88,6 +88,9 @@ ISIN_GENERIC_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}\d$")
 
 # The label that ends a portfolio, e.g. "Grand Total" or "GRAND TOTAL (AUM)".
 GRAND_TOTAL_RE = r"grand\s*total(?:\s*\(.*\))?"
+PORTFOLIO_TOTAL_RE = (
+    rf"(?:{GRAND_TOTAL_RE}|total\s+net\s+assets|net\s+assets|net\s+asset\s+value)"
+)
 
 # Per scheme-month NAV scale bands. Fraction sheets sum ~1.0, percent sheets
 # sum ~100. Anything else warns and keeps raw — never forced to 100.
@@ -190,7 +193,14 @@ def detect_nav_scale(total: float) -> str:
     return "unknown"
 
 
-def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Series:
+def _numeric_values(values: pd.Series) -> pd.Series:
+    """Keep unreadable and nonfinite numbers missing, with raw cells retained."""
+    return pd.to_numeric(values, errors="coerce").replace(
+        [float("inf"), float("-inf")], float("nan")
+    )
+
+
+def _holding_detail_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Series:
     """Identify non-ISIN detail rows without counting printed totals twice.
 
     Section labels/notes normally have no numeric holding cells. Summary
@@ -203,16 +213,8 @@ def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Serie
         case=False, regex=True,
     )
     numeric = clean[["quantity", "market_value_lakhs", "pct_nav"]].apply(
-        pd.to_numeric, errors="coerce"
+        _numeric_values
     ).notna().any(axis=1)
-    # Disclosures often append derivative exposure tables and numeric
-    # footnotes after the portfolio grand total, reusing these column
-    # positions for contract counts or notionals rather than NAV weights.
-    # They must not be counted as additional omitted portfolio positions.
-    after_portfolio = names.str.match(
-        r"(?:grand\s*total|total\s+net\s+assets|net\s+assets|net\s+asset\s+value)\b",
-        case=False,
-    ).cummax()
     # These printed category totals contain no instrument quantity; their
     # constituents are the detail rows that follow them.
     categories = names.str.fullmatch(
@@ -225,7 +227,18 @@ def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Serie
         r"units of infrastructure investment trusts \(InvITs\))",
         case=False,
     ) & clean["quantity"].isna()
-    return ~valid_mask & names.ne("") & ~summaries & ~categories & numeric & ~after_portfolio
+    return ~valid_mask & names.ne("") & ~summaries & ~categories & numeric
+
+
+def dropped_holding_mask(clean: pd.DataFrame, valid_mask: pd.Series) -> pd.Series:
+    """Omitted detail rows, excluding numeric notes after the portfolio total."""
+    names = clean["instrument_name"].fillna("").astype(str).str.strip()
+    # Later tables reuse numeric columns for contract counts and notionals.
+    details = _holding_detail_mask(clean, valid_mask)
+    holdings = valid_mask | details
+    portfolio_end = (names.str.fullmatch(PORTFOLIO_TOTAL_RE, case=False)
+                     & holdings.cummax().shift(fill_value=False))
+    return details & ~portfolio_end.cummax()
 
 
 def _reported_nav_total(clean: pd.DataFrame) -> float | None:
@@ -237,11 +250,8 @@ def _reported_nav_total(clean: pd.DataFrame) -> float | None:
     totals stay ambiguous and fall back to the existing row-sum rule.
     """
     names = clean["instrument_name"].fillna("").astype(str).str.strip()
-    is_total = names.str.fullmatch(
-        r"grand\s+total|total\s+net\s+assets|net\s+assets|net\s+asset\s+value",
-        case=False,
-    )
-    values = pd.to_numeric(clean.loc[is_total, "pct_nav"], errors="coerce").dropna()
+    is_total = names.str.fullmatch(PORTFOLIO_TOTAL_RE, case=False)
+    values = _numeric_values(clean.loc[is_total, "pct_nav"]).dropna()
     if values.empty:
         return None
     total = float(values.iloc[0])
@@ -377,7 +387,7 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
             # This layout prints totals in the Industry column. Stock ISINs in
             # a Futures section identify the underlying, not shares held.
             labels = df.iloc[:, 4].fillna("").astype(str).str.strip()
-            portfolio_end = labels.str.fullmatch(GRAND_TOTAL_RE, case=False)
+            portfolio_end = labels.str.fullmatch(PORTFOLIO_TOTAL_RE, case=False)
             totals = portfolio_end | labels.str.fullmatch("total", case=False)
             df.loc[totals, col_map["instrument_name"]] = labels.loc[totals]
             derivative, excluded = False, []
@@ -397,19 +407,23 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
                       "original workbook retained", file=sys.stderr)
                 df = df.drop(index=excluded)
 
-        # ISIN rows below the portfolio's Grand Total describe holdings rather
+        # ISIN rows below the portfolio's final NAV total describe holdings rather
         # than list them: defaulted-bond recovery tables, yield-to-call lists,
         # exposure tables. Other rows there stay for the printed-total checks.
-        grand_total = df.drop(columns="source_row").apply(
-            lambda col: col.astype(str).str.strip().str.fullmatch(GRAND_TOTAL_RE, case=False)
+        final_total = df.drop(columns="source_row").apply(
+            lambda col: col.astype(str).str.strip().str.fullmatch(PORTFOLIO_TOTAL_RE, case=False)
         ).any(axis=1)
         has_isin = (df[col_map["isin"]].astype(str).str.strip().str.upper()
                     .str.match(ISIN_GENERIC_RE, na=False))
-        notes = grand_total.cumsum().shift(fill_value=0).gt(0) & has_isin
-        # A Grand Total printed above the holdings (a summary block) does not
-        # end the portfolio: only rows after a total that follows holdings are notes.
-        if notes.any() and (has_isin & ~notes).any():
-            print(f"  [scope] '{sheet_name}': ignored ISIN notes after Grand Total at source "
+        # A NAV total printed above the holdings (a summary block) does not
+        # end the portfolio. TREPS, cash and unreadable ISINs are holdings too;
+        # recognize their detail rows before deciding which total ends it.
+        canonical = df.rename(columns={v: k for k, v in col_map.items()})
+        holdings = has_isin | _holding_detail_mask(canonical, has_isin)
+        portfolio_end = final_total & holdings.cummax().shift(fill_value=False)
+        notes = portfolio_end.cummax().shift(fill_value=False) & has_isin
+        if notes.any():
+            print(f"  [scope] '{sheet_name}': ignored ISIN notes after portfolio total at source "
                   f"rows {df.loc[notes, 'source_row'].tolist()}; original workbook retained",
                   file=sys.stderr)
             df = df[~notes]
@@ -436,13 +450,12 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         reported_total = _reported_nav_total(clean)
         reported_totals[sheet_name.strip()] = reported_total
         dropped_count = int(dropped_mask.sum())
-        dropped_nav = pd.to_numeric(
-            clean.loc[dropped_mask, "pct_nav"], errors="coerce"
-        ).sum(min_count=1) if dropped_count else 0.0
+        dropped_nav = (_numeric_values(clean.loc[dropped_mask, "pct_nav"]).sum(min_count=1)
+                       if dropped_count else 0.0)
         if reported_total is not None and dropped_count:
             # Reconcile against the printed total rather than double-counting
             # category headings and detail rows in the omitted weight.
-            accepted = pd.to_numeric(clean.loc[valid_mask, "pct_nav"], errors="coerce")
+            accepted = _numeric_values(clean.loc[valid_mask, "pct_nav"])
             accepted_sum = float(accepted.sum())
             if (accepted.notna().all() and pd.notna(dropped_nav)
                     and accepted_sum <= reported_total):
@@ -492,13 +505,11 @@ def parse_workbook(path: Path, amc_name: str, report_month: str) -> pd.DataFrame
         raise ValueError(f"No parseable scheme sheets found in {path}")
 
     result = pd.concat(all_rows, ignore_index=True)
-    result["quantity"] = pd.to_numeric(result["quantity"], errors="coerce")
-    result["market_value_lakhs"] = pd.to_numeric(
-        result["market_value_lakhs"], errors="coerce"
-    )
+    result["quantity"] = _numeric_values(result["quantity"])
+    result["market_value_lakhs"] = _numeric_values(result["market_value_lakhs"])
     # Retain the raw NAV weight and derive the canonical percent column via
     # per scheme-month scale detection. Never force an ambiguous sum to 100.
-    result["pct_nav_raw"] = pd.to_numeric(result["pct_nav"], errors="coerce")
+    result["pct_nav_raw"] = _numeric_values(result["pct_nav"])
     result["pct_nav"] = result["pct_nav_raw"]
 
     for (amc, scheme, month), idx in result.groupby(

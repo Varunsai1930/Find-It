@@ -798,6 +798,30 @@ async function refresh(ui, target = ui.elements['month-select']) {
   await settle();
 }
 
+for (const cancelledFirst of [true, false]) {
+  test(`cancelled ranking responses do not rewire sort controls (${cancelledFirst ? 'before' : 'after'} current response)`, async () => {
+    const ui = boot({ controls: true });
+    const { headings, select } = rankingTable(ui, [['Beta', '3', '1'], ['Alpha', '2', '2']]);
+    ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+    const stale = ui.requests.at(-1);
+    ui.elements['month-select'].value = '2026-07';
+    ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+    const current = ui.requests.at(-1);
+    assert.equal(stale.signal.aborted, true);
+    if (cancelledFirst) {
+      stale.respond('Stale August ranking'); await settle();
+      assert.equal(select.children.length, 0);
+      assert.equal(ui.elements['month-view'].getAttribute('aria-busy'), 'true');
+    }
+    current.respond('July ranking'); await settle();
+    if (!cancelledFirst) { stale.respond('Stale August ranking'); await settle(); }
+    assert.equal(ui.elements['month-view'].innerHTML, 'July ranking');
+    assert.equal(select.children.length, 6);
+    assert.equal(select.listeners.change.length, 1);
+    for (const heading of headings) assert.equal(heading.children.length, 1);
+  });
+}
+
 test('sorting reorders shown rows, keeps rank order for ties and puts missing values last', async () => {
   const ui = boot({ controls: true });
   const { headings, select, label, order, reset } = rankingTable(ui,

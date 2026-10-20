@@ -319,6 +319,8 @@ the existing source review and participant acceptance gates still apply.
   month's activity including the hidden columns, every scheme's holding, and
   its quarterly filings. Filings published after that month's portfolios went
   public are flagged, never silently used. Escape closes it.
+  Stock lookup queries are limited to 256 characters; both `/api/stocks/search`
+  and `/fragments/stock` return HTTP 422 for longer input.
 - A holding whose current or adjacent previous snapshot is invalid stays visible
   for inspection, while its comparison is marked **withheld** and no action
   is asserted. Missing or unreadable comparison inputs are also withheld. A scheme with no

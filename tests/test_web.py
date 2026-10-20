@@ -1116,3 +1116,37 @@ def test_equity_disclosure_markers_do_not_hide_relevant_search_results(tmp_path)
     watch = {"month": "2026-08", "stocks": ["INE002A01018"], "active_only": False}
     assert client.post("/api/watchlist", json=watch).json()["stocks"][0]["name"] == "Reliance Industries"
     assert "EQ - Reliance" not in client.post("/watchlist/report", json=watch).text
+
+
+def test_stock_lookup_rejects_oversized_search_queries(tmp_path):
+    db = _copy_db(tmp_path)
+    before = _hash(db)
+    client = TestClient(create_app(db))
+    for route in ("/api/stocks/search", "/fragments/stock"):
+        # SQLite rejects LIKE patterns longer than 50,000 bytes. Reject an
+        # unreasonable lookup before it can turn into a database exception.
+        for query in ("a" * 50_000, "a" * 257):
+            response = client.get(route, params={"q": query})
+            assert response.status_code == 422
+            assert response.json()["detail"][0]["loc"] == ["query", "q"]
+        assert client.get(route, params={"q": "Reliance"}).status_code == 200
+    assert _hash(db) == before
+
+
+def test_history_house_picker_normalizes_integer_filters_before_querying(tmp_path):
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE schemes SET is_active_equity = 0 WHERE scheme_id = 3")
+    before = _hash(db)
+    client = TestClient(create_app(db))
+    params = {"start": "2026-07", "end": "2026-08"}
+    for active_only in (str(10 ** 300), str(-(10 ** 300)), "0", "2"):
+        response = client.get("/history/INE002A01018", params={
+            **params, "active_only": active_only})
+        assert response.status_code == 200
+        assert 'value="B AMC"' in response.text
+        assert "All fund types" in response.text
+    active = client.get("/history/INE002A01018", params={**params, "active_only": "1"})
+    assert active.status_code == 200
+    assert 'value="B AMC"' not in active.text
+    assert _hash(db) == before

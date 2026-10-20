@@ -19,7 +19,7 @@ from urllib.parse import urlencode
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import FastAPI, HTTPException, Path as PathParam, Request
+from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Request
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import Response
@@ -44,6 +44,9 @@ _WEB_DIR = Path(__file__).resolve().parent
 # Consensus rows per page; 0 shows every ranked stock.
 _ROW_LIMITS = (25, 50, 0)
 _DEFAULT_LIMIT = _ROW_LIMITS[0]
+# Stock lookup text is a human-entered company name or ISIN, not an unbounded
+# SQLite LIKE pattern (which raises for sufficiently long input).
+_MAX_STOCK_QUERY_LENGTH = 256
 # Ranked months kept in memory; each is keyed on the DB file's signature.
 _RANKED_CACHE_SIZE = 16
 _ranked_cache: dict[tuple, pd.DataFrame] = {}
@@ -923,7 +926,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 "SELECT DISTINCT s.amc_name FROM schemes s JOIN mf_holdings_monthly h USING(scheme_id) "
                 "WHERE h.report_month BETWEEN ? AND ? "
                 "AND (?=0 OR s.is_active_equity=1) ORDER BY s.amc_name",
-                (start, end, active_only))]
+                (start, end, active_only == 1))]
             if amc and amc not in houses:
                 houses.append(amc)
             return templates.TemplateResponse(request, "history.html",
@@ -979,7 +982,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             conn.close()
 
     @app.get("/api/stocks/search")
-    def api_stock_search(q: str = "", month: str | None = None, limit: int = 8) -> Any:
+    def api_stock_search(q: Annotated[str, Query(max_length=_MAX_STOCK_QUERY_LENGTH)] = "",
+                         month: str | None = None, limit: int = 8) -> Any:
         """Name or ISIN-prefix suggestions for the stock lookup, as JSON."""
         conn = _ro_connect(resolved_db, releases)
         try:
@@ -992,7 +996,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             conn.close()
 
     @app.get("/fragments/stock")
-    def stock_fragment(request: Request, q: str, month: str | None = None,
+    def stock_fragment(request: Request, q: Annotated[str, Query(max_length=_MAX_STOCK_QUERY_LENGTH)],
+                       month: str | None = None,
                        equity_only: int = 1, active_only: int = 1) -> Any:
         """A stock's detail by ISIN, or by name when q is not a known ISIN.
 

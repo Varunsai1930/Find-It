@@ -150,6 +150,29 @@ def test_a_malformed_month_is_refused_before_anything_is_written(tmp_path, month
     assert conn.execute("SELECT COUNT(*) FROM mf_holdings_monthly").fetchone()[0] == 0
 
 
+@pytest.mark.parametrize("column", ["amc_name", "scheme_name"])
+@pytest.mark.parametrize("missing_name", [None, "", "   "])
+def test_missing_snapshot_identity_refuses_the_entire_correction(tmp_path, column, missing_name):
+    """A dropped group must not turn a partial correction into a complete snapshot."""
+    conn = db.get_connection(str(tmp_path / "t.db"))
+    try:
+        path = _csv(tmp_path, "a.csv", "2026-08", AUGUST)
+        db.load_parsed_csv(conn, path)
+        before = conn.execute("SELECT * FROM mf_holdings_monthly ORDER BY isin").fetchall()
+        frame = pd.read_csv(path)
+        frame.loc[0, "quantity"] = 999
+        frame.loc[1, column] = missing_name
+        frame.to_csv(path, index=False)
+
+        with pytest.raises(ValueError, match=column):
+            db.load_parsed_csv(conn, path)
+
+        assert conn.execute("SELECT * FROM mf_holdings_monthly ORDER BY isin").fetchall() == before
+        assert conn.execute("SELECT COUNT(*) FROM schemes").fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
 def test_the_run_log_never_calls_an_unfinished_run_completed(tmp_path, monkeypatch):
     july, august = (_csv(tmp_path, "j.csv", "2026-07", JULY),
                     _csv(tmp_path, "a.csv", "2026-08", AUGUST))
