@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
 import requests
 
 from findit.core.publication import month_end
@@ -88,20 +89,24 @@ def parse_bhavcopy(content: bytes, report_month: str | None, trade_date: date,
     frame["isin"] = frame[isin_col].astype(str).str.strip().str.upper()
     frame["close_price"] = pd.to_numeric(frame[close_col], errors="coerce")
     frame = frame[frame["isin"].str.match(r"^[A-Z]{2}[A-Z0-9]{10}$", na=False)]
-    frame = frame[frame["close_price"].notna() & (frame["close_price"] > 0)]
+    frame = frame[np.isfinite(frame["close_price"]) & (frame["close_price"] > 0)]
     # One ISIN can list under several series; keep the most liquid quote.
     if volume_col in frame.columns:
-        frame["_vol"] = pd.to_numeric(frame[volume_col], errors="coerce").fillna(0)
+        volume = pd.to_numeric(frame[volume_col], errors="coerce")
+        frame["_vol"] = volume.where(np.isfinite(volume) & (volume >= 0), 0)
         frame = frame.sort_values("_vol", ascending=False)
     frame = frame.drop_duplicates("isin", keep="first")
+    traded_value = None
+    if value_col in frame.columns:
+        traded_value = pd.to_numeric(frame[value_col], errors="coerce")
+        traded_value = traded_value.where(np.isfinite(traded_value) & (traded_value >= 0))
 
     return pd.DataFrame({
         "isin": frame["isin"],
         "report_month": report_month,
         "trade_date": trade_date.isoformat(),
         "close_price": frame["close_price"],
-        "traded_value": (pd.to_numeric(frame[value_col], errors="coerce")
-                         if value_col in frame.columns else None),
+        "traded_value": traded_value,
         "series": frame[series_col].astype(str).str.strip(),
         "symbol": frame[symbol_col].astype(str).str.strip(),
         "source": "nse_bhavcopy",
@@ -219,6 +224,14 @@ def _upsert_prices(conn, prices: pd.DataFrame, table: str, columns: list[str]) -
     missing = set(columns) - set(prices.columns)
     if missing:
         raise ValueError(f"price rows are missing expected columns: {sorted(missing)}")
+    prices = prices.copy()
+    closes = pd.to_numeric(prices["close_price"], errors="coerce")
+    if not (np.isfinite(closes) & (closes > 0)).all():
+        raise ValueError("price rows require finite positive closing prices")
+    prices["close_price"] = closes
+    if "traded_value" in columns:
+        value = pd.to_numeric(prices["traded_value"], errors="coerce")
+        prices["traded_value"] = value.where(np.isfinite(value) & (value >= 0))
     rows = prices.loc[:, columns].where(pd.notna(prices[columns]), None)
     conn.executemany(
         f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) "
