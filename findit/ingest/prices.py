@@ -15,6 +15,7 @@ network, and it caches each day's file so a re-run costs nothing.
 from __future__ import annotations
 
 import io
+import tempfile
 import zipfile
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -134,10 +135,12 @@ def _fetch_day(day: date, report_month: str | None, cache: Path, http,
     cached = cache / f"bhavcopy_{stamp}.zip"
     if cached.exists():
         try:
-            return parse_bhavcopy(cached.read_bytes(), report_month, day, str(cached))
+            prices = parse_bhavcopy(cached.read_bytes(), report_month, day, str(cached))
+            if not prices.empty:
+                return prices
+            attempts.append(f"{stamp}: cached file has no equity rows")
         except PriceFetchError as exc:
             attempts.append(f"{stamp}: cached file {exc}")
-            return None
     if day.weekday() >= 5:  # never spend a request on a weekend
         return None
     for url in bhavcopy_urls(day):
@@ -157,7 +160,11 @@ def _fetch_day(day: date, report_month: str | None, cache: Path, http,
         if prices.empty:
             attempts.append(f"{stamp}: no equity rows")
             continue
-        cached.write_bytes(response.content)
+        # Readers see either the old complete file or the new complete file.
+        with tempfile.TemporaryDirectory(prefix=".bhavcopy-", dir=cache) as folder:
+            staged = Path(folder) / cached.name
+            staged.write_bytes(response.content)
+            staged.replace(cached)
         return prices
     return None
 

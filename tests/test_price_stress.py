@@ -1,5 +1,6 @@
 """Adversarial price inputs and fault injection; synthetic data only."""
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -69,3 +70,41 @@ def test_current_month_uses_only_available_days(tmp_path, monkeypatch):
     frame = P.fetch_bhavcopy("2026-09", cache_dir=tmp_path, session=session)
     assert frame["report_month"].tolist() == ["2026-09"]
     assert frame["trade_date"].tolist() == ["2026-09-15"]
+
+
+@pytest.mark.parametrize("daily", [False, True])
+@pytest.mark.parametrize("cached", [b"truncated zip", _zip([{**ROW, "SctySrs": "GB"}])],
+                         ids=["truncated", "no-equity"])
+def test_unusable_cache_is_refetched_without_skipping_the_day(tmp_path, daily, cached):
+    cache = tmp_path / "bhavcopy_20260831.zip"
+    cache.write_bytes(cached)
+    session = _Session({"20260831", "20260828", "20260901"})
+    if daily:
+        frame = P.fetch_close_on_or_after(date(2026, 8, 31), tmp_path, session)
+    else:
+        frame = P.fetch_bhavcopy("2026-08", tmp_path, session)
+    assert frame["trade_date"].tolist() == ["2026-08-31"]
+    assert session.requested == ["20260831"]
+    assert P.parse_bhavcopy(cache.read_bytes(), None, date(2026, 8, 31))[
+        "close_price"].tolist() == [1500.0]
+    # A repaired cache must work offline.
+    session.available.clear()
+    assert P.fetch_bhavcopy("2026-08", tmp_path, session)["close_price"].tolist() == [1500.0]
+    assert session.requested == ["20260831"]
+
+
+def test_cache_publish_failure_preserves_existing_bytes(tmp_path, monkeypatch):
+    cache = tmp_path / "bhavcopy_20260831.zip"
+    cache.write_bytes(b"damaged original")
+    original_replace = Path.replace
+
+    def fail_cache_publish(self, target):
+        if Path(target) == cache:
+            raise OSError("injected cache publication failure")
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_cache_publish)
+    with pytest.raises(OSError, match="injected cache"):
+        P.fetch_bhavcopy("2026-08", tmp_path, _Session({"20260831"}))
+    assert cache.read_bytes() == b"damaged original"
+    assert sorted(p.name for p in tmp_path.iterdir()) == [cache.name]
