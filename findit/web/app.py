@@ -243,7 +243,14 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any], *,
     overview = overview if overview is not None else _month_overview(conn, month, bool(view["active_only"]))
     ranked = _ranked(conn, month, bool(view["equity_only"]), bool(view["active_only"]))
     ordered = consensus_signals.broadest_selling(ranked) if view["side"] == "sell" else ranked
-    rows = _records(ordered if view["limit"] == 0 else ordered.head(view["limit"]))
+    page_size = view["limit"] or 50
+    page_count = max(1, math.ceil(len(ordered) / page_size)) if view["limit"] == 0 else 1
+    page = min(view.get("page", 1), page_count)
+    offset = (page - 1) * page_size
+    view = {k: v for k, v in view.items() if k != "page"}
+    if page > 1:
+        view["page"] = page
+    rows = _records(ordered.iloc[offset:offset + page_size])
     status = ranked["shareholding_status"] if not ranked.empty else None
     filings = {
         "latest_quarter": None if ranked.empty else ranked["shareholding_quarter_end"].max(),
@@ -258,6 +265,7 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any], *,
         **view,
         "view": view,
         "row_limits": _ROW_LIMITS,
+        "page": page, "page_count": page_count, "row_offset": offset,
         "total": len(ranked),
         "rows": rows,
         "message": "" if rows else _no_signal_message(conn, month),
@@ -273,9 +281,10 @@ def _month_view(conn: sqlite3.Connection, view: dict[str, Any], *,
 
 
 def _view(month: str | None, equity_only: int, active_only: int, side: str, limit: int,
-          cols: str) -> dict[str, Any]:
+          cols: str, page: int = 1) -> dict[str, Any]:
     """Normalised view parameters, shared by the page, the fragment and their links."""
     return {
+        **({"page": page} if limit == 0 and page > 1 else {}),
         "month": month,
         "side": "sell" if side == "sell" else "buy",
         "limit": limit if limit in _ROW_LIMITS else _DEFAULT_LIMIT,
@@ -1077,12 +1086,13 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     @app.get("/fragments/month/{month}")
     def month_fragment(request: Request, month: str, equity_only: int = 1,
                        active_only: int = 1, side: str = "buy",
-                       limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
+                       limit: int = _DEFAULT_LIMIT, cols: str = "core",
+                       page: Annotated[int, Query(ge=1, le=1_000_000)] = 1) -> Any:
         conn = _ro_connect(resolved_db, releases)
         try:
             if month not in _known_months(conn):
                 raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
-            view = _view(month, equity_only, active_only, side, limit, cols)
+            view = _view(month, equity_only, active_only, side, limit, cols, page)
             ctx = _sanitize(month_context(conn, view))
             return templates.TemplateResponse(request, "_month_view.html", ctx)
         finally:
@@ -1092,7 +1102,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     @app.get("/")
     def dashboard(request: Request, month: str | None = None, equity_only: int = 1,
                   active_only: int = 1, side: str = "buy",
-                  limit: int = _DEFAULT_LIMIT, cols: str = "core") -> Any:
+                  limit: int = _DEFAULT_LIMIT, cols: str = "core",
+                  page: Annotated[int, Query(ge=1, le=1_000_000)] = 1) -> Any:
         try:
             conn = _ro_connect(resolved_db, releases)
         except HTTPException as exc:
@@ -1114,7 +1125,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             if month not in months:
                 month = months[0] if months else None
             has_schemes = conn.execute("SELECT 1 FROM schemes LIMIT 1").fetchone() is not None
-            view = _view(month, equity_only, active_only, side, limit, cols)
+            view = _view(month, equity_only, active_only, side, limit, cols, page)
             ctx: dict[str, Any] = {**view, "view": view, "months": months,
                                    "has_schemes": has_schemes}
             if month is not None:

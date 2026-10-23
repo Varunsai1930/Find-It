@@ -107,7 +107,7 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
   if (controls) {
     const fields = { month: elements['month-select'] };
     const params = new URL(location.href).searchParams;
-    for (const [name, fallback] of Object.entries({ side: 'buy', limit: '25', cols: 'core' })) {
+    for (const [name, fallback] of Object.entries({ side: 'buy', limit: '25', cols: 'core', page: '1' })) {
       fields[name] = new Element(); fields[name].name = name;
       fields[name].value = params.get(name) || fallback;
     }
@@ -916,4 +916,18 @@ test('fund catalog loads on demand, shares pending work and retries failure', as
   assert.match(ui.elements['scheme-options'].textContent, /Fund B/);
   await ui.type('scheme-search', 'Fund');
   assert.equal(ui.requests.length, 2);
+});
+
+
+test('ranking page links preserve filters and a filter change returns to page one', async () => {
+  const ui = boot({ controls: true });
+  const link = new Element();
+  link.href = 'http://localhost/?limit=0&cols=all&page=2';
+  link.closest = selector => selector === '[data-view-link]' ? link : null;
+  ui.documentEvents.emit('click', { target: link });
+  assert.match(ui.requests.at(-1).url, /page=2/);
+  assert.equal(ui.elements['view-controls'].elements.limit.value, '0');
+  ui.requests.at(-1).respond('page two'); await settle();
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  assert.doesNotMatch(ui.requests.at(-1).url, /page=/);
 });

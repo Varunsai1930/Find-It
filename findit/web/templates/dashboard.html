@@ -68,7 +68,7 @@
     <label class="field field--rows" data-view="activity">
       <span class="field__label">Rows</span>
       <select name="limit" id="limit-select">
-        {% for n in row_limits %}<option value="{{ n }}"{% if n == limit %} selected{% endif %}>{{ 'Top %d'|format(n) if n else 'All' }}</option>{% endfor %}
+        {% for n in row_limits %}<option value="{{ n }}"{% if n == limit %} selected{% endif %}>{{ 'Top %d'|format(n) if n else 'All (50 per page)' }}</option>{% endfor %}
       </select>
     </label>
     <div class="checks">
@@ -77,6 +77,7 @@
       <input type="hidden" name="active_only" value="0">
       <label class="check" data-view="activity summary watchlist" title="Exclude index funds, ETFs, arbitrage, FoFs and debt funds"><input type="checkbox" name="active_only" id="active-only" value="1"{% if active_only %} checked{% endif %}> Active stock-pickers only</label>
     </div>
+    <input type="hidden" name="page" value="{{ page|default(1) }}">
     <input type="hidden" name="cols" id="cols-input" value="{{ cols }}">
     <noscript><button type="submit" class="btn">Apply</button></noscript>
     <span class="controls__status" id="view-status" role="status" aria-live="polite"></span>

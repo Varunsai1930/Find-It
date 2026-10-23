@@ -718,3 +718,5 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
   .fund-card { min-height: 0; }
   .fund-card__identity { flex-direction: row; min-height: 0; }
 }
+
+.pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 16px; }

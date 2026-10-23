@@ -18,7 +18,7 @@
       </div>
       {% if rows %}
       <div class="panel__actions">
-        <label class="sort-select" hidden><span class="visually-hidden">Sort rows by</span><select id="sort-select"></select></label>
+        <label class="sort-select" hidden><span class="visually-hidden">Sort displayed rows by</span><select id="sort-select"></select></label>
         <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, cols='core' if all_cols else 'all')|urlencode }}">{{ 'Fewer columns' if all_cols else 'More columns' }}</a>
       </div>
       {% endif %}
@@ -107,10 +107,10 @@
     <tbody>
       {#- data-sort holds each cell's raw value; an empty one sorts last. -#}
       {% for row in rows %}
-      <tr data-rank="{{ loop.index }}">
+      <tr data-rank="{{ row_offset + loop.index }}">
         <th scope="row" class="col-stock" data-sort="{{ row.stock_name|stock_label }}">
           <div class="stock-cell">
-            <span class="rank">{{ loop.index }}</span>
+            <span class="rank">{{ row_offset + loop.index }}</span>
             <div>
               <button type="button" class="stock-link" data-isin="{{ row.isin }}" aria-haspopup="dialog">{{ row.stock_name|stock_label }}</button>
               <span class="sub">{{ row.isin }}{% if row.industry %} · {{ row.industry }}{% endif %}{% if row.universe_status == 'new_listing' %} · <span class="tag tag--info" title="Absent from loaded prior-month holdings; exchange listing date is unknown.">new in loaded portfolios</span>{% endif %}</span>
@@ -135,7 +135,13 @@
     </tbody>
   </table>
   </div>
-  {% if rows|length < total %}
+  {% if limit == 0 and page_count > 1 %}
+  <nav class="panel__foot pagination" aria-label="Stock ranking pages">
+    {% if page > 1 %}<a class="btn btn--quiet" data-view-link href="/?{{ dict(view, page=page-1)|urlencode }}">Previous</a>{% endif %}
+    <span role="status">Page {{ page }} of {{ page_count }} · {{ row_offset + 1 }}–{{ row_offset + rows|length }} of {{ total }} stocks</span>
+    {% if page < page_count %}<a class="btn btn--quiet" data-view-link href="/?{{ dict(view, page=page+1)|urlencode }}">Next</a>{% endif %}
+  </nav>
+  {% elif rows|length < total %}
   <div class="panel__foot">
     <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, limit=0)|urlencode }}">Show all {{ total }}</a>
   </div>

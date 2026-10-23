@@ -365,6 +365,7 @@
     q.set("side", data.get("side") || "buy");
     q.set("limit", data.get("limit") || "25");
     q.set("cols", data.get("cols") || "core");
+    if (data.get("page") && data.get("page") !== "1") q.set("page", data.get("page"));
     q.set("equity_only", document.getElementById("equity-only").checked ? "1" : "0");
     q.set("active_only", document.getElementById("active-only").checked ? "1" : "0");
     return q;
@@ -399,6 +400,7 @@
     fields.side.value = q.get("side") === "sell" ? "sell" : "buy";
     fields.limit.value = optionValue(fields.limit, q.get("limit"));
     fields.cols.value = q.get("cols") === "all" ? "all" : "core";
+    if (fields.page) fields.page.value = q.get("page") || "1";
     document.getElementById("equity-only").checked = !q.has("equity_only") || q.get("equity_only") === "1";
     document.getElementById("active-only").checked = !q.has("active_only") || q.get("active_only") === "1";
     var monthChanged = previousMonth !== currentMonth();
@@ -965,6 +967,7 @@
   // -- view controls ----------------------------------------------------------
   if (form) {
     form.addEventListener("change", function (e) {
+      if (form.elements.page) form.elements.page.value = "1";
       viewChanged(e.target.name === "side", e.target.id === "month-select");
     });
     form.addEventListener("submit", function (e) { e.preventDefault(); refreshView(); });
@@ -992,8 +995,9 @@
     var viewLink = e.target.closest("[data-view-link]");
     if (viewLink && form) {
       e.preventDefault();
+      if (form.elements.page) form.elements.page.value = "1";
       new URL(viewLink.href).searchParams.forEach(function (value, key) {
-        if (key === "limit" || key === "cols") form.elements[key].value = value;
+        if ((key === "limit" || key === "cols" || key === "page") && form.elements[key]) form.elements[key].value = value;
       });
       refreshView();
     }

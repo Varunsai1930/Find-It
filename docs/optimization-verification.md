@@ -23,3 +23,5 @@ fingerprints receive a one-year immutable cache policy; missing or mismatched
 fingerprints must revalidate. Private watchlist and report responses retain
 `private, no-store`. Check these headers on the deployed origin too when its
 CDN serves static files directly; local verification covers the ASGI server.
+
+“All” stock rankings use server pages of 50 rows. Page links preserve filters, absolute ranks and column selection; changing a filter returns to page one. Column sorting applies to the displayed rows.

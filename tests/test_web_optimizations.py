@@ -159,3 +159,28 @@ def test_compression_and_verified_asset_fingerprint_cache_policy(tmp_path):
     for url in ("/static/style.css", "/static/style.css?v=incorrect"):
         assert "immutable" not in client.get(url).headers["cache-control"]
     assert client.post("/api/watchlist", json={"month": "2026-08", "stocks": []}).headers["cache-control"] == "private, no-store"
+
+
+def test_all_rankings_paginate_on_server_and_preserve_absolute_rank(tmp_path):
+    import re
+    import sqlite3
+    from findit.core import delta_calculator
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        for i in range(150):
+            isin = f"INE{i:03}A01012"
+            conn.execute("INSERT OR IGNORE INTO stocks VALUES (?,?,'Test','equity')", (isin, f"Paged Company {i}"))
+            for month, quantity in (("2026-07",100), ("2026-08",110)):
+                conn.execute("INSERT INTO mf_holdings_monthly(scheme_id,isin,report_month,quantity,market_value_lakhs,pct_nav) VALUES (1,?,?,?,?,1)",
+                             (isin,month,quantity,quantity))
+        delta_calculator.persist_deltas(conn, delta_calculator.compute_deltas(conn,"2026-07","2026-08"))
+    client = TestClient(create_app(db))
+    all_ranks = []
+    for page in range(1,5):
+        response = client.get("/fragments/month/2026-08", params={"limit":0,"page":page})
+        assert response.status_code == 200
+        ranks = [int(n) for n in re.findall(r'<tr data-rank="(\d+)"', response.text)]
+        assert 0 < len(ranks) <= 50
+        all_ranks.extend(ranks)
+    assert all_ranks == list(range(1,len(all_ranks)+1))
+    assert client.get("/fragments/month/2026-08?page=0").status_code == 422
