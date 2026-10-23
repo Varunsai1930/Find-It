@@ -22,7 +22,11 @@
       document.title = "FindIt · " + link.dataset.title;
     }
     if (pageDescription && link.dataset.description) pageDescription.textContent = link.dataset.description;
-    link.scrollIntoView({ block: "nearest", inline: "nearest" });
+    // Scroll only the navigation rail. scrollIntoView also changes the
+    // browser's sequential keyboard starting point on initial page load.
+    var bounds = link.getBoundingClientRect(), rail = sectionNav.getBoundingClientRect();
+    if (bounds.left < rail.left) sectionNav.scrollLeft -= rail.left - bounds.left + 16;
+    else if (bounds.right > rail.right) sectionNav.scrollLeft += bounds.right - rail.right + 16;
     updateOverflow(sectionNav);
   }
   // No hash means the default view; other non-view anchors keep the current view.
@@ -42,6 +46,7 @@
     }
     showView(link);
     window.scrollTo(0, 0);
+    if (pageTitle && keyboardAction) pageTitle.focus();
   }
   // The nav links (on narrow screens) and the notable lists scroll sideways;
   // fade the edge that hides more.
@@ -518,6 +523,7 @@
       var button = document.createElement("button");
       button.type = "button";
       button.className = "sort";
+      button.setAttribute("aria-label", "Sort by " + th.dataset.sortLabel);
       button.append.apply(button, Array.from(th.childNodes));
       th.append(button);
       button.addEventListener("click", function () {
@@ -577,6 +583,7 @@
       // Only wire the fragment this request rendered; cancelled requests must
       // not wrap the current table's sort buttons or register listeners again.
       enhanceView();
+      viewStatus.textContent = monthLabel() + " results updated.";
       if (hadFocus) {
         var title = document.getElementById("consensus-title");
         if (title) title.focus();
@@ -603,6 +610,7 @@
       list.hidden = true;
       input.setAttribute("aria-expanded", "false");
       input.removeAttribute("aria-activedescendant");
+      input.removeAttribute("aria-busy");
       active = -1;
     }
 
@@ -665,6 +673,8 @@
       var query = input.value.trim();
       var mine = ++seq;
       if (query.length < opts.minChars) { close(); status.textContent = ""; return; }
+      input.setAttribute("aria-busy", "true");
+      status.textContent = "Loading suggestions…";
       try {
         var results = await opts.source(query);
         if (mine !== seq) return;
@@ -674,7 +684,9 @@
         show(results.slice(0, maximum), note);
       } catch (e) {
         if (e.name === "AbortError" || mine !== seq) return;
-        show([], "Could not load suggestions (" + e.message + ").");
+        show([], "Could not load suggestions (" + e.message + "). Type again to retry.");
+      } finally {
+        if (mine === seq) input.removeAttribute("aria-busy");
       }
     }
 

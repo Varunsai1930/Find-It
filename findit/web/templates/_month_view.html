@@ -18,7 +18,7 @@
       </div>
       {% if rows %}
       <div class="panel__actions">
-        <label class="sort-select" hidden><span class="visually-hidden">Sort displayed rows by</span><select id="sort-select"></select></label>
+        <label class="sort-select" hidden><span class="visually-hidden">Sort displayed rows by</span><select id="sort-select" aria-controls="consensus-table"></select></label>
         <a class="btn btn--quiet" data-view-link href="/?{{ dict(view, cols='core' if all_cols else 'all')|urlencode }}">{{ 'Fewer columns' if all_cols else 'More columns' }}</a>
       </div>
       {% endif %}

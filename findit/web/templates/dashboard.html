@@ -43,7 +43,7 @@
   <section class="intro" aria-labelledby="page-title">
     <div>
       <p class="eyebrow">Monthly portfolio disclosures</p>
-      <h1 id="page-title">Monthly fund activity</h1>
+      <h1 id="page-title" tabindex="-1">Monthly fund activity</h1>
       <p class="intro__description" id="page-description">See which stocks Indian mutual funds added or reduced. Open a stock to check the funds and source data.</p>
     </div>
     <a class="intro__link" href="#notes-title">How to read the data {{ icon('arrow-up-right', 14) }}</a>
@@ -84,7 +84,7 @@
   </form>
   {% endif %}
 
-  <div id="month-view">
+  <div id="month-view" tabindex="-1">
     {% if month %}
     {% include "_month_view.html" %}
     {% else %}

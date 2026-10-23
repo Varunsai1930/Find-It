@@ -970,6 +970,35 @@ test('watchlist refresh failure keeps its previous report and list', async () =>
 });
 
 
+test('keyboard view navigation moves focus to its heading', () => {
+  const ui = boot();
+  ui.documentEvents.emit('keydown', { key: 'Enter' });
+  ui.documentEvents.emit('click', { target: ui.navLinks[2] });
+  assert.equal(ui.elements['page-title'].focusCount, 1);
+  assert.equal(ui.elements['page-title'].textContent, 'My watchlist');
+});
+
+test('autocomplete announces loading and clears busy on completion or dismissal', async () => {
+  const ui = boot();
+  await ui.type('stock-search', 'Reliance');
+  assert.equal(ui.elements['stock-search'].getAttribute('aria-busy'), 'true');
+  assert.match(ui.elements['stock-search-status'].textContent, /Loading suggestions/);
+  ui.requests.at(-1).respond(stockResponse('Reliance')); await settle();
+  assert.equal(ui.elements['stock-search'].getAttribute('aria-busy'), null);
+  assert.match(ui.elements['stock-search-status'].textContent, /1 suggestion/);
+  await ui.type('stock-search', 'Infosys');
+  ui.elements['stock-search'].emit('blur');
+  assert.equal(ui.elements['stock-search'].getAttribute('aria-busy'), null);
+});
+
+test('completed filter changes announce the selected month', async () => {
+  const ui = boot({ controls: true });
+  ui.elements['month-select'].value = '2026-07';
+  await refresh(ui);
+  assert.equal(ui.elements['view-status'].textContent, 'Jul 2026 results updated.');
+});
+
+
 test('storage failure warnings survive successful watchlist refreshes', async () => {
   const ui = boot({ controls: true, watch: [], storageBlocked: true });
   const bookmark = new Element(); bookmark.dataset.watchStock = 'INE002A01018';
