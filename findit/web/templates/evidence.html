@@ -11,7 +11,7 @@
 <main class="page evidence-page" id="evidence-main">
 <div class="page-heading">
 <div class="page-heading__copy"><p class="eyebrow">Sources and calculations</p>
-<h1>View evidence</h1>
+<h1>{{ e.stock_name or 'View evidence' }}</h1>
 <p class="evidence-id">{{ e.isin }}</p>
 <p class="scope-line">{{ e.amc or 'All compared fund houses' }} · {% if not e.baseline %}{{ e.prev_month|month_label }} →{% endif %} {{ e.month|month_label }} · {{ 'Active stock-pickers' if e.active_only else 'All fund types' }} · domestic equity</p></div>
 <span class="page-heading__icon" aria-hidden="true">{{ icon('file', 24) }}</span>

@@ -20,8 +20,8 @@
   <main class="page history-page" id="history-main">
     <div class="page-heading">
       <div class="page-heading__copy">
-        <p class="eyebrow">Ownership over time</p>
-        <h1>Holding history</h1>
+        <p class="eyebrow">Holding history · Ownership over time</p>
+        <h1>{{ h.stock_name or 'Holding history' }}</h1>
         <p class="evidence-id">{{ h.isin }}</p>
         <p class="scope-line">{{ h.start|month_label }} → {{ h.end|month_label }} · {{ h.amc or 'All compared houses' }} · {{ 'Active stock-pickers' if h.active_only else 'All fund types' }} · domestic equity</p>
       </div>

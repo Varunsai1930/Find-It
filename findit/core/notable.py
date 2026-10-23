@@ -60,9 +60,12 @@ def notable_lists(ranked: pd.DataFrame, earlier: list[tuple[str, pd.DataFrame | 
     frame["_position"] = range(len(frame))
     net = frame["net_amc_count"].astype(float) * sign if len(frame) else pd.Series(dtype=float)
     word = "buying" if buying else "selling"
+    direction_rule = (f" More fund houses are {word} than "
+                      f"{'selling' if buying else 'buying'} overall.")
 
     def ordered(mask, *keys):
         """Matching rows, by each key descending, then ranking position."""
+        mask = mask & (net > 0)
         chosen = frame[mask].copy()
         for i, key in enumerate(keys):
             chosen[f"_k{i}"] = key[mask]
@@ -91,7 +94,7 @@ def notable_lists(ranked: pd.DataFrame, earlier: list[tuple[str, pd.DataFrame | 
         fresh = {"key": "opened", "title": "Fresh positions", "needs": None, "stocks": [],
                  "rule": (f"Schemes at {MIN_HOUSES} or more fund houses opened a position they "
                           "did not hold last month. Stocks absent from last month's loaded "
-                          "portfolios, such as new listings, are left out.")}
+                          "portfolios, such as new listings, are left out." + direction_rule)}
         if len(frame):
             count = frame["amcs_opening"].astype(int)
             mask = (count >= MIN_HOUSES) & (frame["universe_status"] != "new_listing")
@@ -101,7 +104,7 @@ def notable_lists(ranked: pd.DataFrame, earlier: list[tuple[str, pd.DataFrame | 
     else:
         fresh = {"key": "exited", "title": "Full exits", "needs": None, "stocks": [],
                  "rule": (f"Schemes at {MIN_HOUSES} or more fund houses sold their whole "
-                          "position. Other schemes at the same house may still hold it.")}
+                          "position. Other schemes at the same house may still hold it." + direction_rule)}
         if len(frame):
             count = frame["amcs_exiting"].astype(int)
             for _, row in ordered(count >= MIN_HOUSES, count).iterrows():
@@ -112,7 +115,7 @@ def notable_lists(ranked: pd.DataFrame, earlier: list[tuple[str, pd.DataFrame | 
     # 3. Active choices: changes larger than price movement alone would cause.
     active = {"key": "active", "title": f"Active {word}", "needs": None, "stocks": [],
               "rule": (f"{MIN_HOUSES} or more net fund houses whose change was larger than "
-                       "price movement alone would cause.")}
+                       "price movement alone would cause." + direction_rule)}
     if len(frame):
         choice = frame["net_active_amc_count"].fillna(0).astype(float) * sign
         for _, row in ordered(choice >= MIN_HOUSES, choice).iterrows():

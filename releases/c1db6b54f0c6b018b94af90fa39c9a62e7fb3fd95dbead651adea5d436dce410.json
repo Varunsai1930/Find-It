@@ -1,0 +1,25 @@
+{
+  "release_id": "c1db6b54f0c6b018b94af90fa39c9a62e7fb3fd95dbead651adea5d436dce410",
+  "rule_version": "readiness-2026-10-06",
+  "label": "Recovered local dataset 2026-10-18",
+  "parent_release": null,
+  "revision_notes": "Automated local recovery checked integrity, original hashes, preservation of previous schemes and snapshots, and rendered research routes. July-August: 267 comparable active funds with original evidence, HDFC 29; twelve-month fixed cohort 95. Eight original download URLs and some publication times are unavailable; retained workbooks and row evidence remain available. Wider fund-universe completeness is not established.",
+  "report_month": null,
+  "created_at": "2026-10-18T14:47:14.694652+00:00",
+  "counts": {
+    "schemes": 1213,
+    "stocks": 9550,
+    "mf_holdings_monthly": 448564,
+    "mf_holding_deltas": 387597,
+    "scheme_month_status": 8227,
+    "corporate_actions": 6,
+    "security_prices_monthly": 9915,
+    "shareholding_quarterly": 22211,
+    "coverage_inventories": 12,
+    "expected_funds": 1244,
+    "disclosure_sources": 2568,
+    "snapshot_sources": 8227,
+    "holding_evidence": 563015
+  },
+  "database_sha256": "42194210963ead1d024b858d3f8cd34b449b8ba7175aa8e538558ec79d853eb2"
+}

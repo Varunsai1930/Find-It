@@ -20,6 +20,7 @@ from typing import Any
 import pandas as pd
 
 from findit.core.data_quality import bad_domestic_quantity_pairs
+from findit.core.display import scheme_name as display_scheme_name, stock_name as display_stock_name
 from findit.store import queries
 
 RULES_VERSION = "rules-v1"
@@ -185,12 +186,14 @@ def build_summary(
     It does not decide whether the month may be shown: `get_summary` does,
     withholding quarantined or broken data. Call that, not this, to publish.
     """
+    title_column = "scheme_title" if "scheme_title" in queries.table_columns(conn, "schemes") else "NULL"
     scheme = conn.execute(
-        "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?", (scheme_id,)
+        f"SELECT amc_name, scheme_name, {title_column} FROM schemes WHERE scheme_id = ?", (scheme_id,)
     ).fetchone()
     if scheme is None:
         raise ValueError(f"No scheme with scheme_id={scheme_id}")
-    amc_name, scheme_name = scheme
+    amc_name, scheme_name, scheme_title = scheme
+    scheme_name = display_scheme_name(scheme_name, scheme_title)
 
     has_instrument = "instrument_type" in queries.table_columns(conn, "stocks")
 
@@ -228,6 +231,8 @@ def render_summary(scheme_name: str, amc_name: str, report_month: str,
             f"this month, or this is the first month tracked)."
         )
 
+    deltas = deltas.copy()
+    deltas["stock_name"] = deltas["stock_name"].map(display_stock_name)
     lines = [f"{scheme_name} ({amc_name}) — {report_month} portfolio changes:"]
 
     # When no instrument filter is requested but the column exists, keep
@@ -359,19 +364,20 @@ def get_summary(conn: sqlite3.Connection, scheme_id: int, report_month: str) -> 
     """One scheme-month's summary text plus why it is what it is."""
     state = assess(conn, scheme_id, report_month)
     scheme, tables = state["scheme"], state["tables"]
+    scheme_name = display_scheme_name(scheme["scheme_name"], scheme.get("scheme_title"))
 
     if state["quarantined"] or state["invalid"]:
         explanation = (
             "the current or referenced previous month is quarantined"
             if state["quarantined"]
             else "holding-change data contains invalid numeric values or actions")
-        text = (f"{scheme['scheme_name']} ({scheme['amc_name']}) — {report_month} "
+        text = (f"{scheme_name} ({scheme['amc_name']}) — {report_month} "
                 f"data withheld: {explanation}. Not zero activity — "
                 "the numbers did not pass checks.")
     elif "mf_holding_deltas" in tables and "stocks" in tables:
         text = build_summary(conn, scheme_id, report_month)
     else:
-        text = (f"No holding-change data available for {scheme['scheme_name']} in "
+        text = (f"No holding-change data available for {scheme_name} in "
                 f"{report_month} yet (data may not have been ingested for "
                 "this month, or this is the first month tracked).")
 

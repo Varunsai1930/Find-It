@@ -329,6 +329,67 @@ test('Back restores default controls and prevents an older response from replaci
   assert.equal(ui.body.dataset.currentView, 'activity');
 });
 
+test('Back closes a stock absent from its URL and Forward restores its month and selection', async () => {
+  const ui = boot({ controls: true, hash: '?month=2026-08#monthly-activity' });
+  const backUrl = ui.location.href;
+  ui.documentEvents.emit('click', { target: ui.navLinks[1] });
+  ui.elements['month-select'].value = '2026-07';
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  ui.requests.at(-1).respond('July'); await settle();
+  ui.elements['stock-search'].value = 'Reliance';
+  ui.elements['stock-form'].emit('submit');
+  const stale = ui.requests.at(-1), dialog = ui.elements['stock-dialog'];
+  const forwardUrl = ui.location.href.replace('#', '&stock=INE002A01018#');
+
+  ui.location.href = backUrl;
+  ui.window.emit('popstate');
+  assert.equal(dialog.open, false);
+  assert.equal(stale.signal.aborted, true);
+  ui.requests.at(-1).respond('August'); await settle();
+  stale.respond('Stale July stock'); await settle();
+  assert.equal(ui.elements['month-select'].value, '2026-08');
+  assert.equal(new URL(ui.location.href).searchParams.has('stock'), false);
+
+  ui.location.href = forwardUrl;
+  ui.window.emit('popstate');
+  assert.equal(dialog.open, true);
+  const stockRequest = ui.requests.findLast(r => r.url.startsWith('/fragments/stock?'));
+  const query = new URL(stockRequest.url, ui.location.href).searchParams;
+  assert.equal(query.get('q'), 'INE002A01018');
+  assert.equal(query.get('month'), '2026-07');
+  const head = new Element(); head.dataset.stockIsin = 'INE002A01018';
+  ui.elements['stock-box'].querySelector = selector => selector === '[data-stock-isin]' ? head : null;
+  stockRequest.respond('Restored July stock'); await settle();
+  // A slower ranking response must preserve the restored stock in the URL.
+  ui.requests.findLast(r => r.url.startsWith('/fragments/month/')).respond('July'); await settle();
+  assert.equal(new URL(ui.location.href).searchParams.get('stock'), 'INE002A01018');
+  assert.equal(ui.elements['stock-box'].innerHTML, 'Restored July stock');
+});
+
+test('history replaces an open stock with the restored stock, month and filters', async () => {
+  const ui = boot({ controls: true, hash: '?month=2026-08#monthly-activity' });
+  ui.elements['stock-search'].value = 'Reliance';
+  ui.elements['stock-form'].emit('submit');
+  const stale = ui.requests.at(-1);
+  ui.location.href = 'http://localhost/?month=2026-07&stock=INE009A01021&active_only=0&equity_only=0#monthly-summary';
+  ui.window.emit('popstate');
+  assert.equal(stale.signal.aborted, true);
+  const restored = ui.requests.findLast(r => r.url.startsWith('/fragments/stock?'));
+  const query = new URL(restored.url, ui.location.href).searchParams;
+  assert.equal(query.get('q'), 'INE009A01021');
+  assert.equal(query.get('month'), '2026-07');
+  assert.equal(query.get('active_only'), '0');
+  assert.equal(query.get('equity_only'), '0');
+  ui.requests.findLast(r => r.url.startsWith('/fragments/month/')).respond('July ranking'); await settle();
+  const head = new Element(); head.dataset.stockIsin = 'INE009A01021';
+  ui.elements['stock-box'].querySelector = selector => selector === '[data-stock-isin]' ? head : null;
+  restored.respond('July Infosys'); await settle();
+  stale.respond('Stale August Reliance'); await settle();
+  assert.equal(ui.elements['stock-box'].innerHTML, 'July Infosys');
+  assert.equal(new URL(ui.location.href).searchParams.get('stock'), 'INE009A01021');
+  assert.equal(new URL(ui.location.href).searchParams.get('month'), '2026-07');
+});
+
 test('the search shortcut opens the palette, but / does not while typing', () => {
   const ui = boot({ search: true });
   const dialog = ui.elements['search-dialog'], input = new Element(); input.tagName = 'INPUT';

@@ -126,6 +126,7 @@
   var stockBox = document.getElementById("stock-box");
   var searchDialog = document.getElementById("search-dialog");
   var inflight = {};
+  var stockQuery = "";
   var keyboardAction = false;
   document.addEventListener("keydown", function () { keyboardAction = true; }, true);
   document.addEventListener("pointerdown", function () { keyboardAction = false; }, true);
@@ -442,6 +443,10 @@
       // Supersede a pending request too, so it cannot rewrite this history entry.
       refreshView();
     }
+    // History owns the whole selection, including a stock and its scope.
+    var stock = q.get("stock");
+    if (stock) openStock(stock, true);
+    else stockDrawer.close(true);
   }
 
   function setUrlParam(key, value) {
@@ -570,6 +575,8 @@
       viewStatus.className = "controls__status";
       viewStatus.textContent = "";
       q.set("month", month);
+      // Ranking and stock requests can finish in either order after history.
+      if (dialog.open && stockQuery) q.set("stock", stockQuery);
       var url = new URL(location.href);
       url.search = q.toString();
       history.replaceState(null, "", url);
@@ -620,9 +627,10 @@
       stockBox.innerHTML = r.body;
       updateFollowButtons();
       var head = stockBox.querySelector("[data-stock-isin]");
+      stockQuery = head ? head.dataset.stockIsin : "";
       // The month goes in too, so the link keeps meaning this month after a newer one loads.
       if (month) setUrlParam("month", month);
-      setUrlParam("stock", head ? head.dataset.stockIsin : "");
+      setUrlParam("stock", stockQuery);
       var focusTarget = stockBox.querySelector("h3") || stockBox.querySelector(".stock-link");
       if (focusTarget) focusTarget.focus();
     } catch (e) {
@@ -704,7 +712,10 @@
   }
 
   function abortStock() { if (inflight.stock) inflight.stock.abort(); }
-  var stockDrawer = drawer(dialog, { onClose: abortStock, onClosed: function () {
+  var stockDrawer = drawer(dialog, { onClose: function () {
+    stockQuery = "";
+    abortStock();
+  }, onClosed: function () {
     abortStock();
     setUrlParam("stock", "");
   } });
@@ -714,6 +725,7 @@
   function openStock(query, instant) {
     query = (query || "").trim();
     if (!query) return;
+    stockQuery = query;
     if (searchDialog && searchDialog.open) searchDialog.close();
     stockDrawer.open(instant);
     loadStock(query);

@@ -213,6 +213,57 @@ def test_a_summary_grand_total_above_the_holdings_keeps_them(tmp_path):
     assert list(rows["isin"]) == [INE_A]
 
 
+@pytest.mark.parametrize("kotak", [False, True])
+def test_non_isin_portfolio_still_ends_before_isin_notes(tmp_path, kotak):
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "LIQUID"
+    if kotak:
+        sheet.append(["Name of Instrument", None, None, "ISIN Code", "Industry", "Yield",
+                      "Quantity", "Market Value (Rs.in Lacs)", "% to Net Assets"])
+        sheet.append([None, None, "TREPS", None, None, None, 100, 100, 100])
+        sheet.append([None, None, None, None, "Grand Total", None, None, 100, 100])
+        sheet.append(["Exposure details"])
+        sheet.append([None, None, "Underlying security", INE_A, None, None, 900, 90, 90])
+    else:
+        sheet.append(["Name of Instrument", "ISIN", "Quantity", "Market value (Rs. In lakhs)",
+                      "% to Net Assets"])
+        sheet.append(["TREPS", None, 100, 100, 100])
+        sheet.append(["Grand Total", None, None, 100, 100])
+        sheet.append(["Exposure details"])
+        sheet.append(["Underlying security", INE_A, 900, 90, 90])
+    path = tmp_path / "liquid.xlsx"
+    book.save(path)
+
+    rows = amfi_mf_parser.parse_workbook(
+        path, "Kotak Mahindra AMC" if kotak else "AMC", "2026-08")
+
+    # Preserve the omitted holding's audit metadata, without inventing equity.
+    assert len(rows) == 1
+    assert rows["isin"].isna().all()
+    assert rows["quantity"].isna().all()
+    assert rows["dropped_non_isin_count"].iloc[0] == 1
+    assert rows["dropped_non_isin_pct_nav"].iloc[0] == pytest.approx(100)
+
+
+def test_summary_total_above_holdings_does_not_hide_the_portfolio_end(tmp_path):
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.append(["Name of Instrument", "ISIN", "Quantity", "Market value (Rs. In lakhs)",
+                  "% to Net Assets"])
+    sheet.append(["Grand Total", None, None, 100, 100])
+    sheet.append(["HDFC Bank", INE_A, 100, 100, 100])
+    sheet.append(["Grand Total", None, None, 100, 100])
+    sheet.append(["Exposure", INE_B, 900, 90, 90])
+    path = tmp_path / "summary.xlsx"
+    book.save(path)
+
+    rows = amfi_mf_parser.parse_workbook(path, "AMC", "2026-08")
+
+    assert list(rows["isin"]) == [INE_A]
+    assert list(rows["source_row"]) == [3]
+
+
 def test_uti_stacked_scheme_sections_parse_as_distinct_schemes(tmp_path):
     workbook = openpyxl.Workbook()
     sheet = workbook.active

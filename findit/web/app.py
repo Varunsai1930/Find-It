@@ -36,6 +36,7 @@ from findit.core.replay import comparison_for_rules, LegacyReplayError, previous
 from findit.core.data_quality import bad_domestic_quantity_pairs
 from findit.store.releases import ReleaseStore, RULE_VERSION
 from findit.core.watchlist import monthly_report, parse_stocks, render_report
+from findit.core.display import scheme_name as display_scheme_name, stock_name as display_stock_name
 from findit.store import queries
 from findit.summary import get_summary
 from findit.web.cache import BoundedCache
@@ -71,7 +72,13 @@ def _resolve_db_path(db_path: str | Path | None) -> str:
 
 def _stock_label(name: str | None) -> str:
     """Remove the disclosure's equity marker, preserving the company's name."""
-    return re.sub(r"^EQ\s*-\s*", "", name or "", flags=re.IGNORECASE).strip()
+    return display_stock_name(name)
+
+
+def _research_stock_name(conn: sqlite3.Connection, isin: str) -> str:
+    """Resolve the company name from the same release as its evidence/history."""
+    stock = conn.execute("SELECT name FROM stocks WHERE isin = ?", (isin,)).fetchone()
+    return _stock_label(stock[0]) if stock is not None else ""
 
 
 class _ReadConnection(sqlite3.Connection):
@@ -348,8 +355,7 @@ def _scheme_title_sql(conn: sqlite3.Connection, alias: str = "sch") -> str:
 
 def _scheme_label(scheme: dict[str, Any]) -> str:
     """'HDFC Large Cap Fund (An open ended ...)' -> 'HDFC Large Cap Fund'; else the sheet name."""
-    title = (scheme.get("scheme_title") or "").split(" (")[0].strip()
-    return title or str(scheme.get("scheme_name"))
+    return display_scheme_name(scheme.get("scheme_name"), scheme.get("scheme_title"))
 
 
 def _stock_payload(conn: sqlite3.Connection, isin: str, month: str | None) -> dict[str, Any]:
@@ -579,15 +585,18 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
             if not all((start, end, cohort)):
                 raise HTTPException(status_code=400, detail="historical evidence requires start, end and cohort")
             try:
-                return history_evidence(conn, isin.upper(), month, start, end, active_only == 1,
-                                        amc, identity, cohort, effective_rules)
+                result = history_evidence(conn, isin.upper(), month, start, end, active_only == 1,
+                                          amc, identity, cohort, effective_rules)
             except LegacyReplayError:
                 raise
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if month not in _known_months(conn):
-            raise HTTPException(status_code=404, detail="Unknown month")
-        return stock_evidence(conn, isin.upper(), month, active_only == 1, amc, release_id=identity, rules_version=effective_rules)
+        else:
+            if month not in _known_months(conn):
+                raise HTTPException(status_code=404, detail="Unknown month")
+            result = stock_evidence(conn, isin.upper(), month, active_only == 1, amc, release_id=identity, rules_version=effective_rules)
+        result["stock_name"] = _research_stock_name(conn, isin.upper())
+        return result
 
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
     # Fingerprints prevent cached assets from outliving a deployed UI change.
@@ -807,7 +816,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         conn = _ro_connect(resolved_db, releases)
         try:
             row = conn.execute(
-                "SELECT amc_name, scheme_name FROM schemes WHERE scheme_id = ?",
+                f"SELECT sch.amc_name, sch.scheme_name, {_scheme_title_sql(conn)} "
+                "FROM schemes sch WHERE scheme_id = ?",
                 (scheme_id,),
             ).fetchone()
             if row is None:
@@ -827,7 +837,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                     "scheme_id": int(scheme_id),
                     "report_month": month,
                     "amc_name": row["amc_name"],
-                    "scheme_name": row["scheme_name"],
+                    "scheme_name": _scheme_label(dict(row)),
                     "summary": str(text),
                     "has_data": bool(has_data),
                     "generated_by": summary_result["generated_by"],
@@ -907,7 +917,9 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         effective_rules = context.rules_version
         try:
             try:
-                return _sanitize(stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity, rules_version=effective_rules))
+                result = stock_history(conn, isin.upper(), start, end, active_only == 1, amc, release_id=identity, rules_version=effective_rules)
+                result["stock_name"] = _research_stock_name(conn, isin.upper())
+                return _sanitize(result)
             except LegacyReplayError as exc:
                 raise replay_conflict(exc, identity, "/history/" + isin.upper(),
                                       {"start": start, "end": end, "active_only": active_only, "amc": amc}) from exc
@@ -937,6 +949,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 (start, end, active_only == 1))]
             if amc and amc not in houses:
                 houses.append(amc)
+            result["stock_name"] = _research_stock_name(conn, isin.upper())
             return templates.TemplateResponse(request, "history.html",
                                               {"h": _sanitize(result), "houses": houses})
         finally:

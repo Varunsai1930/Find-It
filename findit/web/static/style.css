@@ -139,6 +139,7 @@ a:focus-visible, summary:focus-visible, .stock-link:focus-visible, [tabindex="-1
 kbd { padding: 3px 6px; border-radius: var(--radius-xs); background: var(--surface); box-shadow: var(--shadow); color: var(--ink-3); font: 600 10.5px/1.2 var(--font); white-space: nowrap; }
 
 .page { max-width: 1440px; margin: auto; padding: 32px 32px 24px; }
+.dashboard-page .page { padding-top: 20px; }
 /* Views: with the script, the page shows one view at a time. Each [data-view]
    element lists the views it belongs to; elements without one always show. */
 body[data-current-view="activity"] .page [data-view]:not([data-view~="activity"]),
@@ -148,7 +149,8 @@ body[data-current-view="funds"] .page [data-view]:not([data-view~="funds"]) { di
 /* The page heading names the summary view, so its own heading is read, not shown. */
 body[data-current-view] .fund-summary { margin-top: 0; }
 body[data-current-view] .fund-summary__head .section-heading { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-.intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.intro { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 16px; }
+.dashboard-page .intro .eyebrow { display: none; }
 .eyebrow { margin: 0 0 8px; font-size: 10.5px; font-weight: 650; letter-spacing: .15em; text-transform: uppercase; color: var(--accent); }
 .intro h1 { font-size: clamp(28px, 2.6vw, 36px); font-weight: 650; letter-spacing: -1.2px; }
 .intro__description { max-width: 720px; font-size: 13.5px; color: var(--ink-2); margin: 8px 0 0; }
@@ -161,7 +163,7 @@ body[data-current-view] .fund-summary__head .section-heading { position: absolut
 .month-stamp { display: flex; align-items: center; gap: 6px; color: var(--ink-3); font-size: 12px; white-space: nowrap; }
 
 /* Controls keep labels visible at every size. */
-.filterbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 18px; padding: 14px 18px; margin: 0 0 20px; background: var(--surface); border: 1px solid transparent; border-radius: var(--radius); box-shadow: var(--shadow); }
+.filterbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 18px; padding: 12px 16px; margin: 0 0 14px; background: var(--surface); border: 1px solid transparent; border-radius: var(--radius); box-shadow: var(--shadow); }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field--grow { flex: 1; }
 .field__label { color: var(--ink-3); font-size: 10.5px; font-weight: 600; letter-spacing: .035em; padding: 0; }
@@ -220,15 +222,15 @@ details[open]::details-content { opacity: 1; }
 /* Busy dims only after 150ms, so a fast refresh never flickers. */
 #month-view { transition: opacity 150ms var(--ease-out); }
 #month-view[aria-busy="true"] { opacity: .55; pointer-events: none; transition-delay: 150ms; }
-.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 16px 0 0; overflow: hidden; background: var(--surface-2); border-radius: var(--radius-md); }
-/* Each fact: the value on the left, its label and context stacked beside it. */
-.fact { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; column-gap: 12px; padding: 10px 16px; min-width: 0; }
+.facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 12px 0 0; overflow: hidden; background: var(--surface-2); border-radius: var(--radius-md); }
+/* Stack each fact so a long date never squeezes its label into a narrow column. */
+.fact { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 10px 14px; min-width: 0; }
 .fact + .fact { border-left: 1px solid var(--surface); }
 .fact--warn { background: var(--warn-soft); }
 .fact dd { margin: 0; }
-.fact__label { grid-column: 2; grid-row: 1; font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
-.fact__value { grid-column: 1; grid-row: 1 / span 2; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.fact__sub { grid-column: 2; color: var(--ink-3); font-size: 11px; line-height: 1.4; }
+.fact__label { font-size: 11.5px; font-weight: 600; color: var(--ink-2); }
+.fact__value { font-size: 20px; line-height: 1.2; font-weight: 650; letter-spacing: -.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.fact__sub { color: var(--ink-3); font-size: 10.5px; line-height: 1.4; }
 .fact--warn .fact__value { color: var(--warn); }
 .coverage { font-size: 12px; color: var(--ink-2); margin-bottom: 18px; }
 .coverage > summary { display: block; padding: 5px 2px; font-weight: 600; color: var(--ink-2); }
@@ -251,6 +253,7 @@ details[open]::details-content { opacity: 1; }
 .coverage__method li + li { margin-top: 5px; }
 .panel { background: var(--surface); border: 1px solid transparent; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 24px; min-width: 0; }
 .panel__head { padding: 20px 22px 16px; border-bottom: 1px solid var(--line); }
+#consensus > .panel__head { padding: 14px 20px 12px; }
 .panel__titles { min-width: 0; }
 .panel__actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .sort-select { display: none; }
@@ -441,9 +444,10 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
 /* Notable lists: one card per rule in a single row, which scrolls sideways
    when the cards no longer fit. The lines between cards are the grid's gaps.
    The row is positioned so it also clips its visually hidden labels. */
-.notable > .notable__summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 18px 22px 10px; }
+.notable { margin-bottom: 16px; }
+.notable > .notable__summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 12px 20px; }
 .notable > .notable__summary::before { display: none; }
-.notable__lead { display: grid; gap: 8px; min-width: 0; }
+.notable__lead { display: grid; gap: 5px; min-width: 0; }
 .notable__heading { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
 .notable__counts { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--ink-2); font-size: 12px; }
 .notable__toggle { display: grid; place-items: center; color: var(--ink-3); }
@@ -637,26 +641,30 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
   .search-trigger__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .search-trigger kbd { display: none; }
   .palette { margin-top: 16px; }
-  .intro { margin-bottom: 22px; }
+  .intro { margin-bottom: 14px; }
   .intro h1 { font-size: 28px; }
   .intro__description { font-size: 12.5px; line-height: 1.7; }
-  .filterbar { padding: 16px; margin-bottom: 24px; }
-  .controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .filterbar { padding: 12px; margin-bottom: 14px; }
+  .controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  body[data-current-view]:not([data-current-view="activity"]) .controls { display: flex; }
+  body[data-current-view="funds"] .checks { display: none; }
   .field--month { grid-column: 1; grid-row: 1; }
   .field--rows { grid-column: 2; grid-row: 1; }
   .field--month select, .field--rows select { width: 100%; min-width: 0; }
-  .segmented { grid-column: 1 / -1; grid-row: 2; }
-  .checks, .controls__status { grid-column: 1 / -1; }
-  .checks { gap: 6px 12px; }
+  .segmented { grid-column: 1; grid-row: 2; }
+  .segmented span { padding: 0 6px; }
+  .checks { grid-column: 2; grid-row: 2; flex-direction: column; align-items: flex-start; gap: 2px; }
+  .controls__status { grid-column: 1 / -1; }
   .check { min-height: 28px; font-size: 11.5px; }
   select, input[type="text"], .segmented__track { height: 40px; }
-  .facts { grid-template-columns: 1fr; }
-  .fact + .fact { border-left: 0; border-top: 1px solid var(--surface); }
-  .fact__value { font-size: 20px; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fact { padding: 8px 10px; }
+  .facts .fact--date { grid-column: 1 / -1; flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; border-left: 0; border-top: 1px solid var(--surface); }
+  .fact--date .fact__value { font-size: 14px; }
+  .fact--date .fact__sub { display: none; }
   .panel__bar { flex-direction: column; align-items: stretch; }
-  /* The sort menu takes the whole row so its longest option stays readable. */
-  .panel__actions { flex-wrap: wrap; }
-  .sort-select { display: block; flex: 1 1 100%; }
+  .panel__actions { flex-wrap: nowrap; }
+  .sort-select { display: block; flex: 1; min-width: 0; }
   .sort-select select { width: 100%; }
   .coverage-review > summary { align-items: flex-start; flex-direction: column; gap: 8px; }
   .coverage-review__hint { display: block; margin-top: 2px; }
@@ -672,7 +680,7 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
   .fund-card { padding: 14px; min-height: 310px; }
   .fund-card__identity { flex-direction: column; gap: 8px; min-height: 76px; }
   .fund-card__badge { white-space: normal; }
-  .notable > .notable__summary { padding: 16px 16px 8px; }
+  .notable > .notable__summary { padding: 12px 16px; }
   .notable__note { margin: 0 16px 14px; }
   /* The next card peeks in, so the row reads as one that scrolls. */
   .notable__grid { grid-auto-columns: 84%; }

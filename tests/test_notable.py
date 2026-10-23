@@ -1,6 +1,7 @@
 """Notable lists: each rule, its thresholds and its missing-month reporting. Pure."""
 
 import pandas as pd
+import pytest
 
 from findit.core import notable
 
@@ -87,6 +88,20 @@ def test_selling_side_mirrors_every_rule():
     assert lists["active"]["stocks"][0]["reason"] == "−2 net fund houses beyond price movement"
     assert _isins(lists["fii"]) == ["exit"]
     assert _isins(lists["streak"]) == []  # "trim" was untraded last month.
+
+
+@pytest.mark.parametrize("side, sign, fresh_key", [("buy", 1, "opened"), ("sell", -1, "exited")])
+def test_every_notable_list_requires_the_selected_net_direction(side, sign, fresh_key):
+    # Opening/exiting and active counts alone can point against the overall net.
+    now = _ranking(("opposite", -3 * sign, 2, 2, 2 * sign, None),
+                   ("flat", 0, 2, 2, 2 * sign, None),
+                   ("aligned", sign, 2, 2, 2 * sign, None))
+
+    lists = _lists(now, side=side)
+
+    assert _isins(lists[fresh_key]) == ["aligned"]
+    assert _isins(lists["active"]) == ["aligned"]
+    assert all(stock["isin"] == "aligned" for item in lists.values() for stock in item["stocks"])
 
 
 def test_ties_keep_ranking_order_and_an_empty_month_lists_nothing():
