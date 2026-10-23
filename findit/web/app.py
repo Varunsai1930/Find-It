@@ -15,6 +15,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from urllib.parse import urlencode
 from pathlib import Path
 from typing import Annotated, Any
@@ -608,7 +609,9 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
 
     @app.middleware("http")
     async def response_policy(request: Request, call_next):
+        started = time.perf_counter()
         response = await call_next(request)
+        response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - started) * 1000:.2f}"
         if request.url.path in {"/api/watchlist", "/watchlist/report"}:
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["Referrer-Policy"] = "no-referrer"
