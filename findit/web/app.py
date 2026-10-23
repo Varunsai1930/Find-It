@@ -466,12 +466,29 @@ def _find_stocks(conn: sqlite3.Connection, query: str, month: str | None = None,
     text = query.strip().replace("%", "").replace("_", "")
     if len(text) < 2:
         return []
-    in_month = " WHERE report_month = ?" if month else ""
+    # Retained releases cannot be migrated in place. A correlated count is
+    # efficient only when the release already has a stock-leading index.
+    indexed = conn.execute(
+        "SELECT 1 FROM pragma_index_list('mf_holdings_monthly') i "
+        "JOIN pragma_index_info(i.name) c WHERE c.seqno=0 AND c.name='isin' LIMIT 1"
+    ).fetchone()
+    if not indexed:
+        in_month = " WHERE report_month = ?" if month else ""
+        rows = conn.execute(
+            "SELECT s.isin, stock_label(s.name) AS name, s.industry,"
+            " COALESCE(h.n, 0) AS schemes_holding FROM stocks s"
+            " LEFT JOIN (SELECT isin, COUNT(DISTINCT scheme_id) AS n FROM mf_holdings_monthly"
+            f"{in_month} GROUP BY isin) h USING (isin)"
+            " WHERE s.name LIKE ? OR s.isin LIKE ?"
+            " ORDER BY stock_label(s.name) LIKE ? DESC, s.instrument_type = 'equity' DESC,"
+            " schemes_holding DESC, s.name LIMIT ?",
+            (*([month] if month else []), f"%{text}%", f"{text}%", f"{text}%", limit)).fetchall()
+        return [dict(r) for r in rows]
+    in_month = " AND h.report_month = ?" if month else ""
     rows = conn.execute(
         "SELECT s.isin, stock_label(s.name) AS name, s.industry,"
-        " COALESCE(h.n, 0) AS schemes_holding FROM stocks s"
-        " LEFT JOIN (SELECT isin, COUNT(DISTINCT scheme_id) AS n FROM mf_holdings_monthly"
-        f"{in_month} GROUP BY isin) h USING (isin)"
+        " (SELECT COUNT(DISTINCT h.scheme_id) FROM mf_holdings_monthly h"
+        f" WHERE h.isin = s.isin{in_month}) AS schemes_holding FROM stocks s"
         " WHERE s.name LIKE ? OR s.isin LIKE ?"
         " ORDER BY stock_label(s.name) LIKE ? DESC, s.instrument_type = 'equity' DESC,"
         " schemes_holding DESC, s.name LIMIT ?",

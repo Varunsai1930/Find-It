@@ -516,6 +516,15 @@ def get_connection(db_path: str = "tracker.db") -> sqlite3.Connection:
 
     # Additive v2 migrations: new tables + new nullable columns only.
     conn.executescript(V2_SCHEMA)
+    # Applied only by the offline writer; retained web releases stay read-only.
+    conn.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_holdings_month_stock
+            ON mf_holdings_monthly(report_month, isin, scheme_id);
+        CREATE INDEX IF NOT EXISTS idx_holdings_stock_month
+            ON mf_holdings_monthly(isin, report_month, scheme_id);
+        CREATE INDEX IF NOT EXISTS idx_deltas_month
+            ON mf_holding_deltas(report_month, scheme_id, isin);
+    """)
     for _table, _col, _ddl in (
         ("mf_holdings_monthly", "pct_nav_raw", "pct_nav_raw REAL"),
         ("mf_holdings_monthly", "pct_nav_scale", "pct_nav_scale TEXT"),
