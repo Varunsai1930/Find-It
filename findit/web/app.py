@@ -14,7 +14,6 @@ import math
 import os
 import re
 import sqlite3
-import threading
 import time
 from urllib.parse import urlencode
 from pathlib import Path
@@ -38,6 +37,7 @@ from findit.store.releases import ReleaseStore, RULE_VERSION
 from findit.core.watchlist import monthly_report, parse_stocks, render_report
 from findit.store import queries
 from findit.summary import get_summary
+from findit.web.cache import BoundedCache
 from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
 
 _WEB_DIR = Path(__file__).resolve().parent
@@ -50,8 +50,7 @@ _DEFAULT_LIMIT = _ROW_LIMITS[0]
 _MAX_STOCK_QUERY_LENGTH = 256
 # Ranked months kept in memory; each is keyed on the DB file's signature.
 _RANKED_CACHE_SIZE = 16
-_ranked_cache: dict[tuple, pd.DataFrame] = {}
-_ranked_lock = threading.Lock()
+_ranked_cache = BoundedCache(_RANKED_CACHE_SIZE)
 
 
 def _sanitize(value: Any) -> Any:
@@ -187,16 +186,8 @@ def _ranked(conn: sqlite3.Connection, month: str, equity_only: bool,
     db_path = str(conn.execute("PRAGMA database_list").fetchone()[2])
     key = (db_path, getattr(conn, "file_signature", None) or _file_signature(db_path),
            RULE_VERSION, month, equity_only, active_only)
-    with _ranked_lock:
-        ranked = _ranked_cache.get(key)
-    if ranked is None:
-        ranked = consensus_signals.ranked_consensus(
-            conn, month, "equity" if equity_only else None, active_only)
-        with _ranked_lock:
-            while len(_ranked_cache) >= _RANKED_CACHE_SIZE:
-                _ranked_cache.pop(next(iter(_ranked_cache)))
-            _ranked_cache[key] = ranked
-    return ranked
+    return _ranked_cache.get_or_create(key, lambda: consensus_signals.ranked_consensus(
+        conn, month, "equity" if equity_only else None, active_only))
 
 
 def _has_deltas(conn: sqlite3.Connection, month: str) -> bool:
@@ -528,11 +519,9 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     # checks file signatures and re-verifies if either DB or manifest changed.
     if re.fullmatch(r"[a-f0-9]{64}", Path(resolved_db).stem):
         releases.retained(Path(resolved_db).stem)
-    report_comparisons = {}
-    report_lock = threading.Lock()
-    overview_cache = {}
-    coverage_cache = {}
-    overview_lock = threading.Lock()
+    report_comparisons = BoundedCache(4)
+    overview_cache = BoundedCache(16)
+    coverage_cache = BoundedCache(32)
 
     def month_context(conn, view):
         path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
@@ -543,18 +532,11 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                      else getattr(conn, "file_signature", None) or _file_signature(str(path)))
         key = (str(path), signature, RULE_VERSION, view["month"], bool(view["active_only"]))
         coverage_key = (*key, bool(view["equity_only"]))
-        with overview_lock:
-            if key not in overview_cache:
-                if len(overview_cache) >= 16:
-                    overview_cache.pop(next(iter(overview_cache)))
-                overview_cache[key] = _month_overview(conn, view["month"], bool(view["active_only"]))
-            if coverage_key not in coverage_cache:
-                if len(coverage_cache) >= 32:
-                    coverage_cache.pop(next(iter(coverage_cache)))
-                coverage_cache[coverage_key] = month_coverage(
-                    conn, view["month"], bool(view["equity_only"]), bool(view["active_only"]))
-            overview = copy.deepcopy(overview_cache[key])
-            coverage = copy.deepcopy(coverage_cache[coverage_key])
+        overview = overview_cache.get_or_create(key, lambda: _month_overview(
+            conn, view["month"], bool(view["active_only"])))
+        coverage = coverage_cache.get_or_create(coverage_key, lambda: month_coverage(
+            conn, view["month"], bool(view["equity_only"]), bool(view["active_only"])))
+        overview, coverage = copy.deepcopy(overview), copy.deepcopy(coverage)
         return _month_view(conn, view, overview=overview, coverage=coverage)
 
     def report_for(conn, month, stocks, active_only, identity, effective_rules):
@@ -563,12 +545,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         comparison = None
         if stocks and immutable:
             key = (identity, effective_rules, month, active_only)
-            with report_lock:
-                if key not in report_comparisons:
-                    if len(report_comparisons) >= 4:
-                        report_comparisons.pop(next(iter(report_comparisons)))
-                    report_comparisons[key] = comparison_for_rules(conn, month, active_only, effective_rules)
-                comparison = report_comparisons[key]
+            comparison = report_comparisons.get_or_create(key, lambda: comparison_for_rules(
+                conn, month, active_only, effective_rules))
         report = monthly_report(conn, month, stocks, active_only, release_id=identity, comparison=comparison, rules_version=effective_rules)
         # Name stocks as the dashboard does, in the JSON view and the Markdown download alike.
         for stock in report["stocks"]:
