@@ -184,3 +184,25 @@ def test_all_rankings_paginate_on_server_and_preserve_absolute_rank(tmp_path):
         all_ranks.extend(ranks)
     assert all_ranks == list(range(1,len(all_ranks)+1))
     assert client.get("/fragments/month/2026-08?page=0").status_code == 422
+
+
+def test_visible_availability_distinguishes_history_and_missing_adjacent_month(tmp_path):
+    client = TestClient(create_app(_copy_db(tmp_path)))
+    latest = client.get("/fragments/month/2026-08").text
+    assert "Latest portfolios loaded: Aug 2026" in latest
+    assert "Jul 2026 portfolios are not loaded" not in latest
+    earlier = client.get("/fragments/month/2026-07").text
+    assert "you are viewing an earlier month" in earlier
+    assert "Jun 2026 portfolios are not loaded" in earlier
+    assert "missing data does not mean zero activity" in earlier
+    assert "Latest portfolios loaded: Aug 2026" in client.get("/coverage?month=2026-08").text
+
+
+def test_visible_availability_explains_withheld_previous_snapshots(tmp_path):
+    import sqlite3
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.execute("UPDATE scheme_month_status SET status='quarantined' WHERE report_month='2026-07'")
+    html = TestClient(create_app(db)).get("/fragments/month/2026-08").text
+    assert "No usable comparison with Jul 2026 under these filters" in html
+    assert "3 funds excluded because the previous snapshot was withheld" in html

@@ -739,3 +739,8 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
   .drawer__body .table-wrap { max-width: 100%; }
   .pagination .btn { min-height: 44px; }
 }
+
+.data-status { padding: 10px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 12px; margin: 12px 0; }
+.data-status p { margin: 0; }
+.data-status p + p { margin-top: 6px; }
+.data-status__warning { color: var(--ink-2); }

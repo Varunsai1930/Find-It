@@ -1,0 +1,6 @@
+<div class="data-status" aria-label="Data availability">
+  <p><strong>Viewing {{ month|month_label }}.</strong> Latest portfolios loaded: {{ latest_loaded_month|month_label }}{% if latest_loaded_month != month %} · you are viewing an earlier month{% endif %}.</p>
+  {% if not previous_month_loaded %}<p class="data-status__warning">{{ previous_calendar_month|month_label }} portfolios are not loaded. Monthly changes need both adjacent months; missing data does not mean zero activity.</p>
+  {% elif coverage.compared == 0 %}<p class="data-status__warning">No usable comparison with {{ previous_calendar_month|month_label }} under these filters. Missing or withheld data does not mean zero activity.</p>{% endif %}
+  {% if coverage.withheld or coverage.prev_withheld %}<p class="data-status__warning">{{ coverage.withheld }} current-month funds withheld{% if coverage.prev_withheld %} · {{ coverage.prev_withheld }} funds excluded because the previous snapshot was withheld{% endif %}. These are excluded from monthly changes.</p>{% endif %}
+</div>
