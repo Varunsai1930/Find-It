@@ -63,7 +63,8 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
   savedNotable = null } = {}) {
   const ids = ['month-view', 'view-status', 'stock-dialog', 'stock-box', 'stock-dialog-close',
     'month-select', 'stock-form', 'stock-search', 'stock-options', 'stock-search-status', 'section-nav'];
-  if (schemes) ids.push('scheme-data', 'scheme-search', 'scheme-options', 'scheme-search-status',
+  if (schemes && schemes !== 'lazy') ids.push('scheme-data');
+  if (schemes) ids.push('scheme-search', 'scheme-options', 'scheme-search-status',
     'summary-box', 'summary-form');
   if (controls) ids.push('view-controls', 'equity-only', 'active-only');
   if (watch) ids.push('watchlist-status', 'watchlist-results', 'watchlist-report', 'watchlist-export', 'watchlist-import', 'active-only');
@@ -116,7 +117,7 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
     elements['equity-only'].checked = params.get('equity_only') !== '0';
     elements['active-only'].checked = params.get('active_only') !== '0';
   }
-  if (schemes) elements['scheme-data'].textContent = JSON.stringify(Array.isArray(schemes) ? schemes : [
+  if (schemes && schemes !== 'lazy') elements['scheme-data'].textContent = JSON.stringify(Array.isArray(schemes) ? schemes : [
     { id: 1, label: 'Test Fund', amc: 'Test AMC', votes: true }
   ]);
   const timers = new Map(), requests = [], frames = [], created = [];
@@ -897,4 +898,22 @@ test('fund suggestions cap rendered options and let typing find later matches', 
   assert.equal(ui.elements['scheme-options'].children.length, 1);
   ui.elements['scheme-search'].emit('keydown', { key: 'Enter' });
   assert.match(ui.requests.at(-1).url, /summary\/200\/2026-08/);
+});
+
+
+test('fund catalog loads on demand, shares pending work and retries failure', async () => {
+  const ui = boot({ schemes: 'lazy' });
+  assert.equal(ui.requests.length, 0);
+  await ui.type('scheme-search', 'Fund');
+  assert.equal(ui.requests[0].url, '/api/schemes');
+  await ui.type('scheme-search', 'Fund B');
+  assert.equal(ui.requests.length, 1);
+  ui.requests[0].respond('unavailable', 503); await settle();
+  await ui.type('scheme-search', 'Fund B');
+  assert.equal(ui.requests.length, 2);
+  ui.requests[1].respond(JSON.stringify({ schemes: [{ scheme_id: 9, label: 'Fund B', amc_name: 'Test', votes: true }] }));
+  await settle();
+  assert.match(ui.elements['scheme-options'].textContent, /Fund B/);
+  await ui.type('scheme-search', 'Fund');
+  assert.equal(ui.requests.length, 2);
 });

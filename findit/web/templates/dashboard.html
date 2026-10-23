@@ -26,7 +26,7 @@
          data-title="Monthly fund activity" data-description="See which stocks Indian mutual funds added or reduced. Open a stock to check the funds and source data.">{{ icon('chart', 16) }}<span class="nav__full">Monthly activity</span><span class="nav__short" aria-hidden="true">Activity</span></a>
       {% if month %}<a href="#monthly-summary" data-view="summary"
          data-title="Monthly summary" data-description="How the largest fund houses changed their stock holdings, one card per fund house.">{{ icon('grid', 16) }}<span class="nav__full">Monthly summary</span><span class="nav__short" aria-hidden="true">Summary</span></a>{% endif %}
-      {% if scheme_options %}<a href="#watchlist" data-view="watchlist"
+      {% if has_schemes %}<a href="#watchlist" data-view="watchlist"
          data-title="My watchlist" data-description="The stocks you follow on this device, and how funds changed them this month.">{{ icon('bookmark', 16) }}<span class="nav__full">My watchlist</span><span class="nav__short" aria-hidden="true">Watchlist</span></a><a href="#scheme-summary" data-view="funds"
          data-title="Fund summary" data-description="Pick one individual fund to read what it bought and sold this month.">{{ icon('layers', 16) }}<span class="nav__full">Fund summary</span><span class="nav__short" aria-hidden="true">Funds</span></a>{% endif %}
     </nav>
@@ -96,7 +96,7 @@
     {% endif %}
   </div>
 
-  {% if scheme_options %}
+  {% if has_schemes %}
   <section class="panel" id="watchlist" data-view="watchlist" aria-labelledby="watchlist-title">
     <div class="panel__head"><div class="section-title">{{ icon('bookmark', 20) }}<h2 id="watchlist-title">Changes in my stocks</h2></div><p class="panel__meta">Select the bookmark next to any stock, or open a stock and select Follow stock, to track its monthly changes here.</p></div>
     <div class="panel__body"><div class="watchlist-tools"><button class="btn btn--quiet" type="button" id="watchlist-export">{{ icon('download', 16) }}Export watchlist</button><a class="btn btn--quiet" id="watchlist-report" hidden>{{ icon('file', 16) }}Download monthly report</a><label class="btn btn--quiet file-button">Import watchlist <input type="file" id="watchlist-import" accept="application/json"></label></div>
@@ -126,7 +126,6 @@
       <p class="state state--empty">Pick a fund to read its monthly change summary.</p>
     </div>
   </section>
-  <script type="application/json" id="scheme-data">{{ scheme_options|tojson }}</script>
   {% endif %}
 
   <section class="notes" id="guide-notes" aria-labelledby="notes-title">

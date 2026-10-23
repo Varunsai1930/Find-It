@@ -741,7 +741,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 if month not in _known_months(conn):
                     raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
                 rows = conn.execute(
-                    """SELECT DISTINCT s.scheme_id, s.amc_name, s.scheme_name
+                    """SELECT DISTINCT s.*
                        FROM schemes s
                        JOIN mf_holdings_monthly h ON h.scheme_id = s.scheme_id
                        WHERE h.report_month = ?
@@ -750,7 +750,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT scheme_id, amc_name, scheme_name FROM schemes "
+                    "SELECT * FROM schemes "
                     "ORDER BY amc_name, scheme_name"
                 ).fetchall()
             schemes = [
@@ -758,6 +758,8 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                     "scheme_id": int(r["scheme_id"]),
                     "amc_name": r["amc_name"],
                     "scheme_name": r["scheme_name"],
+                    "label": _scheme_label(dict(r)),
+                    "votes": dict(r).get("is_active_equity") != 0,
                 }
                 for r in rows
             ]
@@ -1102,23 +1104,10 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                 months = []
             if month not in months:
                 month = months[0] if months else None
-            try:
-                schemes = [
-                    dict(r) for r in conn.execute(
-                        "SELECT scheme_id, amc_name, scheme_name, is_active_equity,"
-                        f" {_scheme_title_sql(conn, 'schemes')} FROM schemes"
-                    ).fetchall()
-                ]
-                schemes.sort(key=lambda sc: (sc["amc_name"], _scheme_label(sc).lower()))
-            except sqlite3.Error:
-                schemes = []
-            # The scheme picker filters this list in the browser.
-            scheme_options = [{"id": sc["scheme_id"], "label": _scheme_label(sc),
-                               "amc": sc["amc_name"], "votes": sc["is_active_equity"] != 0}
-                              for sc in schemes]
+            has_schemes = conn.execute("SELECT 1 FROM schemes LIMIT 1").fetchone() is not None
             view = _view(month, equity_only, active_only, side, limit, cols)
             ctx: dict[str, Any] = {**view, "view": view, "months": months,
-                                   "scheme_options": scheme_options}
+                                   "has_schemes": has_schemes}
             if month is not None:
                 ctx.update(month_context(conn, view))
             return templates.TemplateResponse(request, "dashboard.html", _sanitize(ctx))

@@ -126,3 +126,19 @@ def test_readonly_open_accepts_sqlite_initializing_empty_wal(tmp_path):
     client = TestClient(create_app(db))
     assert client.get("/fragments/month/2026-08").status_code == 200
     assert client.get("/fragments/month/2026-08").status_code == 200
+
+
+def test_fund_catalog_is_loaded_separately_from_initial_page(tmp_path):
+    import sqlite3
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as conn:
+        conn.executemany("INSERT INTO schemes(amc_name,scheme_name) VALUES ('Catalog AMC',?)",
+                         [(f"Catalog Fund {i}",) for i in range(1000)])
+    client = TestClient(create_app(db))
+    page = client.get("/").text
+    assert 'id="scheme-search"' in page and 'id="scheme-data"' not in page
+    assert "Catalog Fund 999" not in page
+    catalog = client.get("/api/schemes").json()
+    assert catalog["count"] == 1003
+    fund = next(s for s in catalog["schemes"] if s["scheme_name"] == "Catalog Fund 999")
+    assert fund["label"] == "Catalog Fund 999" and fund["votes"] is True

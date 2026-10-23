@@ -856,20 +856,35 @@
     pickedScheme = item.value;
     showSummary();
   }
-  if (schemeData) {
-    schemes = JSON.parse(schemeData.textContent).map(function (s) {
-      return { value: String(s.id), label: s.label,
-               detail: s.amc + (s.votes ? "" : " · index/debt, does not vote"),
-               haystack: (s.label + " " + s.amc).toLowerCase() };
+  var schemesLoading = null;
+  function mapSchemes(data) {
+    return data.map(function (s) {
+      return { value: String(s.id === undefined ? s.scheme_id : s.id), label: s.label,
+               detail: (s.amc || s.amc_name) + (s.votes ? "" : " · index/debt, does not vote"),
+               haystack: (s.label + " " + (s.amc || s.amc_name)).toLowerCase() };
     });
+  }
+  if (schemeData) schemes = mapSchemes(JSON.parse(schemeData.textContent));
+  async function ensureSchemes() {
+    if (schemeData || !schemeInput) return;
+    if (!schemesLoading) schemesLoading = (async function () {
+      var r = await load("schemes", "/api/schemes");
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      schemes = mapSchemes(JSON.parse(r.body).schemes);
+    }());
+    try { await schemesLoading; }
+    catch (e) { schemesLoading = null; throw e; }
+  }
+  if (schemeInput) {
     combobox({
       input: schemeInput,
       list: document.getElementById("scheme-options"),
       status: document.getElementById("scheme-search-status"),
       minChars: 0,
       maxResults: 12,
-      source: function (query) {
-        return Promise.resolve(schemes.filter(function (s) { return matchWords(query, s.haystack); }));
+      source: async function (query) {
+        await ensureSchemes();
+        return schemes.filter(function (s) { return matchWords(query, s.haystack); });
       },
       emptyText: function (query) { return "No fund matches “" + query + "”."; },
       onType: clearSummary,
@@ -897,6 +912,7 @@
       minChars: 1,
       delay: 150,
       source: async function (query) {
+        await ensureSchemes();
         var views = navLinks.filter(function (link) {
           return matchWords(query, (link.dataset.title || "").toLowerCase());
         }).map(function (link) { return { kind: "View", value: link.getAttribute("href"), label: link.dataset.title, link: link }; });
