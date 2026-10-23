@@ -1052,7 +1052,7 @@ def test_dashboard_serves_fingerprinted_local_assets(tmp_path):
     urls = re.findall(r'(?:href|src)="(/static/[^"]+)"', html)
     assert client.get("/static/favicon.svg").status_code == 200
     urls = [url for url in urls if "?v=" in url]
-    assert len(urls) == 2
+    assert len(urls) == 3
     for url in urls:
         assert re.search(r"\?v=[a-f0-9]{12}$", url)
         response = client.get(url)

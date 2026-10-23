@@ -39,6 +39,7 @@ from findit.core.watchlist import monthly_report, parse_stocks, render_report
 from findit.store import queries
 from findit.summary import get_summary
 from findit.web.cache import BoundedCache
+from findit.web.catalog import register_catalog_routes, MAX_STOCK_QUERY_LENGTH as _MAX_STOCK_QUERY_LENGTH
 from findit.web.fund_houses import AUM_PERIOD, AUM_SOURCE, selected_groups
 
 _WEB_DIR = Path(__file__).resolve().parent
@@ -48,7 +49,6 @@ _ROW_LIMITS = (25, 50, 0)
 _DEFAULT_LIMIT = _ROW_LIMITS[0]
 # Stock lookup text is a human-entered company name or ISIN, not an unbounded
 # SQLite LIKE pattern (which raises for sufficiently long input).
-_MAX_STOCK_QUERY_LENGTH = 256
 # Ranked months kept in memory; each is keyed on the DB file's signature.
 _RANKED_CACHE_SIZE = 16
 _ranked_cache = BoundedCache(_RANKED_CACHE_SIZE)
@@ -592,7 +592,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     templates = Jinja2Templates(directory=str(_WEB_DIR / "templates"))
     # Fingerprints prevent cached assets from outliving a deployed UI change.
     assets = {name: hashlib.sha256((_WEB_DIR / "static" / name).read_bytes()).hexdigest()[:12]
-              for name in ("style.css", "dashboard.js")}
+              for name in ("style.css", "combobox.js", "dashboard.js")}
     templates.env.globals["asset_url"] = lambda name: f"/static/{name}?v={assets[name]}"
     templates.env.filters.update(crore=_crore, signed=_signed, compact_shares=_compact_shares,
                                  month_label=_month_label,
@@ -755,40 +755,10 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         finally:
             conn.close()
 
-    # -- schemes ----------------------------------------------------------
-    @app.get("/api/schemes")
-    def api_schemes(month: str | None = None) -> Any:
-        conn = _ro_connect(resolved_db, releases)
-        try:
-            if month is not None:
-                if month not in _known_months(conn):
-                    raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
-                rows = conn.execute(
-                    """SELECT DISTINCT s.*
-                       FROM schemes s
-                       JOIN mf_holdings_monthly h ON h.scheme_id = s.scheme_id
-                       WHERE h.report_month = ?
-                       ORDER BY s.amc_name, s.scheme_name""",
-                    (month,),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM schemes "
-                    "ORDER BY amc_name, scheme_name"
-                ).fetchall()
-            schemes = [
-                {
-                    "scheme_id": int(r["scheme_id"]),
-                    "amc_name": r["amc_name"],
-                    "scheme_name": r["scheme_name"],
-                    "label": _scheme_label(dict(r)),
-                    "votes": dict(r).get("is_active_equity") != 0,
-                }
-                for r in rows
-            ]
-            return _sanitize({"month": month, "count": len(schemes), "schemes": schemes})
-        finally:
-            conn.close()
+    register_catalog_routes(
+        app, connect=lambda: _ro_connect(resolved_db, releases),
+        known_months=_known_months, find_stocks=_find_stocks,
+        scheme_label=_scheme_label, sanitize=_sanitize)
 
     # -- consensus --------------------------------------------------------
     @app.get("/api/consensus/{month}")
@@ -1016,20 +986,6 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         conn = _ro_connect(resolved_db, releases)
         try:
             return _stock_payload(conn, isin, month)
-        finally:
-            conn.close()
-
-    @app.get("/api/stocks/search")
-    def api_stock_search(q: Annotated[str, Query(max_length=_MAX_STOCK_QUERY_LENGTH)] = "",
-                         month: str | None = None, limit: int = 8) -> Any:
-        """Name or ISIN-prefix suggestions for the stock lookup, as JSON."""
-        conn = _ro_connect(resolved_db, releases)
-        try:
-            if month is not None and month not in _known_months(conn):
-                raise HTTPException(status_code=404, detail=f"Unknown month: {month}")
-            results = _find_stocks(conn, q, month, min(max(limit, 1), 25))
-            return _sanitize({"query": q.strip(), "month": month, "count": len(results),
-                              "results": results})
         finally:
             conn.close()
 

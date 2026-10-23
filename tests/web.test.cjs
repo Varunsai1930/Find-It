@@ -3,7 +3,8 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { runInNewContext } = require('node:vm');
-const script = readFileSync('findit/web/static/dashboard.js', 'utf8');
+const script = readFileSync('findit/web/static/combobox.js', 'utf8') + '\n' +
+  readFileSync('findit/web/static/dashboard.js', 'utf8');
 const settle = () => new Promise(resolve => setImmediate(resolve));
 
 class Element {
