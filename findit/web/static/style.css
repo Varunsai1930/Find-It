@@ -720,3 +720,22 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
 }
 
 .pagination { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 16px; }
+
+/* Small screens need reachable controls and a scrollable modal body. */
+.drawer__body { min-height: 0; }
+.drawer__head { flex-shrink: 0; padding-top: max(12px, env(safe-area-inset-top)); }
+.drawer__body { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
+@media (max-width: 640px) {
+  .topbar__actions .topbar__link, .topbar__actions .theme-toggle,
+  .topbar__actions .search-trigger, .drawer__close { width: 44px; height: 44px; }
+  .topbar__actions { gap: 4px; }
+  .check { min-height: 44px; }
+  select, input[type="text"], .segmented__track { min-height: 44px; font-size: 16px; }
+  .segmented span { min-height: 42px; display: grid; place-items: center; }
+  .row-follow { width: 44px; height: 44px; margin: -6px -6px 0 0; }
+  .stock-link { min-height: 44px; overflow-wrap: anywhere; }
+  .palette { width: calc(100vw - 24px); max-height: calc(100dvh - 24px); margin-top: max(12px, env(safe-area-inset-top)); }
+  .palette input[type="text"] { font-size: 16px; min-width: 0; }
+  .drawer__body .table-wrap { max-width: 100%; }
+  .pagination .btn { min-height: 44px; }
+}
