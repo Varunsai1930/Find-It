@@ -57,3 +57,72 @@ def test_search_preserves_legacy_release_plan_without_stock_index(tmp_path):
         assert not any("WHERE h.isin = s.isin" in sql for sql in statements)
     finally:
         conn.close()
+
+
+def test_month_cache_reuses_work_and_isolates_filters_and_wal_updates(tmp_path, monkeypatch):
+    import sqlite3
+    from findit.web import app as web
+    db = _copy_db(tmp_path)
+    overview, coverage = web._month_overview, web.month_coverage
+    calls = {"overview": 0, "coverage": 0}
+    def counted_overview(*args):
+        calls["overview"] += 1
+        return overview(*args)
+    def counted_coverage(*args):
+        calls["coverage"] += 1
+        return coverage(*args)
+    monkeypatch.setattr(web, "_month_overview", counted_overview)
+    monkeypatch.setattr(web, "month_coverage", counted_coverage)
+    client = TestClient(create_app(db))
+    url = "/fragments/month/2026-08"
+    assert client.get(url).status_code == 200
+    assert client.get(url).status_code == 200
+    assert calls == {"overview": 1, "coverage": 1}
+    client.get(url + "?equity_only=0")
+    assert calls == {"overview": 1, "coverage": 2}
+    client.get(url + "?active_only=0")
+    assert calls == {"overview": 2, "coverage": 3}
+    with sqlite3.connect(db) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("UPDATE schemes SET amc_name='Changed AMC' WHERE scheme_id=1")
+        writer.commit()
+        assert client.get(url).status_code == 200
+        assert calls == {"overview": 3, "coverage": 4}
+
+
+def test_cache_identity_stays_with_open_file_after_atomic_replacement(tmp_path, monkeypatch):
+    import os
+    import sqlite3
+    from findit.web import app as web
+    db = _copy_db(tmp_path)
+    replacement = tmp_path / "replacement.db"
+    with sqlite3.connect(db) as source, sqlite3.connect(replacement) as target:
+        source.backup(target)
+        target.execute("UPDATE schemes SET amc_name='Replacement AMC' WHERE scheme_id=1")
+    connect, overview = web._ro_connect, web._month_overview
+    calls = []
+    def opening(*args):
+        conn = connect(*args)
+        if replacement.exists():
+            os.replace(replacement, db)
+        return conn
+    def counted(*args):
+        calls.append(args[0].execute("SELECT amc_name FROM schemes WHERE scheme_id=1").fetchone()[0])
+        return overview(*args)
+    monkeypatch.setattr(web, "_ro_connect", opening)
+    monkeypatch.setattr(web, "_month_overview", counted)
+    client = TestClient(create_app(db))
+    assert client.get("/fragments/month/2026-08").status_code == 200
+    assert client.get("/fragments/month/2026-08").status_code == 200
+    assert calls == ["A AMC", "Replacement AMC"]
+
+
+def test_readonly_open_accepts_sqlite_initializing_empty_wal(tmp_path):
+    import sqlite3
+    db = _copy_db(tmp_path)
+    with sqlite3.connect(db) as writer:
+        writer.execute("PRAGMA journal_mode=WAL")
+    writer.close()
+    client = TestClient(create_app(db))
+    assert client.get("/fragments/month/2026-08").status_code == 200
+    assert client.get("/fragments/month/2026-08").status_code == 200

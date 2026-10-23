@@ -74,6 +74,11 @@ def _stock_label(name: str | None) -> str:
     return re.sub(r"^EQ\s*-\s*", "", name or "", flags=re.IGNORECASE).strip()
 
 
+class _ReadConnection(sqlite3.Connection):
+    """Bind local cache identity to the file opened by this connection."""
+    file_signature: tuple | None = None
+
+
 def _ro_connect(db_path: str, release_store: ReleaseStore | None = None) -> sqlite3.Connection:
     # Encode URI-sensitive filename characters, and never create a missing DB.
     if not Path(db_path).is_file():
@@ -88,13 +93,22 @@ def _ro_connect(db_path: str, release_store: ReleaseStore | None = None) -> sqli
             except (ValueError, OSError, sqlite3.Error) as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
         else:
+            before = _file_signature(db_path)
             conn = sqlite3.connect(Path(db_path).as_uri() + "?mode=ro", uri=True,
-                                   check_same_thread=False)
+                                   check_same_thread=False, factory=_ReadConnection)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON;")
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not {"schemes", "stocks", "mf_holdings_monthly", "mf_holding_deltas"} <= tables:
             raise sqlite3.DatabaseError("missing tracker tables")
+        if isinstance(conn, _ReadConnection):
+            after = _file_signature(db_path)
+            # Opening a read-only WAL database can initialize an empty WAL.
+            initialized_wal = before[1] is None and after[1] is not None and after[1][-1] == 0
+            if before[0] != after[0] or (before[1] != after[1] and not initialized_wal):
+                conn.close()
+                raise HTTPException(status_code=503, detail="The database changed while opening. Retry the request.")
+            conn.file_signature = after
         conn.create_function("stock_label", 1, _stock_label, deterministic=True)
         return conn
     except sqlite3.Error as exc:
@@ -150,7 +164,7 @@ def _shareholding_rows(conn: sqlite3.Connection, isin: str) -> list[dict[str, An
 
 
 def _file_signature(db_path: str) -> tuple:
-    """(mtime, size) of the DB and its WAL: any committed write changes it."""
+    """Identity and write metadata of the DB and WAL, including atomic replacement."""
     signature = []
     for path in (db_path, db_path + "-wal"):
         try:
@@ -158,7 +172,7 @@ def _file_signature(db_path: str) -> tuple:
         except OSError:
             signature.append(None)
         else:
-            signature.append((st.st_mtime_ns, st.st_size))
+            signature.append((st.st_dev, st.st_ino, st.st_ctime_ns, st.st_mtime_ns, st.st_size))
     return tuple(signature)
 
 
@@ -171,7 +185,8 @@ def _ranked(conn: sqlite3.Connection, month: str, equity_only: bool,
     published after it. Callers must not modify the returned frame.
     """
     db_path = str(conn.execute("PRAGMA database_list").fetchone()[2])
-    key = (db_path, _file_signature(db_path), RULE_VERSION, month, equity_only, active_only)
+    key = (db_path, getattr(conn, "file_signature", None) or _file_signature(db_path),
+           RULE_VERSION, month, equity_only, active_only)
     with _ranked_lock:
         ranked = _ranked_cache.get(key)
     if ranked is None:
@@ -522,11 +537,11 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
     def month_context(conn, view):
         path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
         verified = releases._verified.get(path.stem)
-        if path != releases.directory / f"{path.stem}.db" or verified is None:
-            return _month_view(conn, view)
-        # _ro_connect verifies the file signatures before every request. Include
-        # those signatures and the calculation version to isolate all scopes.
-        key = (path.stem, verified[0], RULE_VERSION, view["month"], bool(view["active_only"]))
+        # Local databases change through the offline writer, including WAL
+        # commits. Retained releases also include their verified manifest state.
+        signature = (verified[0] if path == releases.directory / f"{path.stem}.db" and verified
+                     else getattr(conn, "file_signature", None) or _file_signature(str(path)))
+        key = (str(path), signature, RULE_VERSION, view["month"], bool(view["active_only"]))
         coverage_key = (*key, bool(view["equity_only"]))
         with overview_lock:
             if key not in overview_cache:
