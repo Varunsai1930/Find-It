@@ -22,6 +22,7 @@ from typing import Annotated, Any
 from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Request
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -584,6 +585,7 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
                                  scheme_label=_scheme_label, stock_label=_stock_label)
 
     app = FastAPI(title="FindIt holdings dashboard (read-only)")
+    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
     if hosted and (not allowed_hosts or not expected_month):
         raise ValueError("Hosted serving requires exact allowed hosts and an expected month")
@@ -622,6 +624,13 @@ def create_app(db_path: str | Path | None = None, release_dir: Path | None = Non
         started = time.perf_counter()
         response = await call_next(request)
         response.headers["Server-Timing"] = f"app;dur={(time.perf_counter() - started) * 1000:.2f}"
+        if request.url.path.startswith("/static/"):
+            name = request.url.path.removeprefix("/static/")
+            fingerprint = assets.get(name)
+            response.headers["Cache-Control"] = (
+                "public, max-age=31536000, immutable"
+                if fingerprint and request.query_params.get("v") == fingerprint
+                else "public, max-age=0, must-revalidate")
         if request.url.path in {"/api/watchlist", "/watchlist/report"}:
             response.headers["Cache-Control"] = "private, no-store"
             response.headers["Referrer-Policy"] = "no-referrer"

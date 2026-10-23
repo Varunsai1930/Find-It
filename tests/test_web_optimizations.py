@@ -142,3 +142,20 @@ def test_fund_catalog_is_loaded_separately_from_initial_page(tmp_path):
     assert catalog["count"] == 1003
     fund = next(s for s in catalog["schemes"] if s["scheme_name"] == "Catalog Fund 999")
     assert fund["label"] == "Catalog Fund 999" and fund["votes"] is True
+
+
+def test_compression_and_verified_asset_fingerprint_cache_policy(tmp_path):
+    import re
+    client = TestClient(create_app(_copy_db(tmp_path)))
+    raw = client.get("/", headers={"accept-encoding": "identity"})
+    compressed = client.get("/", headers={"accept-encoding": "gzip"})
+    assert compressed.headers["content-encoding"] == "gzip"
+    assert len(compressed.content) == len(raw.content)
+    assert int(compressed.headers["content-length"]) < len(raw.content) / 2
+    assert "Accept-Encoding" in compressed.headers["vary"]
+    asset = re.search(r'href="(/static/style.css[^"]+)"', raw.text)[1]
+    response = client.get(asset)
+    assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+    for url in ("/static/style.css", "/static/style.css?v=incorrect"):
+        assert "immutable" not in client.get(url).headers["cache-control"]
+    assert client.post("/api/watchlist", json={"month": "2026-08", "stocks": []}).headers["cache-control"] == "private, no-store"

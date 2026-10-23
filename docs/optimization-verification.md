@@ -16,3 +16,10 @@ Browser developer tools show application duration in the Server-Timing header,
 alongside network transfer and browser rendering. The local benchmark does
 not measure browser rendering or hosted cold starts. Compare identical data,
 filters, runtime and machine when judging performance improvements.
+
+
+Large responses use negotiated gzip compression. Exact current CSS/JavaScript
+fingerprints receive a one-year immutable cache policy; missing or mismatched
+fingerprints must revalidate. Private watchlist and report responses retain
+`private, no-store`. Check these headers on the deployed origin too when its
+CDN serves static files directly; local verification covers the ASGI server.
