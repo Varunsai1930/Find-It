@@ -116,7 +116,7 @@ function boot({ schemes = false, controls = false, hash = '', watch = null, sear
     elements['equity-only'].checked = params.get('equity_only') !== '0';
     elements['active-only'].checked = params.get('active_only') !== '0';
   }
-  if (schemes) elements['scheme-data'].textContent = JSON.stringify([
+  if (schemes) elements['scheme-data'].textContent = JSON.stringify(Array.isArray(schemes) ? schemes : [
     { id: 1, label: 'Test Fund', amc: 'Test AMC', votes: true }
   ]);
   const timers = new Map(), requests = [], frames = [], created = [];
@@ -883,4 +883,18 @@ test('row bookmarks show state without text, and an empty watchlist links to the
   assert.equal(bookmark.hidden, false);
   assert.equal(bookmark.textContent, '');
   assert.deepEqual(JSON.parse(ui.saved.get('findit-watchlist-v1')).stocks, ['INE002A01018']);
+});
+
+
+test('fund suggestions cap rendered options and let typing find later matches', async () => {
+  const schemes = Array.from({ length: 200 }, (_, i) => ({ id: i + 1, label: 'Fund ' + i, amc: 'Test', votes: true }));
+  const ui = boot({ schemes });
+  await ui.type('scheme-search', 'Fund');
+  const options = ui.elements['scheme-options'].children;
+  assert.equal(options.filter(n => !n.getAttribute('aria-disabled')).length, 12);
+  assert.match(ui.elements['scheme-search-status'].textContent, /first 12 of 200/);
+  await ui.type('scheme-search', 'Fund 199');
+  assert.equal(ui.elements['scheme-options'].children.length, 1);
+  ui.elements['scheme-search'].emit('keydown', { key: 'Enter' });
+  assert.match(ui.requests.at(-1).url, /summary\/200\/2026-08/);
 });

@@ -638,7 +638,10 @@
       try {
         var results = await opts.source(query);
         if (mine !== seq) return;
-        show(results, results.length ? "" : opts.emptyText(query));
+        var maximum = opts.maxResults || 20;
+        var note = results.length > maximum ? "Showing the first " + maximum + " of " + results.length +
+          " matches. Type more to narrow the list." : results.length ? "" : opts.emptyText(query);
+        show(results.slice(0, maximum), note);
       } catch (e) {
         if (e.name === "AbortError" || mine !== seq) return;
         show([], "Could not load suggestions (" + e.message + ").");
@@ -864,6 +867,7 @@
       list: document.getElementById("scheme-options"),
       status: document.getElementById("scheme-search-status"),
       minChars: 0,
+      maxResults: 12,
       source: function (query) {
         return Promise.resolve(schemes.filter(function (s) { return matchWords(query, s.haystack); }));
       },
