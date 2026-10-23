@@ -25,3 +25,39 @@ fingerprints must revalidate. Private watchlist and report responses retain
 CDN serves static files directly; local verification covers the ASGI server.
 
 “All” stock rankings use server pages of 50 rows. Page links preserve filters, absolute ranks and column selection; changing a filter returns to page one. Column sorting applies to the displayed rows.
+
+## Regression checks
+
+Run the existing Python, Ruff and Node checks from CONTRIBUTING.md. Browser
+coverage uses the already pinned download extra and Chromium:
+
+```sh
+uv run --no-sync python tools/verify_browser.py --output /tmp/findit-browser-new
+```
+
+Use a new output directory for each run. The tool creates temporary synthetic
+holdings and a retained release, then fulfills browser requests through the
+local app. It covers concurrent request consistency, search and fund summaries,
+pagination, filter resets, failed refresh and retry, watchlist persistence and
+report release pins, keyboard focus, accessible status updates, theme palette
+contrast and four responsive widths. It also checks that retained database
+bytes did not change. CI runs it in a dedicated Chromium job.
+
+The browser check reports its limitations: synthetic local data does not
+measure hosted latency, and keyboard/accessibility-tree checks do not replace
+manual screen-reader testing. Its contrast check covers the shared text palette,
+not every possible composited or animated pixel.
+
+## Local measurements
+
+On the same small synthetic database, warm page median fell from about 24 ms
+to 6 ms after month-cache reuse; SQLite statement count fell from 143 to 7
+(before the later availability display added two small lookups). A targeted
+search over 240,000 synthetic holdings fell from 12.5 ms to 0.21 ms with the
+new indexes. The original grouped query remains available for older immutable
+releases without those indexes. A representative page transfer fell from about
+47 KB to 9 KB with gzip. These are local measurements, not hosted guarantees.
+
+Every optimization has its own commit. The Python, Ruff and Node checks run
+before the commit and again in an archive of the committed source, excluding
+pre-existing local edits. The existing local edits remain in the working tree.
