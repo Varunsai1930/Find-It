@@ -129,6 +129,10 @@
   }
   var watchlist = [];
   var watchStatus = document.getElementById("watchlist-status");
+  var watchStorageWarning = "";
+  function watchMessage(text) {
+    if (watchStatus) watchStatus.textContent = [watchStorageWarning, text].filter(Boolean).join(" ");
+  }
   var watchResults = document.getElementById("watchlist-results");
   function validateWatchlist(value) {
     if (!value || value.version !== 1 || !Array.isArray(value.stocks) || value.stocks.length > 100 ||
@@ -141,14 +145,17 @@
     var saved = localStorage.getItem("findit-watchlist-v1");
     if (saved) watchlist = validateWatchlist(JSON.parse(saved));
   } catch (e) {
-    if (watchStatus) watchStatus.textContent = "Saved watchlist could not be read. Import a valid export to recover it.";
+    watchStorageWarning = "Saved watchlist could not be read. Import a valid export to recover it.";
+    watchMessage("");
   }
   function saveWatchlist() {
     try {
       localStorage.setItem("findit-watchlist-v1", JSON.stringify({ version: 1, stocks: watchlist }));
-      if (watchStatus) watchStatus.textContent = "Saved on this device.";
+      watchStorageWarning = "";
+      watchMessage("Saved on this device.");
     } catch (e) {
-      if (watchStatus) watchStatus.textContent = "Device storage is unavailable. Export your watchlist before leaving.";
+      watchStorageWarning = "Device storage is unavailable. Export your watchlist before leaving.";
+      watchMessage("");
     }
   }
   // Follow buttons live in the stock detail, on each table row and in the
@@ -241,16 +248,19 @@
     delete download.dataset.reportRequest;
     if (!watchlist.length) {
       watchResults.replaceChildren(emptyWatchlist());
+      watchResults.removeAttribute("aria-busy");
+      delete watchResults.dataset.stale;
       return;
     }
     var body = { month: currentMonth(), stocks: watchlist.slice(),
                  active_only: document.getElementById("active-only").checked };
-    watchResults.textContent = "Loading monthly changes…";
+    watchResults.setAttribute("aria-busy", "true");
+    watchMessage("Loading monthly changes…");
     try {
       var result = await load("watchlist", "/api/watchlist", { method: "POST",
         headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       if (sequence !== watchlistSequence) return;
-      if (!result.ok) throw new Error("HTTP " + result.status);
+      if (!result.ok) throw responseError(result);
       var report = JSON.parse(result.body);
       var note = document.createElement("div"), context = document.createElement("p");
       note.className = "watchlist-note";
@@ -271,12 +281,20 @@
         " funds bought, so one fund house can count as both buying and selling there.";
       method.append(label, explanation); note.append(context, method);
       watchResults.replaceChildren(note);
+      delete watchResults.dataset.stale;
+      watchMessage("");
       report.stocks.forEach(function (stock) { watchResults.append(watchItem(stock)); });
       body.release = report.release_id; body.rules = report.rule_version;
       download.dataset.reportRequest = JSON.stringify(body);
       download.href = "/watchlist/report"; download.hidden = false;
     } catch (e) {
-      if (sequence === watchlistSequence && e.name !== "AbortError") watchResults.replaceChildren(stateNode("error", "Could not load your watchlist. " + e.message, refreshWatchlist));
+      if (sequence === watchlistSequence && e.name !== "AbortError") {
+        watchResults.dataset.stale = "true";
+        watchStatus.replaceChildren(stateNode("error", "Could not refresh your watchlist. " + e.message +
+          " Any previous results below have not been refreshed. " + watchStorageWarning, refreshWatchlist));
+      }
+    } finally {
+      if (sequence === watchlistSequence) watchResults.removeAttribute("aria-busy");
     }
   }
   if (watchResults) {
@@ -284,17 +302,17 @@
       event.preventDefault();
       var payload = event.currentTarget.dataset.reportRequest;
       if (!payload) return;
-      watchStatus.textContent = "Preparing your monthly report…";
+      watchMessage("Preparing your monthly report…");
       try {
         var result = await load("watchlist-download", "/watchlist/report", {
           method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
-        if (!result.ok) throw new Error("HTTP " + result.status);
+        if (!result.ok) throw responseError(result);
         var report = JSON.parse(payload);
         downloadText(result.body, "text/markdown",
           "findit-" + report.month + "-" + report.release.slice(0, 12) + ".md");
-        watchStatus.textContent = "Report ready. Check your browser’s downloads.";
+        watchMessage("Report ready. Check your browser’s downloads.");
       } catch (e) {
-        if (e.name !== "AbortError") watchStatus.textContent = "Report download failed: " + e.message;
+        if (e.name !== "AbortError") watchMessage("Report download failed: " + e.message);
       }
     });
     document.getElementById("watchlist-export").addEventListener("click", function () {
@@ -310,7 +328,7 @@
         if (combined.length > 100) throw new Error("Keep at most 100 stocks.");
         watchlist = combined;
         saveWatchlist(); updateFollowButtons(); refreshWatchlist();
-      } catch (e) { watchStatus.textContent = "Import failed: " + e.message; }
+      } catch (e) { watchMessage("Import failed: " + e.message); }
       event.target.value = "";
     });
     refreshWatchlist();
@@ -330,6 +348,15 @@
       p.append(" ", b);
     }
     return p;
+  }
+
+  function responseError(response) {
+    var message = response.status === 503 ? "The data service is temporarily unavailable. Please retry." :
+      response.status === 429 ? "Too many requests. Wait a moment and retry." :
+      response.status === 409 ? "The data release changed. Reload the page to continue." :
+      response.status === 404 ? "The requested data is unavailable for this selection." :
+      "The request failed. Please retry.";
+    return new Error(message);
   }
 
   // Fetch text, cancelling any earlier request for the same slot so a slow
@@ -530,8 +557,9 @@
     viewStatus.textContent = "Loading " + monthLabel() + "…";
     try {
       var r = await load("view", "/fragments/month/" + encodeURIComponent(month) + "?" + q);
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) throw responseError(r);
       view.innerHTML = r.body;
+      delete view.dataset.stale;
       if (coverageOpen) view.querySelector("#coverage-details").open = true;
       viewStatus.className = "controls__status";
       viewStatus.textContent = "";
@@ -556,9 +584,9 @@
     } catch (e) {
       if (e.name === "AbortError") return;
       viewStatus.className = "controls__status";
-      viewStatus.textContent = "";
-      view.replaceChildren(stateNode("error",
-        "Could not load " + monthLabel() + " (" + e.message + ").", refreshView));
+      view.dataset.stale = "true";
+      viewStatus.replaceChildren(stateNode("error", "Could not load " + monthLabel() + ". " + e.message +
+        " Previous results remain below and have not been refreshed.", refreshView));
     } finally {
       if (!inflight.view) view.removeAttribute("aria-busy");
     }
@@ -693,7 +721,7 @@
     stockBox.replaceChildren(stateNode("loading", "Loading " + query + (month ? " for " + monthLabel() : "") + "…"));
     try {
       var r = await load("stock", "/fragments/stock?" + q);
-      if (!r.ok) throw new Error(r.status === 404 ? "not found" : "HTTP " + r.status);
+      if (!r.ok) throw responseError(r);
       stockBox.innerHTML = r.body;
       updateFollowButtons();
       var head = stockBox.querySelector("[data-stock-isin]");
@@ -834,7 +862,7 @@
           "No holding-change data available for this fund and month yet."));
         return;
       }
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) throw responseError(r);
       var data = JSON.parse(r.body);
       var p = document.createElement("p");
       p.className = data.has_data ? "summary-text" : "state state--empty";
@@ -871,7 +899,7 @@
     if (schemeData || !schemeInput) return;
     if (!schemesLoading) schemesLoading = (async function () {
       var r = await load("schemes", "/api/schemes");
-      if (!r.ok) throw new Error("HTTP " + r.status);
+      if (!r.ok) throw responseError(r);
       schemes = mapSchemes(JSON.parse(r.body).schemes);
     }());
     try { await schemesLoading; }
@@ -924,7 +952,7 @@
         var q = new URLSearchParams({ q: query });
         if (currentMonth()) q.set("month", currentMonth());
         var r = await load("suggest", "/api/stocks/search?" + q);
-        if (!r.ok) throw new Error("HTTP " + r.status);
+        if (!r.ok) throw responseError(r);
         return JSON.parse(r.body).results.map(function (s) {
           var held = s.schemes_holding ? "held by " + s.schemes_holding + " fund" + (s.schemes_holding === 1 ? "" : "s")
                                        : "not held";

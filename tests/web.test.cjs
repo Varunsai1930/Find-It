@@ -908,7 +908,7 @@ test('fund catalog loads on demand, shares pending work and retries failure', as
   assert.equal(ui.requests[0].url, '/api/schemes');
   await ui.type('scheme-search', 'Fund B');
   assert.equal(ui.requests.length, 1);
-  ui.requests[0].respond('unavailable', 503); await settle();
+  ui.requests[0].respond('unavailable', { ok: false, status: 503 }); await settle();
   await ui.type('scheme-search', 'Fund B');
   assert.equal(ui.requests.length, 2);
   ui.requests[1].respond(JSON.stringify({ schemes: [{ scheme_id: 9, label: 'Fund B', amc_name: 'Test', votes: true }] }));
@@ -930,4 +930,54 @@ test('ranking page links preserve filters and a filter change returns to page on
   ui.requests.at(-1).respond('page two'); await settle();
   ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
   assert.doesNotMatch(ui.requests.at(-1).url, /page=/);
+});
+
+
+test('failed filters retain existing results with an explicit warning and recover on retry', async () => {
+  const ui = boot({ controls: true });
+  const view = ui.elements['month-view'];
+  const previous = new Element(); previous.textContent = 'Previous ranked stocks';
+  view.append(previous);
+  ui.elements['month-select'].value = '2026-07';
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  ui.requests.at(-1).respond('temporarily unavailable', { ok: false, status: 503 }); await settle();
+  assert.equal(view.children[0], previous);
+  assert.equal(view.dataset.stale, 'true');
+  assert.match(ui.elements['view-status'].textContent, /temporarily unavailable/);
+  assert.match(ui.elements['view-status'].textContent, /Previous results remain/);
+  const warning = ui.elements['view-status'].children[0];
+  warning.children.at(-1).emit('click');
+  assert.match(ui.requests.at(-1).url, /2026-07/);
+  ui.requests.at(-1).respond('July results'); await settle();
+  assert.equal(view.innerHTML, 'July results');
+  assert.equal(view.dataset.stale, undefined);
+  assert.equal(view.getAttribute('aria-busy'), null);
+});
+
+test('watchlist refresh failure keeps its previous report and list', async () => {
+  const ui = boot({ controls: true, watch: ['INE002A01018'] });
+  const report = JSON.stringify({ scope: 'Active funds', market_completeness: 'unknown',
+    release_id: 'a'.repeat(64), rule_version: 'test', stocks: [] });
+  ui.requests.at(-1).respond(report); await settle();
+  const previous = ui.elements['watchlist-results'].children[0];
+  ui.elements['view-controls'].emit('change', { target: ui.elements['month-select'] });
+  ui.requests.filter(r => r.url === '/api/watchlist').at(-1).respond('', { ok: false, status: 503 });
+  await settle();
+  assert.equal(ui.elements['watchlist-results'].children[0], previous);
+  assert.match(ui.elements['watchlist-status'].textContent, /previous results below/);
+  assert.equal(ui.elements['watchlist-report'].hidden, true);
+  assert.deepEqual(JSON.parse(ui.saved.get('findit-watchlist-v1')).stocks, ['INE002A01018']);
+});
+
+
+test('storage failure warnings survive successful watchlist refreshes', async () => {
+  const ui = boot({ controls: true, watch: [], storageBlocked: true });
+  const bookmark = new Element(); bookmark.dataset.watchStock = 'INE002A01018';
+  bookmark.closest = selector => selector === '[data-watch-stock]' ? bookmark : null;
+  ui.elements['month-view'].append(bookmark);
+  ui.documentEvents.emit('click', { target: bookmark });
+  assert.match(ui.elements['watchlist-status'].textContent, /Device storage is unavailable/);
+  ui.requests.at(-1).respond(JSON.stringify({ scope: 'Active funds', market_completeness: 'unknown',
+    release_id: 'a'.repeat(64), rule_version: 'test', stocks: [] })); await settle();
+  assert.match(ui.elements['watchlist-status'].textContent, /Export your watchlist before leaving/);
 });

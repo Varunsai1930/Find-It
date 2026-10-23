@@ -744,3 +744,7 @@ th[aria-sort="ascending"] .sort::after { top: -1px; border-top-color: transparen
 .data-status p { margin: 0; }
 .data-status p + p { margin-top: 6px; }
 .data-status__warning { color: var(--ink-2); }
+
+.controls__status:has(.state--error) { flex-basis: 100%; margin-left: 0; }
+.controls__status .state { margin: 0; }
+[data-stale="true"] { border-inline-start: 3px solid var(--ink-3); }
